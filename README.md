@@ -507,7 +507,7 @@ Authorization: Bearer {jwt_token}
 - `entityId` - Entity ID (e.g., 1)
 
 **Query Parameters:**
-- `period` - Time period (DAY, WEEK, or MONTH)
+- `period` - Time period (DAY, DAY15, DAY30, WEEK, or MONTH)
 - `entityIds` - Comma-separated list of entity IDs to compare (e.g., 1,3,4)
 
 **Example Request:**

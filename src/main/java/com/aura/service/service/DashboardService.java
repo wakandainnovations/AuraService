@@ -120,7 +120,9 @@ public class DashboardService {
         ZonedDateTime zonedDateTime = endDate.atZone(ZoneId.systemDefault());
         return switch (period) {
             case DAY -> endDate.minus(7, ChronoUnit.DAYS);
-            case WEEK -> zonedDateTime.minusWeeks(8).toInstant();
+            case DAY15 -> endDate.minus(15, ChronoUnit.DAYS);
+            case DAY30 -> endDate.minus(30, ChronoUnit.DAYS);
+            case WEEK -> zonedDateTime.minusWeeks(12).toInstant();
             case MONTH -> zonedDateTime.minusMonths(12).toInstant();
         };
     }
@@ -160,6 +162,8 @@ public class DashboardService {
     private DateTimeFormatter getFormatterForPeriod(TimePeriod period) {
         return switch (period) {
             case DAY -> DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            case DAY15 -> DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            case DAY30 -> DateTimeFormatter.ofPattern("yyyy-MM-dd");
             case WEEK -> DateTimeFormatter.ofPattern("yyyy-'W'ww");
             case MONTH -> DateTimeFormatter.ofPattern("yyyy-MM");
         };
@@ -173,6 +177,8 @@ public class DashboardService {
         ZonedDateTime zonedDateTime = instant.atZone(ZoneId.systemDefault());
         return switch (period) {
             case DAY -> instant.plus(1, ChronoUnit.DAYS);
+            case DAY15 -> instant.plus(1, ChronoUnit.DAYS);
+            case DAY30 -> instant.plus(1, ChronoUnit.DAYS);
             case WEEK -> zonedDateTime.plusWeeks(1).toInstant();
             case MONTH -> zonedDateTime.plusMonths(1).toInstant();
         };
