@@ -387,11 +387,11 @@ Authorization: Bearer {jwt_token}
 
 ## Dashboard APIs
 
-### 8. Get Average Entity Statistics
+### 8. Get Entity Statistics
 
 **Endpoint:** `GET /api/dashboard/{entityId}/stats`
 
-**Description:** Get average statistics for an entity including overall sentiment, positive ratio, and net sentiment score.
+**Description:** Get core statistics for an entity
 
 **Headers:**
 ```
@@ -405,9 +405,9 @@ Authorization: Bearer {jwt_token}
 ```json
 {
   "totalMentions": 50,
-  "overallSentiment": 0.75,
-  "positiveRatio": 0.64,
-  "netSentimentScore": 3.55
+  "positiveSentiment": 0.64,
+  "negativeSentiment": 0.18,
+  "neutralSentiment": 0.18
 }
 ```
 
@@ -443,11 +443,11 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 10. Get Entity Statistics
+### 10. Get Average Entity Statistics
 
 **Endpoint:** `GET /api/dashboard/{entityId}/stats/avg`
 
-**Description:** Get core statistics for an entity
+**Description:** Get average statistics for an entity including overall sentiment, positive ratio, and net sentiment score.
 
 **Headers:**
 ```
@@ -461,9 +461,9 @@ Authorization: Bearer {jwt_token}
 ```json
 {
   "totalMentions": 50,
-  "positiveSentiment": 0.64,
-  "negativeSentiment": 0.18,
-  "neutralSentiment": 0.18
+  "overallSentiment": 0.75,
+  "positiveRatio": 0.64,
+  "netSentimentScore": 3.55
 }
 ```
 
@@ -638,7 +638,53 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 14. Get Filtered Mentions
+### 14. Get Platform Mentions for a Cluster
+
+**Endpoint:** `POST /api/dashboard/cluster/platform-mentions`
+
+**Description:** Get mention counts for a cluster of entities, broken down by platform. This is based on the intersection of data for the given entities.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Request Body:**
+```json
+[1, 2, 3]
+```
+
+**Response:**
+```json
+{
+    "INSTAGRAM": {
+        "POSITIVE": 10,
+        "NEGATIVE": 2,
+        "NEUTRAL": 1
+    },
+    "REDDIT": {
+        "POSITIVE": 5,
+        "NEGATIVE": 8,
+        "NEUTRAL": 4
+    },
+    "X": {
+        "POSITIVE": 15,
+        "NEGATIVE": 12,
+        "NEUTRAL": 3
+    },
+    "YOUTUBE": {
+        "POSITIVE": 50,
+        "NEGATIVE": 10,
+        "NEUTRAL": 5
+    }
+}
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 15. Get Filtered Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/mentions`
 
@@ -701,9 +747,70 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
 
 ---
 
+### 16. Get Filtered Mentions for a Cluster
+
+**Endpoint:** `GET /api/dashboard/cluster/mentions`
+
+**Description:** Get a paginated list of mentions for a cluster of entities, based on the intersection of their data. The results are sorted by time, with the latest mentions appearing first.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `entityIds` - Comma-separated list of entity IDs (e.g., 1,2,3)
+- `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
+- `page` - Page number (default: 0)
+- `size` - Page size (default: all mentions are returned if not specified)
+
+**Example Request:**
+```
+GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
+```
+
+**Response:**
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "managedEntityId": 1,
+      "platform": "X",
+      "postId": "The_Quantum_Paradox_post_0",
+      "content": "This movie is absolutely amazing! Best film of the year!",
+      "author": "movie_fan_123",
+      "postDate": "2025-11-05T10:30:00Z",
+      "sentiment": "POSITIVE"
+    },
+    {
+      "id": 2,
+      "managedEntityId": 1,
+      "platform": "X",
+      "postId": "The_Quantum_Paradox_post_5",
+      "content": "Incredible performance! Oscar-worthy for sure.",
+      "author": "critic_sarah",
+      "postDate": "2025-11-03T14:20:00Z",
+      "sentiment": "POSITIVE"
+    }
+  ],
+  "pageable": {
+    "pageNumber": 0,
+    "pageSize": 5
+  },
+  "totalElements": 15,
+  "totalPages": 3,
+  "last": false
+}
+```
+
+**Status Code:** `200 OK`
+
+---
+
 ## Interaction APIs
 
-### 15. Generate Reply
+### 17. Generate Reply
 
 **Endpoint:** `POST /api/interact/generate-reply`
 
@@ -734,7 +841,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 16. Post Response
+### 18. Post Response
 
 **Endpoint:** `POST /api/interact/respond`
 
@@ -767,7 +874,7 @@ Authorization: Bearer {jwt_token}
 
 ## Crisis Management APIs
 
-### 17. Generate Crisis Plan
+### 19. Generate Crisis Plan
 
 **Endpoint:** `POST /api/crisis/generate-plan`
 
@@ -799,7 +906,7 @@ Authorization: Bearer {jwt_token}
 
 ## Analytics APIs
 
-### 18. Get Box Office Prediction
+### 20. Get Box Office Prediction
 
 **Endpoint:** `GET /api/analytics/{movieId}`
 

@@ -10,6 +10,7 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -23,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -41,6 +43,21 @@ public class DashboardService {
         double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
         double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
         
+        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment);
+    }
+
+    public EntityStatsResponse getClusterStats(List<Long> entityIds) {
+        List<Mention> mentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
+
+        long totalMentions = mentions.size();
+        long positiveMentions = mentions.stream().filter(m -> m.getSentiment() == Sentiment.POSITIVE).count();
+        long negativeMentions = mentions.stream().filter(m -> m.getSentiment() == Sentiment.NEGATIVE).count();
+        long neutralMentions = mentions.stream().filter(m -> m.getSentiment() == Sentiment.NEUTRAL).count();
+
+        double positiveSentiment = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
+        double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
+        double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
+
         return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment);
     }
     
@@ -210,6 +227,17 @@ public class DashboardService {
         
         return platformCounts;
     }
+
+    public Map<String, Map<String, Long>> getPlatformMentionsForCluster(List<Long> entityIds) {
+        List<Mention> mentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
+
+        Map<String, Map<String, Long>> platformCounts = new HashMap<>();
+        for (Mention mention : mentions) {
+            platformCounts.computeIfAbsent(mention.getPlatform().name(), k -> new HashMap<>())
+                         .merge(mention.getSentiment().name(), 1L, Long::sum);
+        }
+        return platformCounts;
+    }
     
     public Page<MentionResponse> getMentions(
             Long entityId,
@@ -230,6 +258,41 @@ public class DashboardService {
         );
         
         return mentions.map(this::mapToMentionResponse);
+    }
+    
+    public Page<MentionResponse> getClusterMentions(
+            List<Long> entityIds,
+            Platform platform,
+            int page,
+            int size
+    ) {
+        List<Mention> intersectionMentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
+
+        Stream<Mention> mentionsStream = intersectionMentions.stream();
+
+        if (platform != null) {
+            mentionsStream = mentionsStream.filter(m -> m.getPlatform() == platform);
+        }
+
+        List<Mention> filteredMentions = mentionsStream
+                .sorted(Comparator.comparing(Mention::getPostDate).reversed())
+                .collect(Collectors.toList());
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by("post_date").descending());
+
+        int start = (int) pageable.getOffset();
+        int end = Math.min((start + pageable.getPageSize()), filteredMentions.size());
+
+        List<Mention> pageContent;
+        if (start > filteredMentions.size()) {
+            pageContent = Collections.emptyList();
+        } else {
+            pageContent = filteredMentions.subList(start, end);
+        }
+
+        Page<Mention> mentionPage = new PageImpl<>(pageContent, pageable, filteredMentions.size());
+
+        return mentionPage.map(this::mapToMentionResponse);
     }
     
     private MentionResponse mapToMentionResponse(Mention mention) {

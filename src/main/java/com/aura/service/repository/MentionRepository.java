@@ -63,4 +63,13 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "CAST(SUM(CASE WHEN m.sentiment = com.aura.service.enums.Sentiment.POSITIVE THEN 1 ELSE 0 END) AS Double) / COUNT(m)) " +
             "FROM Mention m WHERE m.managedEntity.id IN :entityIds")
     Optional<SentimentStats> getSentimentStats(@Param("entityIds") List<Long> entityIds);
+
+    @Query(value = "SELECT m.* FROM mentions m " +
+           "WHERE m.post_id IN ( " +
+           "  SELECT post_id FROM mentions " +
+           "  WHERE managed_entity_id IN (:entityIds) " +
+           "  GROUP BY post_id " +
+           "  HAVING COUNT(DISTINCT managed_entity_id) = :count " +
+           ")", nativeQuery = true)
+    List<Mention> findIntersectionOfMentions(@Param("entityIds") List<Long> entityIds, @Param("count") int count);
 }

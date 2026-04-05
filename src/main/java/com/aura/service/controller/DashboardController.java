@@ -26,7 +26,13 @@ public class DashboardController {
         EntityStatsResponse response = dashboardService.getEntityStats(entityId);
         return ResponseEntity.ok(response);
     }
-    
+
+    @GetMapping("/cluster/stats")
+    public ResponseEntity<EntityStatsResponse> getClusterStats(@RequestParam List<Long> entityIds) {
+        EntityStatsResponse response = dashboardService.getClusterStats(entityIds);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{entityId}/stats/avg")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvg(@PathVariable Long entityId) {
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityId);
@@ -59,6 +65,12 @@ public class DashboardController {
         Map<String, Map<String, Long>> response = dashboardService.getPlatformMentions(entityId);
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/cluster/platform-mentions")
+    public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentionsForCluster(@RequestBody List<Long> entityIds) {
+        Map<String, Map<String, Long>> response = dashboardService.getPlatformMentionsForCluster(entityIds);
+        return ResponseEntity.ok(response);
+    }
     
     @GetMapping("/{entityId}/mentions")
     public ResponseEntity<Page<MentionResponse>> getMentions(
@@ -69,6 +81,19 @@ public class DashboardController {
     ) {
         Page<MentionResponse> response = dashboardService.getMentions(
                 entityId, platform, page, size
+        );
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/cluster/mentions")
+    public ResponseEntity<Page<MentionResponse>> getClusterMentions(
+            @RequestParam List<Long> entityIds,
+            @RequestParam(required = false) Platform platform,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size
+    ) {
+        Page<MentionResponse> response = dashboardService.getClusterMentions(
+                entityIds, platform, page, size
         );
         return ResponseEntity.ok(response);
     }
