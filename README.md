@@ -415,7 +415,35 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 9. Get Entity Statistics
+### 9. Get Average Entity Statistics for Multiple Entities
+
+**Endpoint:** `GET /api/dashboard/stats/avg/multiple`
+
+**Description:** Get average statistics for multiple entities based on the intersection of their data.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `entityIds` - Comma-separated list of entity IDs (e.g., 1,2,3)
+
+**Response:**
+```json
+{
+  "totalMentions": 150,
+  "overallSentiment": 0.73,
+  "positiveRatio": 0.61,
+  "netSentimentScore": 3.35
+}
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 10. Get Entity Statistics
 
 **Endpoint:** `GET /api/dashboard/{entityId}/stats/avg`
 
@@ -443,7 +471,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 10. Get Competitor Snapshot
+### 11. Get Competitor Snapshot
 
 **Endpoint:** `GET /api/dashboard/{entityId}/competitor-snapshot`
 
@@ -488,7 +516,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 11. Get Sentiment Over Time
+### 12. Get Sentiment Over Time
 
 **Endpoint:** `GET /api/dashboard/{entityId}/sentiment-over-time`
 
@@ -569,7 +597,7 @@ GET /api/dashboard/1/sentiment-over-time?period=WEEK&entityIds=1,3
 
 ---
 
-### 12. Get Platform Mentions
+### 13. Get Platform Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/platform-mentions`
 
@@ -613,7 +641,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 13. Get Filtered Mentions
+### 14. Get Filtered Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/mentions`
 
@@ -678,7 +706,7 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
 
 ## Interaction APIs
 
-### 14. Generate Reply
+### 15. Generate Reply
 
 **Endpoint:** `POST /api/interact/generate-reply`
 
@@ -709,7 +737,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 15. Post Response
+### 16. Post Response
 
 **Endpoint:** `POST /api/interact/respond`
 
@@ -742,7 +770,7 @@ Authorization: Bearer {jwt_token}
 
 ## Crisis Management APIs
 
-### 16. Generate Crisis Plan
+### 17. Generate Crisis Plan
 
 **Endpoint:** `POST /api/crisis/generate-plan`
 
@@ -774,7 +802,7 @@ Authorization: Bearer {jwt_token}
 
 ## Analytics APIs
 
-### 17. Get Box Office Prediction
+### 18. Get Box Office Prediction
 
 **Endpoint:** `GET /api/analytics/{movieId}`
 

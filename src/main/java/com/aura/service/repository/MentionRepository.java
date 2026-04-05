@@ -22,7 +22,11 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
 
     long countByManagedEntityId(Long entityId);
 
+    long countByManagedEntityIdIn(List<Long> entityIds);
+
     long countByManagedEntityIdAndSentiment(Long entityId, Sentiment sentiment);
+
+    long countByManagedEntityIdInAndSentiment(List<Long> entityIds, Sentiment sentiment);
 
     @Query("SELECT m.platform, m.sentiment, COUNT(m) FROM Mention m WHERE m.managedEntity.id = :entityId GROUP BY m.platform, m.sentiment")
     List<Object[]> countByPlatformForEntity(@Param("entityId") Long entityId);
@@ -53,4 +57,10 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "CAST(SUM(CASE WHEN m.sentiment = com.aura.service.enums.Sentiment.POSITIVE THEN 1 ELSE 0 END) AS Double) / COUNT(m)) " +
             "FROM Mention m WHERE m.managedEntity.id = :entityId")
     Optional<SentimentStats> getSentimentStats(@Param("entityId") Long entityId);
+
+    @Query("SELECT new com.aura.service.dto.SentimentStats(" +
+            "AVG(m.sentimentScore), " +
+            "CAST(SUM(CASE WHEN m.sentiment = com.aura.service.enums.Sentiment.POSITIVE THEN 1 ELSE 0 END) AS Double) / COUNT(m)) " +
+            "FROM Mention m WHERE m.managedEntity.id IN :entityIds")
+    Optional<SentimentStats> getSentimentStats(@Param("entityIds") List<Long> entityIds);
 }

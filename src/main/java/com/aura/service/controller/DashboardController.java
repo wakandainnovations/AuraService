@@ -15,25 +15,31 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/dashboard/{entityId}")
+@RequestMapping("/api/dashboard")
 @RequiredArgsConstructor
 public class DashboardController {
     
     private final DashboardService dashboardService;
     
-    @GetMapping("/stats/avg")
+    @GetMapping("/{entityId}/stats/avg")
     public ResponseEntity<EntityStatsResponse> getStats(@PathVariable Long entityId) {
         EntityStatsResponse response = dashboardService.getEntityStats(entityId);
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/stats")
+    @GetMapping("/{entityId}/stats")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvg(@PathVariable Long entityId) {
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityId);
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/competitor-snapshot")
+    @GetMapping("/stats/avg/multiple")
+    public ResponseEntity<EntityStatsAvgResponse> getStatsAvgMultiple(@RequestParam List<Long> entityIds) {
+        EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityIds);
+        return ResponseEntity.ok(response);
+    }
+    
+    @GetMapping("/{entityId}/competitor-snapshot")
     public ResponseEntity<List<CompetitorSnapshot>> getCompetitorSnapshot(@PathVariable Long entityId) {
         List<CompetitorSnapshot> response = dashboardService.getCompetitorSnapshot(entityId);
         return ResponseEntity.ok(response);
@@ -48,13 +54,13 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/platform-mentions")
+    @GetMapping("/{entityId}/platform-mentions")
     public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentions(@PathVariable Long entityId) {
         Map<String, Map<String, Long>> response = dashboardService.getPlatformMentions(entityId);
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/mentions")
+    @GetMapping("/{entityId}/mentions")
     public ResponseEntity<Page<MentionResponse>> getMentions(
             @PathVariable Long entityId,
             @RequestParam(required = false) Platform platform,

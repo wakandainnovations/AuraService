@@ -58,6 +58,20 @@ public class DashboardService {
         return new EntityStatsAvgResponse(totalMentions, overallSentiment, positiveRatio, netSentimentScore);
     }
     
+    public EntityStatsAvgResponse getEntityStatsAvg(List<Long> entityIds) {
+        long totalMentions = mentionRepository.countByManagedEntityIdIn(entityIds);
+        long positiveMentions = mentionRepository.countByManagedEntityIdInAndSentiment(entityIds, Sentiment.POSITIVE);
+        long negativeMentions = mentionRepository.countByManagedEntityIdInAndSentiment(entityIds, Sentiment.NEGATIVE);
+        
+        Optional<SentimentStats> sentimentStats = mentionRepository.getSentimentStats(entityIds);
+        
+        double overallSentiment = sentimentStats.map(SentimentStats::getAverageSentimentScore).orElse(0.0);
+        double positiveRatio = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
+        double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
+        
+        return new EntityStatsAvgResponse(totalMentions, overallSentiment, positiveRatio, netSentimentScore);
+    }
+    
     public List<CompetitorSnapshot> getCompetitorSnapshot(Long entityId) {
         ManagedEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
