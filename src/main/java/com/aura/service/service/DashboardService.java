@@ -31,7 +31,7 @@ public class DashboardService {
     private final MentionRepository mentionRepository;
     private final ManagedEntityRepository entityRepository;
     
-    public EntityStatsResponse getEntityStats(String entityType, Long entityId) {
+    public EntityStatsResponse getEntityStats(Long entityId) {
         long totalMentions = mentionRepository.countByManagedEntityId(entityId);
         long positiveMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.POSITIVE);
         long negativeMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.NEGATIVE);
@@ -44,7 +44,7 @@ public class DashboardService {
         return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment);
     }
     
-    public EntityStatsAvgResponse getEntityStatsAvg(String entityType, Long entityId) {
+    public EntityStatsAvgResponse getEntityStatsAvg(Long entityId) {
         long totalMentions = mentionRepository.countByManagedEntityId(entityId);
         long positiveMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.POSITIVE);
         long negativeMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.NEGATIVE);
@@ -58,7 +58,7 @@ public class DashboardService {
         return new EntityStatsAvgResponse(totalMentions, overallSentiment, positiveRatio, netSentimentScore);
     }
     
-    public List<CompetitorSnapshot> getCompetitorSnapshot(String entityType, Long entityId) {
+    public List<CompetitorSnapshot> getCompetitorSnapshot(Long entityId) {
         ManagedEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
         
@@ -89,8 +89,6 @@ public class DashboardService {
     }
     
     public SentimentOverTimeResponse getSentimentOverTime(
-            String entityType,
-            Long entityId,
             TimePeriod period,
             List<Long> entityIds
     ) {
@@ -184,7 +182,7 @@ public class DashboardService {
         };
     }
     
-    public Map<String, Map<String, Long>> getPlatformMentions(String entityType, Long entityId) {
+    public Map<String, Map<String, Long>> getPlatformMentions(Long entityId) {
         List<Object[]> results = mentionRepository.countByPlatformForEntity(entityId);
         
         Map<String, Map<String, Long>> platformCounts = new HashMap<>();
@@ -200,7 +198,6 @@ public class DashboardService {
     }
     
     public Page<MentionResponse> getMentions(
-            String entityType,
             Long entityId,
             Platform platform,
             int page,

@@ -389,7 +389,7 @@ Authorization: Bearer {jwt_token}
 
 ### 8. Get Average Entity Statistics
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/stats`
+**Endpoint:** `GET /api/dashboard/{entityId}/stats`
 
 **Description:** Get average statistics for an entity including overall sentiment, positive ratio, and net sentiment score.
 
@@ -399,7 +399,6 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Response:**
@@ -418,7 +417,7 @@ Authorization: Bearer {jwt_token}
 
 ### 9. Get Entity Statistics
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/stats/avg`
+**Endpoint:** `GET /api/dashboard/{entityId}/stats/avg`
 
 **Description:** Get core statistics for an entity
 
@@ -428,7 +427,6 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Response:**
@@ -447,7 +445,7 @@ Authorization: Bearer {jwt_token}
 
 ### 10. Get Competitor Snapshot
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/competitor-snapshot`
+**Endpoint:** `GET /api/dashboard/{entityId}/competitor-snapshot`
 
 **Description:** Get statistics for the entity and its competitors
 
@@ -457,7 +455,6 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Response:**
@@ -493,7 +490,7 @@ Authorization: Bearer {jwt_token}
 
 ### 11. Get Sentiment Over Time
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/sentiment-over-time`
+**Endpoint:** `GET /api/dashboard/{entityId}/sentiment-over-time`
 
 **Description:** Get time-series data for sentiment analysis
 
@@ -503,7 +500,6 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Query Parameters:**
@@ -512,7 +508,7 @@ Authorization: Bearer {jwt_token}
 
 **Example Request:**
 ```
-GET /api/dashboard/movie/1/sentiment-over-time?period=WEEK&entityIds=1,3
+GET /api/dashboard/1/sentiment-over-time?period=WEEK&entityIds=1,3
 ```
 
 **Response:**
@@ -575,7 +571,7 @@ GET /api/dashboard/movie/1/sentiment-over-time?period=WEEK&entityIds=1,3
 
 ### 12. Get Platform Mentions
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/platform-mentions`
+**Endpoint:** `GET /api/dashboard/{entityId}/platform-mentions`
 
 **Description:** Get mention counts broken down by platform
 
@@ -585,7 +581,6 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Response:**
@@ -620,7 +615,7 @@ Authorization: Bearer {jwt_token}
 
 ### 13. Get Filtered Mentions
 
-**Endpoint:** `GET /api/dashboard/{entityType}/{entityId}/mentions`
+**Endpoint:** `GET /api/dashboard/{entityId}/mentions`
 
 **Description:** Get a paginated list of mentions with optional filters. The results are sorted by time, with the latest mentions appearing first.
 
@@ -630,17 +625,16 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Path Parameters:**
-- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
 - `entityId` - Entity ID (e.g., 1)
 
 **Query Parameters:**
 - `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
 - `page` - Page number (default: 0)
-- `size` - Page size (default: 10)
+- `size` - Page size (default: all mentions are returned if not specified)
 
 **Example Request:**
 ```
-GET /api/dashboard/movie/1/mentions?platform=X&page=0&size=5
+GET /api/dashboard/1/mentions?platform=X&page=0&size=5
 ```
 
 **Response:**
@@ -940,7 +934,7 @@ curl -X GET http://localhost:8080/api/entities/movie \
 
 3. **Get entity statistics:**
 ```bash
-curl -X GET http://localhost:8080/api/dashboard/movie/1/stats \
+curl -X GET http://localhost:8080/api/dashboard/1/stats \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 ```
 
