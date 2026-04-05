@@ -21,19 +21,19 @@ public class DashboardController {
     
     private final DashboardService dashboardService;
     
-    @GetMapping("/{entityId}/stats/avg")
+    @GetMapping("/{entityId}/stats")
     public ResponseEntity<EntityStatsResponse> getStats(@PathVariable Long entityId) {
         EntityStatsResponse response = dashboardService.getEntityStats(entityId);
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/{entityId}/stats")
+    @GetMapping("/{entityId}/stats/avg")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvg(@PathVariable Long entityId) {
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityId);
         return ResponseEntity.ok(response);
     }
     
-    @GetMapping("/stats/avg/multiple")
+    @GetMapping("/cluster/stats/avg")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvgMultiple(@RequestParam List<Long> entityIds) {
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityIds);
         return ResponseEntity.ok(response);

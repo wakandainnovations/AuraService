@@ -417,7 +417,7 @@ Authorization: Bearer {jwt_token}
 
 ### 9. Get Average Entity Statistics for Multiple Entities
 
-**Endpoint:** `GET /api/dashboard/stats/avg/multiple`
+**Endpoint:** `GET /api/dashboard/cluster/stats/avg`
 
 **Description:** Get average statistics for multiple entities based on the intersection of their data.
 
@@ -518,7 +518,7 @@ Authorization: Bearer {jwt_token}
 
 ### 12. Get Sentiment Over Time
 
-**Endpoint:** `GET /api/dashboard/{entityId}/sentiment-over-time`
+**Endpoint:** `GET /api/dashboard/sentiment-over-time`
 
 **Description:** Get time-series data for sentiment analysis
 
@@ -527,16 +527,13 @@ Authorization: Bearer {jwt_token}
 Authorization: Bearer {jwt_token}
 ```
 
-**Path Parameters:**
-- `entityId` - Entity ID (e.g., 1)
-
 **Query Parameters:**
 - `period` - Time period (DAY, DAY15, DAY30, WEEK, or MONTH)
 - `entityIds` - Comma-separated list of entity IDs to compare (e.g., 1,3,4)
 
 **Example Request:**
 ```
-GET /api/dashboard/1/sentiment-over-time?period=WEEK&entityIds=1,3
+GET /api/dashboard/sentiment-over-time?period=WEEK&entityIds=1,3
 ```
 
 **Response:**
