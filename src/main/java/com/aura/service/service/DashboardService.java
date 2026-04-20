@@ -38,16 +38,21 @@ public class DashboardService {
         long positiveMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.POSITIVE);
         long negativeMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.NEGATIVE);
         long neutralMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.NEUTRAL);
-        
+        Optional<SentimentStats> sentimentStats = mentionRepository.getSentimentStats(entityId);
+
+        double overallSentiment = sentimentStats.map(SentimentStats::getAverageSentimentScore).orElse(0.0);
         double positiveSentiment = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
         double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
         double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
         double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
 
-        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment, netSentimentScore);
+        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment,
+                netSentimentScore, overallSentiment);
     }
 
     public EntityStatsResponse getClusterStats(List<Long> entityIds) {
+        double totalSentiment = 0.0;
+        double overallSentiment = 0.0;
         List<Mention> mentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
 
         long totalMentions = mentions.size();
@@ -55,12 +60,20 @@ public class DashboardService {
         long negativeMentions = mentions.stream().filter(m -> m.getSentiment() == Sentiment.NEGATIVE).count();
         long neutralMentions = mentions.stream().filter(m -> m.getSentiment() == Sentiment.NEUTRAL).count();
 
+        for (long entityId: entityIds){
+            Optional<SentimentStats> sentimentStats = mentionRepository.getSentimentStats(entityId);
+            double sentiment = sentimentStats.map(SentimentStats::getAverageSentimentScore).orElse(0.0);
+            totalSentiment += sentiment;
+        }
+
+        overallSentiment = (!entityIds.isEmpty()) ? totalSentiment / entityIds.size() : 0.0;
         double positiveSentiment = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
         double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
         double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
         double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
 
-        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment, netSentimentScore);
+        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment,
+                netSentimentScore, overallSentiment);
     }
     
     public EntityStatsAvgResponse getEntityStatsAvg(Long entityId) {
