@@ -12,4 +12,5 @@ public class EntityStatsResponse {
     private double positiveSentiment;
     private double negativeSentiment;
     private double neutralSentiment;
+    private double netSentimentScore;
 }

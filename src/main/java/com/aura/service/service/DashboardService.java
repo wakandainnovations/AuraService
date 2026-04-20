@@ -42,8 +42,9 @@ public class DashboardService {
         double positiveSentiment = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
         double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
         double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
-        
-        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment);
+        double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
+
+        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment, netSentimentScore);
     }
 
     public EntityStatsResponse getClusterStats(List<Long> entityIds) {
@@ -57,8 +58,9 @@ public class DashboardService {
         double positiveSentiment = totalMentions > 0 ? (double) positiveMentions / totalMentions : 0.0;
         double negativeSentiment = totalMentions > 0 ? (double) negativeMentions / totalMentions : 0.0;
         double neutralSentiment = totalMentions > 0 ? (double) neutralMentions / totalMentions : 0.0;
+        double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
 
-        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment);
+        return new EntityStatsResponse(totalMentions, positiveSentiment, negativeSentiment, neutralSentiment, netSentimentScore);
     }
     
     public EntityStatsAvgResponse getEntityStatsAvg(Long entityId) {
