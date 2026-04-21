@@ -415,6 +415,34 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+### 9. Get Cluster Statistics
+
+**Endpoint:** `GET /api/dashboard/cluster/stats`
+
+**Description:** Get core statistics for a cluster of entities.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `entityIds` - Comma-separated list of entity IDs (e.g., 1,2,3)
+
+**Response:**
+```json
+{
+  "totalMentions": 150,
+  "positiveSentiment": 0.60,
+  "negativeSentiment": 0.20,
+  "neutralSentiment": 0.20
+}
+```
+
+**Status Code:** `200 OK`
+
+---
+
 ### 9. Get Average Entity Statistics for Multiple Entities
 
 **Endpoint:** `GET /api/dashboard/cluster/stats/avg`
@@ -443,7 +471,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 10. Get Average Entity Statistics
+### 11. Get Average Entity Statistics
 
 **Endpoint:** `GET /api/dashboard/{entityId}/stats/avg`
 
@@ -471,7 +499,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 11. Get Competitor Snapshot
+### 12. Get Competitor Snapshot
 
 **Endpoint:** `GET /api/dashboard/{entityId}/competitor-snapshot`
 
@@ -516,7 +544,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 12. Get Sentiment Over Time
+### 13. Get Sentiment Over Time
 
 **Endpoint:** `GET /api/dashboard/sentiment-over-time`
 
@@ -594,7 +622,7 @@ GET /api/dashboard/sentiment-over-time?period=WEEK&entityIds=1,3
 
 ---
 
-### 13. Get Platform Mentions
+### 14. Get Platform Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/platform-mentions`
 
@@ -638,9 +666,9 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 14. Get Platform Mentions for a Cluster
+### 15. Get Platform Mentions for a Cluster
 
-**Endpoint:** `POST /api/dashboard/cluster/platform-mentions`
+**Endpoint:** `GET /api/dashboard/cluster/platform-mentions`
 
 **Description:** Get mention counts for a cluster of entities, broken down by platform. This is based on the intersection of data for the given entities.
 
