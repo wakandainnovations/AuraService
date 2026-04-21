@@ -72,4 +72,9 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
            "  HAVING COUNT(DISTINCT managed_entity_id) = :count " +
            ")", nativeQuery = true)
     List<Mention> findIntersectionOfMentions(@Param("entityIds") List<Long> entityIds, @Param("count") int count);
+
+    @Query(value = "SELECT * FROM mentions " +
+            "WHERE managed_entity_id IN (:entityIds)",
+            nativeQuery = true)
+    List<Mention> findUnionOfMentions(@Param("entityIds") List<Long> entityIds);
 }

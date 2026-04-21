@@ -184,7 +184,7 @@ public class DashboardService {
         
         while (current.isBefore(endDate) || current.equals(endDate)) {
             String dateKey = formatDate(current, formatter);
-            dataMap.put(dateKey, new TimeSeriesData(dateKey, 0, 0, 0));
+            dataMap.put(dateKey, new TimeSeriesData(dateKey, 0, 0, 0, 0));
             current = incrementByPeriod(current, period);
         }
         
@@ -192,6 +192,8 @@ public class DashboardService {
             String dateKey = formatDate(mention.getPostDate(), formatter);
             TimeSeriesData data = dataMap.get(dateKey);
             if (data != null) {
+                data.setTotal(data.getTotal() + 1);
+
                 switch (mention.getSentiment()) {
                     case POSITIVE -> data.setPositive(data.getPositive() + 1);
                     case NEGATIVE -> data.setNegative(data.getNegative() + 1);
@@ -244,7 +246,7 @@ public class DashboardService {
     }
 
     public Map<String, Map<String, Long>> getPlatformMentionsForCluster(List<Long> entityIds) {
-        List<Mention> mentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
+        List<Mention> mentions = mentionRepository.findUnionOfMentions(entityIds);
 
         Map<String, Map<String, Long>> platformCounts = new HashMap<>();
         for (Mention mention : mentions) {
@@ -281,7 +283,7 @@ public class DashboardService {
             int page,
             int size
     ) {
-        List<Mention> intersectionMentions = mentionRepository.findIntersectionOfMentions(entityIds, entityIds.size());
+        List<Mention> intersectionMentions = mentionRepository.findUnionOfMentions(entityIds);
 
         Stream<Mention> mentionsStream = intersectionMentions.stream();
 

@@ -112,15 +112,23 @@ public class DataInitializer implements CommandLineRunner {
                 "Poor script and weak performances.",
                 "Couldn't even finish watching. That bad."
             };
-            
+
             String[] neutralComments = {
-                "It was okay. Nothing special but not terrible either.",
-                "Average movie. Some good parts, some not so good.",
-                "Mixed feelings about this one.",
-                "Decent entertainment but forgettable.",
-                "It has its moments but overall just okay."
+                    "It was okay. Nothing special but not terrible either.",
+                    "Average movie. Some good parts, some not so good.",
+                    "Mixed feelings about this one.",
+                    "Decent entertainment but forgettable.",
+                    "It has its moments but overall just okay."
             };
-            
+
+            String[] totalComments = {
+                    "It was okay. Nothing special but not terrible either.",
+                    "Average movie. Some good parts, some not so good.",
+                    "Mixed feelings about this one.",
+                    "Decent entertainment but forgettable.",
+                    "It has its moments but overall just okay."
+            };
+
             for (ManagedEntity entity : entities) {
                 for (int i = 0; i < 50; i++) {
                     Mention mention = new Mention();
@@ -135,6 +143,7 @@ public class DataInitializer implements CommandLineRunner {
                         case POSITIVE -> positiveComments[random.nextInt(positiveComments.length)];
                         case NEGATIVE -> negativeComments[random.nextInt(negativeComments.length)];
                         case NEUTRAL -> neutralComments[random.nextInt(neutralComments.length)];
+                        case TOTAL -> totalComments[random.nextInt(totalComments.length)];
                     };
                     mention.setContent(content);
                     

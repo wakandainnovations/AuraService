@@ -61,7 +61,7 @@ public class EntityService {
         }
         
         List<ManagedEntity> competitors = entityRepository.findAllById(request.getCompetitorIds());
-        entity.setCompetitors(competitors);
+        entity.getCompetitors().addAll(competitors);
         
         entity = entityRepository.save(entity);
         

@@ -12,4 +12,5 @@ public class TimeSeriesData {
     private long positive;
     private long negative;
     private long neutral;
+    private long total;
 }

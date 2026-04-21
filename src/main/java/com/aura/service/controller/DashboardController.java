@@ -66,8 +66,8 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/cluster/platform-mentions")
-    public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentionsForCluster(@RequestBody List<Long> entityIds) {
+    @GetMapping("/cluster/platform-mentions")
+    public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentionsForCluster(@RequestParam List<Long> entityIds) {
         Map<String, Map<String, Long>> response = dashboardService.getPlatformMentionsForCluster(entityIds);
         return ResponseEntity.ok(response);
     }
