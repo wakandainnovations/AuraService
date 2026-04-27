@@ -1,0 +1,25 @@
+Layer,AWS Service / Resource,Terraform File,Key Configuration,Purpose,Traffic / Access Rules
+Region,AWS Provider,terraform/provider.tf,ap-south-1,Deploy all resources in Mumbai region,N/A
+Foundation,VPC,terraform/network.tf,"CIDR 10.0.0.0/16, DNS support + hostnames enabled",Isolated network boundary for all workloads,Internal routing domain for all subnets
+Public Network,Public Subnet A,terraform/network.tf,"10.0.1.0/24 in AZ-1, map_public_ip_on_launch=true",Public placement for EC2 and internet-enabled ECS tasks,Internet reachable via IGW route
+Public Network,Public Subnet B,terraform/network.tf,"10.0.2.0/24 in AZ-2, map_public_ip_on_launch=true",Second AZ for public workload distribution,Internet reachable via IGW route
+Private Network,Private Subnet A,terraform/network.tf,10.0.11.0/24 in AZ-1,Private placement for RDS,No direct internet route (no NAT)
+Private Network,Private Subnet B,terraform/network.tf,10.0.12.0/24 in AZ-2,Second AZ for RDS subnet group,No direct internet route (no NAT)
+Internet Access,Internet Gateway,terraform/network.tf,Attached to VPC,Enables internet ingress/egress for public subnets,Used by EC2 + public-IP ECS tasks
+Routing,Public Route Table,terraform/network.tf,0.0.0.0/0 -> IGW,Default internet route for public subnets,Associated with public_a and public_b
+Routing,Private Route Table,terraform/network.tf,No default internet route,Maintains private subnet isolation,Associated with private_a and private_b
+Compute,GPU EC2 Instance,terraform/ec2.tf,"g4dn.xlarge, latest Deep Learning AMI, public IP, 100GB gp3 root",Run GPU-oriented host workloads and supporting services,Inbound controlled by EC2 security group
+EC2 Lifecycle,Instance Shutdown Behavior,terraform/ec2.tf,instance_initiated_shutdown_behavior=terminate,Ephemeral instance behavior for shutdown actions,Instance terminated when shutdown initiated in guest OS
+Database,RDS PostgreSQL,terraform/rds.tf,"Postgres 15.7, db.t3.small, private subnets, non-public",Managed relational database for backend persistence,Port 5432 allowed only from EC2 SG + ECS task SG
+Container Orchestration,ECS Cluster,terraform/ecs.tf,aura-ecs-cluster,Logical container scheduling boundary,Hosts Fargate service
+Container Runtime,ECS Task Definition,terraform/ecs.tf,"Fargate, cpu=256, memory=512, Java image variable",Defines Java app runtime and logging,Logs pushed to CloudWatch Logs
+Container Service,ECS Service (Strict Spot),terraform/ecs.tf,"FARGATE_SPOT only, desired_count=1, assign_public_ip=true",Run Java workload at lower cost,Subject to spot interruptions/capacity availability
+Observability,CloudWatch Log Group,terraform/ecs.tf,"/ecs/aura-java-app, retention 14 days",Persist ECS container logs,Connected via awslogs driver
+Identity,EC2 IAM Role + Instance Profile,terraform/iam.tf,Role assumed by EC2 instance,Grant instance AWS API permissions,Attached to EC2 instance profile
+EC2 Permissions,IAM Managed Policies,terraform/iam.tf,"AmazonS3ReadOnlyAccess + CloudWatchAgentServerPolicy",Enable S3 read-only and CloudWatch agent usage,Policy-enforced IAM access
+Identity,ECS Task Execution Role,terraform/iam.tf,AmazonECSTaskExecutionRolePolicy,Allow task startup actions (image pull/log delivery),Used by ECS task definition
+Security,Security Group - Fargate Tasks,terraform/security.tf,Egress all,Allow outbound internet/service access for tasks,No explicit inbound rules
+Security,Security Group - EC2 Host,terraform/security.tf,"Inbound 22 from my_ip_address, inbound 8080-8081 from Fargate SG, egress all",Protect EC2 management + app ports,App ports limited to ECS task SG source
+Security,Security Group - RDS,terraform/security.tf,"Inbound 5432 from EC2 SG + Fargate SG, egress all",Restrict database connectivity to trusted compute SGs,No public DB ingress
+Inputs,Terraform Variables,terraform/variables.tf,"db_password, instance_key_name, my_ip_address (+ optional db_username/java_app_image)",Parameterize environment-specific deployment values,Supports secure and reusable deployments
+Outputs,Terraform Outputs,terraform/outputs.tf,rds_endpoint + ec2_public_ip + ecs_cluster_name,Expose key post-apply values,Consumed by operators/deployment workflows

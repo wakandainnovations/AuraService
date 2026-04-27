@@ -1,0 +1,8 @@
+Rule ID,Security Group,Direction,Protocol,Port Range,Source/Destination,Purpose,Terraform Source
+SGR-001,aura-fargate-sg,Egress,All,0-65535,0.0.0.0/0,Allow ECS Fargate tasks outbound internet/service access,terraform/security.tf (aws_security_group.fargate_sg egress)
+SGR-002,aura-ec2-sg,Ingress,TCP,22,my_ip_address variable,Allow SSH administration to EC2 from trusted operator IP,terraform/security.tf (aws_security_group.ec2_sg ingress SSH)
+SGR-003,aura-ec2-sg,Ingress,TCP,8080-8081,aura-fargate-sg,Allow ECS tasks to call Java services running on EC2 ports 8080-8081,terraform/security.tf (aws_security_group.ec2_sg ingress app ports)
+SGR-004,aura-ec2-sg,Egress,All,0-65535,0.0.0.0/0,Allow EC2 outbound traffic for package installs/AWS APIs/external calls,terraform/security.tf (aws_security_group.ec2_sg egress)
+SGR-005,aura-rds-sg,Ingress,TCP,5432,aura-ec2-sg,Allow PostgreSQL access from EC2-hosted services,terraform/security.tf (aws_security_group.rds_sg ingress from ec2_sg)
+SGR-006,aura-rds-sg,Ingress,TCP,5432,aura-fargate-sg,Allow PostgreSQL access from ECS Fargate tasks,terraform/security.tf (aws_security_group.rds_sg ingress from fargate_sg)
+SGR-007,aura-rds-sg,Egress,All,0-65535,0.0.0.0/0,Default outbound rule on RDS SG (stateful return traffic handled),terraform/security.tf (aws_security_group.rds_sg egress)

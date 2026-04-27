@@ -1,0 +1,7 @@
+Application,Primary Runtime,Host/Service,Listening Port(s),Outbound Dependencies,Inbound Allowed From,Data Store,Publicly Exposed,Notes
+AuraService (Backend API),Java Spring Boot,EC2 g4dn.xlarge,8080 (expected),Aura-LLM middleware localhost call and RDS PostgreSQL,From ECS task SG on EC2 SG ports 8080-8081,RDS PostgreSQL,Yes (via EC2 public path in current template),"Should remain the only externally reachable app endpoint"
+Aura-LLM (Middleware),Java service,EC2 g4dn.xlarge,1025 (app design),Ollama local API on 127.0.0.1:11434,Internal host traffic only,None,No,"Keep bound to localhost/private interface; not internet-facing"
+Ollama (LLM runtime),Ollama process,EC2 g4dn.xlarge,11434 (local API),Model files/local GPU execution,Internal host traffic only,None,No,"GPU workload driver for inference; consumed by Aura-LLM"
+Aura-Radix (Frontend),Static SPA (Vite/React),AWS Amplify Hosting,443 (HTTPS),Calls AuraService API endpoint over internet,End users via browser,None,Yes,"Uses JWT flow and API base URL; production should target AuraService public URL"
+ECS Java Spot Workload,Fargate Spot task,ECS/Fargate Spot,Container-specific (no fixed published port),Internet egress and optional calls to EC2 app ports 8080-8081,Not directly exposed; runs in task ENI,None,No,"assign_public_ip=true with strict spot mode; interruption risk exists"
+RDS PostgreSQL,Managed PostgreSQL,AWS RDS in private subnets,5432,None,Only from EC2 SG and Fargate SG,Self,No,"Private subnets without NAT; non-public DB endpoint"
