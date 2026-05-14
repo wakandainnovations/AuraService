@@ -3,8 +3,10 @@ package com.aura.service.service;
 import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.EntityBasicInfo;
 import com.aura.service.dto.EntityDetailResponse;
+import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateCompetitorsRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
+import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.ManagedEntityRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +29,7 @@ public class EntityService {
         entity.setType(entityType);
         entity.setDirector(request.getDirector());
         entity.setActors(request.getActors());
-        entity.setKeywords(request.getKeywords());
+        entity.setKeywords(toKeywordEntities(request.getKeywords()));
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
         }
@@ -76,13 +78,70 @@ public class EntityService {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
         
-        entity.setKeywords(request.getKeywords());
+        entity.setKeywords(toKeywordEntities(request.getKeywords()));
         
         entity = entityRepository.save(entity);
         
         return mapToDetailResponse(entity);
     }
     
+    private List<EntityKeyword> toKeywordEntities(List<KeywordDto> dtos) {
+        if (dtos == null) {
+            return List.of();
+        }
+        return dtos.stream()
+                .map(this::toKeywordEntity)
+                .collect(Collectors.toList());
+    }
+
+    private EntityKeyword toKeywordEntity(KeywordDto dto) {
+        validateKeyword(dto);
+        return new EntityKeyword(
+                dto.getKeyword(),
+                dto.getCategory(),
+                dto.getLanguage(),
+                dto.getState(),
+                dto.getIndustry()
+        );
+    }
+
+    private void validateKeyword(KeywordDto dto) {
+        String category = dto.getCategory();
+        if (category == null) {
+            return;
+        }
+        switch (category) {
+            case "media.movie" -> requireNonBlank(dto.getLanguage(),
+                    "language is required when category is 'media.movie'");
+            case "media.celebrity" -> requireNonBlank(dto.getIndustry(),
+                    "industry is required when category is 'media.celebrity'");
+            case "politics.party" -> requireNonBlank(dto.getState(),
+                    "state is required when category is 'politics.party'");
+            default -> {
+            }
+        }
+    }
+
+    private void requireNonBlank(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private List<KeywordDto> toKeywordDtos(List<EntityKeyword> keywords) {
+        if (keywords == null) {
+            return List.of();
+        }
+        return keywords.stream()
+                .map(k -> new KeywordDto(
+                        k.getKeyword(),
+                        k.getCategory(),
+                        k.getLanguage(),
+                        k.getState(),
+                        k.getIndustry()))
+                .collect(Collectors.toList());
+    }
+
     private EntityBasicInfo mapToBasicInfo(ManagedEntity entity) {
         EntityBasicInfo basicInfo = new EntityBasicInfo(entity.getId(), entity.getName(), entity.getType());
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
@@ -99,7 +158,7 @@ public class EntityService {
         response.setType(entity.getType());
         response.setDirector(entity.getDirector());
         response.setActors(entity.getActors());
-        response.setKeywords(entity.getKeywords());
+        response.setKeywords(toKeywordDtos(entity.getKeywords()));
         response.setCompetitors(
                 entity.getCompetitors().stream()
                         .map(this::mapToBasicInfo)

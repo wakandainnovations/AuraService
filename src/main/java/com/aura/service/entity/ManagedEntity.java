@@ -36,8 +36,7 @@ public class ManagedEntity {
     
     @ElementCollection
     @CollectionTable(name = "entity_keywords", joinColumns = @JoinColumn(name = "entity_id"))
-    @Column(name = "keyword")
-    private List<String> keywords = new ArrayList<>();
+    private List<EntityKeyword> keywords = new ArrayList<>();
     
     @ManyToMany
     @JoinTable(

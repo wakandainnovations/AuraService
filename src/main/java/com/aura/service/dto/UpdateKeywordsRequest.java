@@ -11,5 +11,5 @@ import java.util.ArrayList;
 @NoArgsConstructor
 @AllArgsConstructor
 public class UpdateKeywordsRequest {
-    private List<String> keywords = new ArrayList<>();
+    private List<KeywordDto> keywords = new ArrayList<>();
 }

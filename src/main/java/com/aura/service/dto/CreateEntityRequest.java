@@ -21,7 +21,7 @@ public class CreateEntityRequest {
     
     private List<String> actors = new ArrayList<>();
 
-    private List<String> keywords = new ArrayList<>();
+    private List<KeywordDto> keywords = new ArrayList<>();
 
     private LocalDate releaseDate;
 }
