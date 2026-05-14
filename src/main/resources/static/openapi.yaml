@@ -1,0 +1,342 @@
+openapi: 3.0.3
+info:
+  title: AuraService — AuraMath Proxy
+  version: 1.0.0
+  description: |
+    Thin proxy/wrapper service exposing /v1/** routes that forward to the upstream
+    AuraMath service. See the README for env-var configuration and curl examples.
+
+servers:
+  - url: /
+    description: This service
+
+tags:
+  - name: AuraMath Proxy
+  - name: Health
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness/readiness probe
+      description: Pings upstream `GET /v1/targets?minInfluenceScore=999999` and returns 200 if reachable.
+      responses:
+        '200': { description: Upstream reachable, $ref: '#/components/responses/HealthOk' }
+        '503': { description: Upstream unreachable, $ref: '#/components/responses/HealthDown' }
+
+  /v1/viral-seeds:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Viral seeds for a keyword (cacheable, 60s)
+      parameters:
+        - in: query
+          name: keyword
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/aspect-drivers/{keyword}:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Aspect drivers for a keyword (cacheable, 60s)
+      parameters:
+        - $ref: '#/components/parameters/KeywordPath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/top-spreaders/{keyword}:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Top spreaders for a keyword (cacheable, 60s)
+      parameters:
+        - $ref: '#/components/parameters/KeywordPath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/find-lookalikes:
+    post:
+      tags: [AuraMath Proxy]
+      summary: Find lookalike authors for a seed author
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FindLookalikesRequest'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '400':
+          description: Missing or blank seedAuthorId — upstream not called.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/users/{globalUserId}/profile:
+    get:
+      tags: [AuraMath Proxy]
+      summary: User profile by global user id (cacheable, 60s)
+      parameters:
+        - in: path
+          name: globalUserId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/users/{author}/report:
+    get:
+      tags: [AuraMath Proxy]
+      summary: User report (NOT cacheable — upstream persists a row)
+      parameters:
+        - in: path
+          name: author
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/users:
+    get:
+      tags: [AuraMath Proxy]
+      summary: List users with optional filters (cacheable, 60s)
+      parameters:
+        - in: query
+          name: audienceClassification
+          required: false
+          schema: { type: string }
+        - in: query
+          name: influenceTier
+          required: false
+          schema: { type: string }
+        - in: query
+          name: postingStyle
+          required: false
+          schema: { type: string }
+        - in: query
+          name: dominantTone
+          required: false
+          schema: { type: string }
+        - in: query
+          name: primaryPlatform
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/users/categories:
+    get:
+      tags: [AuraMath Proxy]
+      summary: List user categories (cacheable, 5 min)
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/users/sync:
+    post:
+      tags: [AuraMath Proxy]
+      summary: Trigger upstream user sync (NOT cacheable, long-running, 10-min read timeout)
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/genres/{genre}/potential-viewers:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Potential viewers for a genre (cacheable, 60s)
+      parameters:
+        - $ref: '#/components/parameters/GenrePath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/genres/{genre}/super-spreaders:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Super spreaders for a genre (cacheable, 60s)
+      parameters:
+        - $ref: '#/components/parameters/GenrePath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/genres/{genre}/channel-strategy:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Channel strategy for a genre (cacheable, 60s)
+      parameters:
+        - $ref: '#/components/parameters/GenrePath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/targets:
+    get:
+      tags: [AuraMath Proxy]
+      summary: List targets (cacheable, 60s)
+      parameters:
+        - in: query
+          name: genre
+          required: false
+          schema: { type: string }
+        - in: query
+          name: minInfluenceScore
+          required: false
+          schema:
+            type: number
+            format: double
+            default: 0.0
+        - in: query
+          name: platform
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/diagnostics/raw-mapping/{author}:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Diagnostic — raw author mapping (not cached)
+      parameters:
+        - $ref: '#/components/parameters/AuthorPath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/diagnostics/temporal-audit/{author}:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Diagnostic — temporal audit (not cached)
+      parameters:
+        - $ref: '#/components/parameters/AuthorPath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+  /v1/diagnostics/process-user/{author}:
+    get:
+      tags: [AuraMath Proxy]
+      summary: Diagnostic — process user (not cached). Upstream path is `/test/...`, not `/api/test/...`.
+      parameters:
+        - $ref: '#/components/parameters/AuthorPath'
+      responses:
+        '200': { $ref: '#/components/responses/PassthroughJson' }
+        '4XX': { $ref: '#/components/responses/UpstreamError' }
+        '5XX': { $ref: '#/components/responses/UpstreamError' }
+        '504': { $ref: '#/components/responses/UpstreamUnavailable' }
+
+components:
+  parameters:
+    KeywordPath:
+      in: path
+      name: keyword
+      required: true
+      schema: { type: string }
+    GenrePath:
+      in: path
+      name: genre
+      required: true
+      schema: { type: string }
+    AuthorPath:
+      in: path
+      name: author
+      required: true
+      schema: { type: string }
+
+  responses:
+    PassthroughJson:
+      description: Upstream 2xx response — body forwarded verbatim.
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: true }
+    UpstreamError:
+      description: Non-2xx upstream response wrapped with upstreamStatus + upstreamBody.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpstreamErrorEnvelope'
+    UpstreamUnavailable:
+      description: Connection error / timeout against upstream.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpstreamUnavailableEnvelope'
+    HealthOk:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, example: UP }
+              upstream: { type: string, example: reachable }
+    HealthDown:
+      description: Upstream unreachable
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, example: DOWN }
+              upstream: { type: string, example: unreachable }
+
+  schemas:
+    FindLookalikesRequest:
+      type: object
+      required: [seedAuthorId]
+      properties:
+        seedAuthorId:
+          type: string
+          minLength: 1
+          description: Non-blank seed author identifier.
+    UpstreamErrorEnvelope:
+      type: object
+      properties:
+        upstreamStatus: { type: integer }
+        upstreamBody: {}
+    UpstreamUnavailableEnvelope:
+      type: object
+      properties:
+        error: { type: string, enum: [upstream_unavailable] }
+        endpoint: { type: string }

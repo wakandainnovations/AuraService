@@ -1169,6 +1169,142 @@ This project is licensed under the MIT License.
 
 ---
 
+## AuraMath Proxy (`/v1/**`, `/healthz`)
+
+AuraService also exposes a thin REST proxy in front of the upstream **AuraMath** service. Each wrapper endpoint forwards path/query/body verbatim to the corresponding upstream route, preserves upstream HTTP status codes, and applies a 60-second in-memory TTL cache to read-only endpoints (5 minutes for `/v1/users/categories`).
+
+### Configuration
+
+| Env var / property | Default | Description |
+| --- | --- | --- |
+| `AURAMATH_BASE_URL` / `auramath.base-url` | `http://localhost:8081` | Upstream AuraMath base URL. |
+| `auramath.connect-timeout-ms` | `30000` | Connection timeout for the pooled WebClient. |
+| `auramath.read-timeout-ms` | `60000` | Default response/read timeout. |
+| `auramath.sync-read-timeout-ms` | `600000` | Read timeout used only for `POST /v1/users/sync` (10 min). |
+| `auramath.cache.default-ttl-seconds` | `60` | TTL for cacheable GET endpoints. |
+| `auramath.cache.categories-ttl-seconds` | `300` | TTL for `/v1/users/categories`. |
+| `auramath.cache.max-entries` | `1000` | Max entries in the in-memory cache. |
+
+Wrapper paths (`/v1/**`, `/healthz`, `/openapi.yaml`, `/v3/api-docs/**`, `/swagger-ui/**`) are permitted without JWT authentication — the upstream is responsible for its own auth.
+
+### Run
+
+```bash
+export AURAMATH_BASE_URL=http://localhost:8081
+mvn spring-boot:run
+```
+
+OpenAPI spec is served three ways:
+- Static YAML: `http://localhost:8080/openapi.yaml`
+- Springdoc JSON: `http://localhost:8080/v3/api-docs`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+
+### Liveness/readiness
+
+```bash
+curl -s http://localhost:8080/healthz
+# {"status":"UP","upstream":"reachable"}
+```
+
+### Error envelopes
+
+- Connection error / timeout → HTTP `504` with body:
+  ```json
+  { "error": "upstream_unavailable", "endpoint": "/v1/<path>" }
+  ```
+- Upstream non-2xx → original status code with body:
+  ```json
+  { "upstreamStatus": <code>, "upstreamBody": <original_body_or_text> }
+  ```
+
+### Endpoint reference
+
+Below, `$BASE=http://localhost:8080` is the wrapper service. All bodies are forwarded verbatim.
+
+| # | Wrapper | Upstream | Cache |
+| --: | --- | --- | --- |
+| 1 | `GET /v1/viral-seeds?keyword=<k>` | `GET /api/marketing/viral-seeds?keyword=<k>` | 60 s |
+| 2 | `GET /v1/aspect-drivers/{keyword}` | `GET /api/marketing/aspect-drivers/{keyword}` | 60 s |
+| 3 | `GET /v1/top-spreaders/{keyword}` | `GET /api/marketing/top-50-spreaders/{keyword}` | 60 s |
+| 4 | `POST /v1/find-lookalikes` | `POST /api/marketing/find-lookalikes` | — |
+| 5 | `GET /v1/users/{globalUserId}/profile` | `GET /api/marketing/user-profile/{globalUserId}` | 60 s |
+| 6 | `GET /v1/users/{author}/report` | `GET /api/marketing/user-report/{author}` | — (side-effect) |
+| 7 | `GET /v1/users?…` | `GET /api/marketing/users?…` | 60 s |
+| 8 | `GET /v1/users/categories` | `GET /api/marketing/users/categories` | 5 min |
+| 9 | `POST /v1/users/sync` | `POST /api/marketing/users/sync` | — (10-min read timeout) |
+| 10 | `GET /v1/genres/{genre}/potential-viewers` | `GET /api/marketing/genre/{genre}/potential-viewers` | 60 s |
+| 11 | `GET /v1/genres/{genre}/super-spreaders` | `GET /api/marketing/genre/{genre}/super-spreaders` | 60 s |
+| 12 | `GET /v1/genres/{genre}/channel-strategy` | `GET /api/marketing/genre/{genre}/channel-strategy` | 60 s |
+| 13 | `GET /v1/targets?…` | `GET /v1/targets?…` | 60 s |
+| 14 | `GET /v1/diagnostics/raw-mapping/{author}` | `GET /api/test/raw-mapping/{author}` | — |
+| 15 | `GET /v1/diagnostics/temporal-audit/{author}` | `GET /api/test/temporal-audit/{author}` | — |
+| 16 | `GET /v1/diagnostics/process-user/{author}` | `GET /test/process-user/{author}` (note: `/test`, not `/api/test`) | — |
+
+```bash
+# 1. Viral seeds
+curl -s "$BASE/v1/viral-seeds?keyword=fantasy"
+
+# 2. Aspect drivers
+curl -s "$BASE/v1/aspect-drivers/fantasy"
+
+# 3. Top spreaders
+curl -s "$BASE/v1/top-spreaders/fantasy"
+
+# 4. Find lookalikes  (400 if seedAuthorId missing or blank; no upstream call)
+curl -s -X POST "$BASE/v1/find-lookalikes" \
+     -H 'Content-Type: application/json' \
+     -d '{"seedAuthorId":"author-123"}'
+
+# 5. User profile
+curl -s "$BASE/v1/users/u-42/profile"
+
+# 6. User report (upstream persists a categorisation row — NOT cached)
+curl -s "$BASE/v1/users/alice/report"
+
+# 7. Users with optional filters
+curl -s "$BASE/v1/users?audienceClassification=GenZ&influenceTier=TIER_1&primaryPlatform=TWITTER"
+
+# 8. User categories (5-min TTL)
+curl -s "$BASE/v1/users/categories"
+
+# 9. Trigger upstream user sync (slow; 10-min read timeout)
+curl -s -X POST "$BASE/v1/users/sync"
+
+# 10. Potential viewers for a genre
+curl -s "$BASE/v1/genres/thriller/potential-viewers"
+
+# 11. Super spreaders for a genre
+curl -s "$BASE/v1/genres/sci-fi/super-spreaders"
+
+# 12. Channel strategy for a genre
+curl -s "$BASE/v1/genres/horror/channel-strategy"
+
+# 13. Targets with optional filters (minInfluenceScore defaults to 0.0)
+curl -s "$BASE/v1/targets?genre=drama&minInfluenceScore=12.5&platform=TIKTOK"
+
+# 14. Diagnostic: raw author mapping
+curl -s "$BASE/v1/diagnostics/raw-mapping/alice"
+
+# 15. Diagnostic: temporal audit
+curl -s "$BASE/v1/diagnostics/temporal-audit/alice"
+
+# 16. Diagnostic: process user (upstream path is /test/..., not /api/test/...)
+curl -s "$BASE/v1/diagnostics/process-user/alice"
+```
+
+### Tests
+
+Proxy tests live in `src/test/java/com/aura/service/proxy/` and run against a stubbed upstream via `okhttp3.mockwebserver`:
+
+- `AuraMathProxyControllerTest` — one happy-path test per wrapper endpoint plus `/healthz`, cache-hit, non-2xx envelope, and the missing-`seedAuthorId` → 400 (without upstream call) test.
+- `AuraMathProxyUnavailableTest` — points the WebClient at a closed port and asserts `504` with the `{error: upstream_unavailable}` envelope.
+
+```bash
+mvn test -Dtest='AuraMathProxy*'
+```
+
+---
+
 ## Support
 
 For issues or questions, please contact the development team

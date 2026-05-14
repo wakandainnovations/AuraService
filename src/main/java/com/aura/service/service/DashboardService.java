@@ -16,10 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -141,6 +138,7 @@ public class DashboardService {
         List<EntitySentimentData> entitySentiments = new ArrayList<>();
         
         Instant endDate = Instant.now();
+//        Instant endDate = ZonedDateTime.of(2026, 3, 16, 0, 0, 0, 0, ZoneOffset.UTC).toInstant();
         Instant startDate = calculateStartDate(period, endDate);
         
         for (Long currentEntityId : entityIds) {
