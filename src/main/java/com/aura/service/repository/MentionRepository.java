@@ -126,4 +126,32 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             @Param("industry") String industry,
             @Param("state") String state
     );
+
+    @Query(value = "SELECT " +
+            "  TO_CHAR(m.post_date AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, " +
+            "  EXTRACT(HOUR FROM m.post_date AT TIME ZONE 'UTC') AS hour, " +
+            "  COUNT(DISTINCT m.author) AS active_users " +
+            "FROM mentions m " +
+            "WHERE m.managed_entity_id = :entityId " +
+            "  AND m.post_date >= :startDate " +
+            "  AND m.post_date <= :endDate " +
+            "  AND EXISTS ( " +
+            "    SELECT 1 FROM entity_keywords ek " +
+            "    WHERE ek.entity_id = m.managed_entity_id " +
+            "      AND (CAST(:language AS TEXT) IS NULL OR ek.language = CAST(:language AS TEXT)) " +
+            "      AND (CAST(:industry AS TEXT) IS NULL OR ek.industry = CAST(:industry AS TEXT)) " +
+            "      AND (CAST(:state    AS TEXT) IS NULL OR ek.state    = CAST(:state    AS TEXT)) " +
+            "      AND m.content ILIKE '%' || ek.keyword || '%' " +
+            "  ) " +
+            "GROUP BY day, hour " +
+            "ORDER BY day, hour",
+            nativeQuery = true)
+    List<Object[]> countActiveUsersByDayAndHour(
+            @Param("entityId") Long entityId,
+            @Param("startDate") Instant startDate,
+            @Param("endDate") Instant endDate,
+            @Param("language") String language,
+            @Param("industry") String industry,
+            @Param("state") String state
+    );
 }

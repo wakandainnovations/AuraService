@@ -840,9 +840,9 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
 
 **Endpoint:** `GET /api/dashboard/{entityId}/hourly-activity`
 
-**Description:** Get the hour-of-day distribution (0-23) of distinct active users for an entity over a given period, optionally narrowed by language, industry, or state tags from `entity_keywords`. Powers the "best time to post" chart for the marketing team.
+**Description:** Get the per-day, hour-of-day distribution (0-23) of distinct active users for an entity over a given period, plus a period-wide aggregate. Optionally narrowed by language, industry, or state tags from `entity_keywords`. Powers the "best time to post" heatmap for the marketing team.
 
-A mention counts toward the distribution when its `content` matches (case-insensitive `ILIKE`) one of the entity's keywords whose `language`/`industry`/`state` matches every supplied filter. With no filters, all of the entity's keywords are considered.
+A mention counts toward the distribution when its `content` matches (case-insensitive `ILIKE`) one of the entity's keywords whose `language`/`industry`/`state` matches every supplied filter. With no filters, all of the entity's keywords are considered. All dates and hours are in **UTC**.
 
 **Headers:**
 ```
@@ -860,34 +860,50 @@ Authorization: Bearer {jwt_token}
 
 **Example Request:**
 ```
-GET /api/dashboard/6/hourly-activity?period=MONTH6&language=tamil
+GET /api/dashboard/21/hourly-activity?period=DAY
 ```
 
-**Response:**
+**Response (truncated for readability):**
 ```json
 {
-  "entityId": 6,
-  "entityName": "Parasakthi",
-  "period": "MONTH6",
-  "startDate": "2025-11-16T11:59:12.796809Z",
-  "endDate": "2026-05-16T11:59:12.796809Z",
-  "language": "tamil",
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "period": "DAY",
+  "startDate": "2026-05-10T12:00:00Z",
+  "endDate": "2026-05-17T12:00:00Z",
+  "language": null,
   "industry": null,
   "state": null,
-  "totalActiveUsers": 422,
+  "totalActiveUsers": 0,
   "hourlyDistribution": {
-    "0": 21, "1": 4,  "2": 9,  "3": 10, "4": 22, "5": 32,
-    "6": 25, "7": 13, "8": 15, "9": 4,  "10": 17,"11": 8,
-    "12": 13,"13": 18,"14": 4, "15": 26,"16": 41,"17": 58,
-    "18": 23,"19": 49,"20": 7, "21": 18,"22": 25,"23": 12
+    "0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 0,
+    "6": 0, "7": 0, "8": 0, "9": 0, "10": 0, "11": 0,
+    "12": 0, "13": 0, "14": 0, "15": 0, "16": 0, "17": 0,
+    "18": 0, "19": 0, "20": 0, "21": 0, "22": 0, "23": 0
+  },
+  "dailyDistribution": {
+    "2026-05-10": { "0": 0, "1": 0, "...": "...", "22": 1, "23": 0 },
+    "2026-05-11": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-12": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-13": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-14": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-15": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-16": { "0": 0, "1": 0, "...": "...", "23": 0 },
+    "2026-05-17": { "0": 0, "1": 0, "...": "...", "23": 0 }
   }
 }
 ```
 
+**Response fields:**
+- `hourlyDistribution` — period-wide aggregate: distinct active authors per hour-of-day (0-23) across the entire window. Always a complete 0-23 map.
+- `dailyDistribution` — per-day breakdown: every calendar day in the `[startDate, endDate]` window mapped to a complete 0-23 hour map. Each value is the count of distinct active authors for that specific day-hour. The number of days returned matches the period: ~8 for `DAY`, ~16 for `DAY15`, ~31 for `DAY30`, ~85 for `WEEK`, ~182 for `MONTH6`, ~366 for `MONTH`.
+- `totalActiveUsers` — distinct authors across the whole window. Not the sum of the buckets (an author active in multiple hours/days is counted once here, but in every bucket they appear in).
+
 **Notes:**
-- `hourlyDistribution` is always a complete 0-23 map (zeros where no users were active), so the UI can plot it directly without filling gaps.
-- `totalActiveUsers` is the count of distinct authors over the whole window, not the sum of the 24 buckets (an author active in multiple hours is counted once).
+- All hour/day bucketing uses UTC, matching the `startDate`/`endDate` fields.
+- Every day in the window is present in `dailyDistribution`, even days with zero activity (the UI can render a heatmap directly without filling gaps).
 - If no filters match any of the entity's keywords, all buckets and `totalActiveUsers` are zero.
+- Response size grows linearly with the period: `MONTH6` returns ~4,300 day-hour entries, `MONTH` returns ~8,800.
 
 **Status Code:** `200 OK`
 

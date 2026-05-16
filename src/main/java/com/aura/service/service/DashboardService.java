@@ -344,6 +344,30 @@ public class DashboardService {
                 entityId, startDate, endDate, language, industry, state
         );
 
+        Map<String, Map<Integer, Long>> dailyDistribution = new LinkedHashMap<>();
+        LocalDate startDay = LocalDate.ofInstant(startDate, ZoneOffset.UTC);
+        LocalDate endDay = LocalDate.ofInstant(endDate, ZoneOffset.UTC);
+        for (LocalDate d = startDay; !d.isAfter(endDay); d = d.plusDays(1)) {
+            Map<Integer, Long> hours = new LinkedHashMap<>();
+            for (int h = 0; h < 24; h++) {
+                hours.put(h, 0L);
+            }
+            dailyDistribution.put(d.toString(), hours);
+        }
+
+        List<Object[]> dailyRows = mentionRepository.countActiveUsersByDayAndHour(
+                entityId, startDate, endDate, language, industry, state
+        );
+        for (Object[] row : dailyRows) {
+            String day = (String) row[0];
+            int hour = ((Number) row[1]).intValue();
+            long count = ((Number) row[2]).longValue();
+            Map<Integer, Long> hours = dailyDistribution.get(day);
+            if (hours != null) {
+                hours.put(hour, count);
+            }
+        }
+
         return new HourlyActivityResponse(
                 entityId,
                 entity.getName(),
@@ -354,7 +378,8 @@ public class DashboardService {
                 industry,
                 state,
                 totalActiveUsers,
-                distribution
+                distribution,
+                dailyDistribution
         );
     }
 

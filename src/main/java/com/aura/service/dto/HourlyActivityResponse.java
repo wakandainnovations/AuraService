@@ -22,4 +22,5 @@ public class HourlyActivityResponse {
     private String state;
     private long totalActiveUsers;
     private Map<Integer, Long> hourlyDistribution;
+    private Map<String, Map<Integer, Long>> dailyDistribution;
 }
