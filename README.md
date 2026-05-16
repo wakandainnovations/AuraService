@@ -989,6 +989,374 @@ GET /api/analytics/11
 
 ---
 
+## AuraMath Proxy APIs
+
+The following endpoints are thin wrappers over the upstream **AuraMath** service. Each wrapper forwards the request to the corresponding upstream route verbatim and preserves the upstream HTTP status code. Wrapper paths (`/v1/**`) **do not** require JWT authentication — the upstream service is responsible for its own auth. See the [AuraMath Proxy](#auramath-proxy-v1-healthz) section below for configuration, error envelopes, and runtime details.
+
+### 21. Get Viral Seeds
+
+**Endpoint:** `GET /v1/viral-seeds`
+
+**Description:** Get viral seed authors for a keyword. Forwards to upstream `GET /api/marketing/viral-seeds`.
+
+**Authentication:** Not required
+
+**Query Parameters:**
+- `keyword` (required) - The keyword to search for viral seeds
+
+**Example Request:**
+```
+GET /v1/viral-seeds?keyword=fantasy
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 22. Get Aspect Drivers
+
+**Endpoint:** `GET /v1/aspect-drivers/{keyword}`
+
+**Description:** Get aspect drivers for a keyword. Forwards to upstream `GET /api/marketing/aspect-drivers/{keyword}`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `keyword` - The keyword to get aspect drivers for
+
+**Example Request:**
+```
+GET /v1/aspect-drivers/fantasy
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 23. Get Top Spreaders
+
+**Endpoint:** `GET /v1/top-spreaders/{keyword}`
+
+**Description:** Get the top 50 spreaders for a keyword. Forwards to upstream `GET /api/marketing/top-50-spreaders/{keyword}`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `keyword` - The keyword to get top spreaders for
+
+**Example Request:**
+```
+GET /v1/top-spreaders/fantasy
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 24. Find Lookalikes
+
+**Endpoint:** `POST /v1/find-lookalikes`
+
+**Description:** Find lookalike authors given a seed author. Forwards to upstream `POST /api/marketing/find-lookalikes`. Returns `400` without calling upstream if `seedAuthorId` is missing or blank.
+
+**Authentication:** Not required
+
+**Request Body:**
+```json
+{
+  "seedAuthorId": "author-123"
+}
+```
+
+**Example Request:**
+```
+POST /v1/find-lookalikes
+Content-Type: application/json
+
+{"seedAuthorId":"author-123"}
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+**Validation Error (400 Bad Request):**
+```json
+{ "error": "seedAuthorId is required and must be non-blank" }
+```
+
+---
+
+### 25. Get User Profile
+
+**Endpoint:** `GET /v1/users/{globalUserId}/profile`
+
+**Description:** Get a user profile by global user ID. Forwards to upstream `GET /api/marketing/user-profile/{globalUserId}`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `globalUserId` - The global user ID
+
+**Example Request:**
+```
+GET /v1/users/u-42/profile
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 26. Get User Report
+
+**Endpoint:** `GET /v1/users/{author}/report`
+
+**Description:** Get a user report by author. Forwards to upstream `GET /api/marketing/user-report/{author}`. **NOT cached** because the upstream persists a categorisation row as a side-effect.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `author` - The author identifier
+
+**Example Request:**
+```
+GET /v1/users/alice/report
+```
+
+**Cache:** Not cached (upstream has side-effects)
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 27. List Users
+
+**Endpoint:** `GET /v1/users`
+
+**Description:** List users with optional filters. Forwards to upstream `GET /api/marketing/users`.
+
+**Authentication:** Not required
+
+**Query Parameters (all optional):**
+- `audienceClassification` - e.g., `GenZ`
+- `influenceTier` - e.g., `TIER_1`
+- `postingStyle`
+- `dominantTone`
+- `primaryPlatform` - e.g., `TWITTER`
+
+**Example Request:**
+```
+GET /v1/users?audienceClassification=GenZ&influenceTier=TIER_1&primaryPlatform=TWITTER
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 28. Get User Categories
+
+**Endpoint:** `GET /v1/users/categories`
+
+**Description:** List user categories. Forwards to upstream `GET /api/marketing/users/categories`.
+
+**Authentication:** Not required
+
+**Example Request:**
+```
+GET /v1/users/categories
+```
+
+**Cache:** 5-minute TTL (longer than the default 60 s)
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 29. Trigger User Sync
+
+**Endpoint:** `POST /v1/users/sync`
+
+**Description:** Trigger a full upstream user sync. Long-running; the wrapper uses an extended 10-minute read timeout for this endpoint. Forwards to upstream `POST /api/marketing/users/sync`.
+
+**Authentication:** Not required
+
+**Example Request:**
+```
+POST /v1/users/sync
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 30. Get Potential Viewers for a Genre
+
+**Endpoint:** `GET /v1/genres/{genre}/potential-viewers`
+
+**Description:** Get potential viewers for a genre. Forwards to upstream `GET /api/marketing/genre/{genre}/potential-viewers`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `genre` - The genre name (e.g., `thriller`)
+
+**Example Request:**
+```
+GET /v1/genres/thriller/potential-viewers
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 31. Get Super Spreaders for a Genre
+
+**Endpoint:** `GET /v1/genres/{genre}/super-spreaders`
+
+**Description:** Get super spreaders for a genre. Forwards to upstream `GET /api/marketing/genre/{genre}/super-spreaders`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `genre` - The genre name (e.g., `sci-fi`)
+
+**Example Request:**
+```
+GET /v1/genres/sci-fi/super-spreaders
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 32. Get Channel Strategy for a Genre
+
+**Endpoint:** `GET /v1/genres/{genre}/channel-strategy`
+
+**Description:** Get the channel strategy for a genre. Forwards to upstream `GET /api/marketing/genre/{genre}/channel-strategy`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `genre` - The genre name (e.g., `horror`)
+
+**Example Request:**
+```
+GET /v1/genres/horror/channel-strategy
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 33. List Targets
+
+**Endpoint:** `GET /v1/targets`
+
+**Description:** List targets with optional filters. Forwards to upstream `GET /v1/targets` (same path, not under `/api/marketing`).
+
+**Authentication:** Not required
+
+**Query Parameters:**
+- `genre` (optional) - Genre filter
+- `minInfluenceScore` (optional) - Minimum influence score; defaults to `0.0`
+- `platform` (optional) - Platform filter (e.g., `TIKTOK`)
+
+**Example Request:**
+```
+GET /v1/targets?genre=drama&minInfluenceScore=12.5&platform=TIKTOK
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 34. Diagnostic: Raw Author Mapping
+
+**Endpoint:** `GET /v1/diagnostics/raw-mapping/{author}`
+
+**Description:** Get raw author mapping diagnostic info. Forwards to upstream `GET /api/test/raw-mapping/{author}`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `author` - The author identifier
+
+**Example Request:**
+```
+GET /v1/diagnostics/raw-mapping/alice
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 35. Diagnostic: Temporal Audit
+
+**Endpoint:** `GET /v1/diagnostics/temporal-audit/{author}`
+
+**Description:** Get temporal audit diagnostic info for an author. Forwards to upstream `GET /api/test/temporal-audit/{author}`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `author` - The author identifier
+
+**Example Request:**
+```
+GET /v1/diagnostics/temporal-audit/alice
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 36. Diagnostic: Process User
+
+**Endpoint:** `GET /v1/diagnostics/process-user/{author}`
+
+**Description:** Trigger upstream user processing. Forwards to upstream `GET /test/process-user/{author}` — **note:** the upstream path is `/test/...`, NOT `/api/test/...`.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `author` - The author identifier
+
+**Example Request:**
+```
+GET /v1/diagnostics/process-user/alice
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
 ## Error Responses
 
 All endpoints may return the following error responses:
@@ -1219,78 +1587,7 @@ curl -s http://localhost:8080/healthz
 
 ### Endpoint reference
 
-Below, `$BASE=http://localhost:8080` is the wrapper service. All bodies are forwarded verbatim.
-
-| # | Wrapper | Upstream | Cache |
-| --: | --- | --- | --- |
-| 1 | `GET /v1/viral-seeds?keyword=<k>` | `GET /api/marketing/viral-seeds?keyword=<k>` | 60 s |
-| 2 | `GET /v1/aspect-drivers/{keyword}` | `GET /api/marketing/aspect-drivers/{keyword}` | 60 s |
-| 3 | `GET /v1/top-spreaders/{keyword}` | `GET /api/marketing/top-50-spreaders/{keyword}` | 60 s |
-| 4 | `POST /v1/find-lookalikes` | `POST /api/marketing/find-lookalikes` | — |
-| 5 | `GET /v1/users/{globalUserId}/profile` | `GET /api/marketing/user-profile/{globalUserId}` | 60 s |
-| 6 | `GET /v1/users/{author}/report` | `GET /api/marketing/user-report/{author}` | — (side-effect) |
-| 7 | `GET /v1/users?…` | `GET /api/marketing/users?…` | 60 s |
-| 8 | `GET /v1/users/categories` | `GET /api/marketing/users/categories` | 5 min |
-| 9 | `POST /v1/users/sync` | `POST /api/marketing/users/sync` | — (10-min read timeout) |
-| 10 | `GET /v1/genres/{genre}/potential-viewers` | `GET /api/marketing/genre/{genre}/potential-viewers` | 60 s |
-| 11 | `GET /v1/genres/{genre}/super-spreaders` | `GET /api/marketing/genre/{genre}/super-spreaders` | 60 s |
-| 12 | `GET /v1/genres/{genre}/channel-strategy` | `GET /api/marketing/genre/{genre}/channel-strategy` | 60 s |
-| 13 | `GET /v1/targets?…` | `GET /v1/targets?…` | 60 s |
-| 14 | `GET /v1/diagnostics/raw-mapping/{author}` | `GET /api/test/raw-mapping/{author}` | — |
-| 15 | `GET /v1/diagnostics/temporal-audit/{author}` | `GET /api/test/temporal-audit/{author}` | — |
-| 16 | `GET /v1/diagnostics/process-user/{author}` | `GET /test/process-user/{author}` (note: `/test`, not `/api/test`) | — |
-
-```bash
-# 1. Viral seeds
-curl -s "$BASE/v1/viral-seeds?keyword=fantasy"
-
-# 2. Aspect drivers
-curl -s "$BASE/v1/aspect-drivers/fantasy"
-
-# 3. Top spreaders
-curl -s "$BASE/v1/top-spreaders/fantasy"
-
-# 4. Find lookalikes  (400 if seedAuthorId missing or blank; no upstream call)
-curl -s -X POST "$BASE/v1/find-lookalikes" \
-     -H 'Content-Type: application/json' \
-     -d '{"seedAuthorId":"author-123"}'
-
-# 5. User profile
-curl -s "$BASE/v1/users/u-42/profile"
-
-# 6. User report (upstream persists a categorisation row — NOT cached)
-curl -s "$BASE/v1/users/alice/report"
-
-# 7. Users with optional filters
-curl -s "$BASE/v1/users?audienceClassification=GenZ&influenceTier=TIER_1&primaryPlatform=TWITTER"
-
-# 8. User categories (5-min TTL)
-curl -s "$BASE/v1/users/categories"
-
-# 9. Trigger upstream user sync (slow; 10-min read timeout)
-curl -s -X POST "$BASE/v1/users/sync"
-
-# 10. Potential viewers for a genre
-curl -s "$BASE/v1/genres/thriller/potential-viewers"
-
-# 11. Super spreaders for a genre
-curl -s "$BASE/v1/genres/sci-fi/super-spreaders"
-
-# 12. Channel strategy for a genre
-curl -s "$BASE/v1/genres/horror/channel-strategy"
-
-# 13. Targets with optional filters (minInfluenceScore defaults to 0.0)
-curl -s "$BASE/v1/targets?genre=drama&minInfluenceScore=12.5&platform=TIKTOK"
-
-# 14. Diagnostic: raw author mapping
-curl -s "$BASE/v1/diagnostics/raw-mapping/alice"
-
-# 15. Diagnostic: temporal audit
-curl -s "$BASE/v1/diagnostics/temporal-audit/alice"
-
-# 16. Diagnostic: process user (upstream path is /test/..., not /api/test/...)
-curl -s "$BASE/v1/diagnostics/process-user/alice"
-```
+The 16 wrapper endpoints are documented in detail as APIs #21–#36 in the [AuraMath Proxy APIs](#auramath-proxy-apis) section above.
 
 ### Tests
 
