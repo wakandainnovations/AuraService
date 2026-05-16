@@ -77,4 +77,53 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "WHERE managed_entity_id IN (:entityIds)",
             nativeQuery = true)
     List<Mention> findUnionOfMentions(@Param("entityIds") List<Long> entityIds);
+
+    @Query(value = "SELECT EXTRACT(HOUR FROM m.post_date) AS hour, " +
+            "COUNT(DISTINCT m.author) AS active_users " +
+            "FROM mentions m " +
+            "WHERE m.managed_entity_id = :entityId " +
+            "  AND m.post_date >= :startDate " +
+            "  AND m.post_date <= :endDate " +
+            "  AND EXISTS ( " +
+            "    SELECT 1 FROM entity_keywords ek " +
+            "    WHERE ek.entity_id = m.managed_entity_id " +
+            "      AND (CAST(:language AS TEXT) IS NULL OR ek.language = CAST(:language AS TEXT)) " +
+            "      AND (CAST(:industry AS TEXT) IS NULL OR ek.industry = CAST(:industry AS TEXT)) " +
+            "      AND (CAST(:state    AS TEXT) IS NULL OR ek.state    = CAST(:state    AS TEXT)) " +
+            "      AND m.content ILIKE '%' || ek.keyword || '%' " +
+            "  ) " +
+            "GROUP BY EXTRACT(HOUR FROM m.post_date) " +
+            "ORDER BY hour",
+            nativeQuery = true)
+    List<Object[]> countActiveUsersByHour(
+            @Param("entityId") Long entityId,
+            @Param("startDate") Instant startDate,
+            @Param("endDate") Instant endDate,
+            @Param("language") String language,
+            @Param("industry") String industry,
+            @Param("state") String state
+    );
+
+    @Query(value = "SELECT COUNT(DISTINCT m.author) " +
+            "FROM mentions m " +
+            "WHERE m.managed_entity_id = :entityId " +
+            "  AND m.post_date >= :startDate " +
+            "  AND m.post_date <= :endDate " +
+            "  AND EXISTS ( " +
+            "    SELECT 1 FROM entity_keywords ek " +
+            "    WHERE ek.entity_id = m.managed_entity_id " +
+            "      AND (CAST(:language AS TEXT) IS NULL OR ek.language = CAST(:language AS TEXT)) " +
+            "      AND (CAST(:industry AS TEXT) IS NULL OR ek.industry = CAST(:industry AS TEXT)) " +
+            "      AND (CAST(:state    AS TEXT) IS NULL OR ek.state    = CAST(:state    AS TEXT)) " +
+            "      AND m.content ILIKE '%' || ek.keyword || '%' " +
+            "  )",
+            nativeQuery = true)
+    long countDistinctActiveUsers(
+            @Param("entityId") Long entityId,
+            @Param("startDate") Instant startDate,
+            @Param("endDate") Instant endDate,
+            @Param("language") String language,
+            @Param("industry") String industry,
+            @Param("state") String state
+    );
 }

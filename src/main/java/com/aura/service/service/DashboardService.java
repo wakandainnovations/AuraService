@@ -166,6 +166,7 @@ public class DashboardService {
             case DAY30 -> endDate.minus(30, ChronoUnit.DAYS);
             case WEEK -> zonedDateTime.minusWeeks(12).toInstant();
             case MONTH -> zonedDateTime.minusMonths(12).toInstant();
+            case MONTH6 -> zonedDateTime.minusMonths(6).toInstant();
         };
     }
     
@@ -210,6 +211,7 @@ public class DashboardService {
             case DAY30 -> DateTimeFormatter.ofPattern("yyyy-MM-dd");
             case WEEK -> DateTimeFormatter.ofPattern("yyyy-'W'ww");
             case MONTH -> DateTimeFormatter.ofPattern("yyyy-MM");
+            case MONTH6 -> DateTimeFormatter.ofPattern("yyyy-MM");
         };
     }
     
@@ -225,6 +227,7 @@ public class DashboardService {
             case DAY30 -> instant.plus(1, ChronoUnit.DAYS);
             case WEEK -> zonedDateTime.plusWeeks(1).toInstant();
             case MONTH -> zonedDateTime.plusMonths(1).toInstant();
+            case MONTH6 -> zonedDateTime.plusMonths(1).toInstant();
         };
     }
     
@@ -310,6 +313,51 @@ public class DashboardService {
         return mentionPage.map(this::mapToMentionResponse);
     }
     
+    public HourlyActivityResponse getHourlyActivity(
+            Long entityId,
+            TimePeriod period,
+            String language,
+            String industry,
+            String state
+    ) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        Instant endDate = Instant.now();
+        Instant startDate = calculateStartDate(period, endDate);
+
+        Map<Integer, Long> distribution = new LinkedHashMap<>();
+        for (int h = 0; h < 24; h++) {
+            distribution.put(h, 0L);
+        }
+
+        List<Object[]> rows = mentionRepository.countActiveUsersByHour(
+                entityId, startDate, endDate, language, industry, state
+        );
+        for (Object[] row : rows) {
+            int hour = ((Number) row[0]).intValue();
+            long count = ((Number) row[1]).longValue();
+            distribution.put(hour, count);
+        }
+
+        long totalActiveUsers = mentionRepository.countDistinctActiveUsers(
+                entityId, startDate, endDate, language, industry, state
+        );
+
+        return new HourlyActivityResponse(
+                entityId,
+                entity.getName(),
+                period,
+                startDate,
+                endDate,
+                language,
+                industry,
+                state,
+                totalActiveUsers,
+                distribution
+        );
+    }
+
     private MentionResponse mapToMentionResponse(Mention mention) {
         return new MentionResponse(
                 mention.getId(),

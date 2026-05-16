@@ -5,5 +5,6 @@ public enum TimePeriod {
     DAY15,
     DAY30,
     WEEK,
-    MONTH
+    MONTH,
+    MONTH6
 }

@@ -72,6 +72,20 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
     
+    @GetMapping("/{entityId}/hourly-activity")
+    public ResponseEntity<HourlyActivityResponse> getHourlyActivity(
+            @PathVariable Long entityId,
+            @RequestParam TimePeriod period,
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) String industry,
+            @RequestParam(required = false) String state
+    ) {
+        HourlyActivityResponse response = dashboardService.getHourlyActivity(
+                entityId, period, language, industry, state
+        );
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{entityId}/mentions")
     public ResponseEntity<Page<MentionResponse>> getMentions(
             @PathVariable Long entityId,
