@@ -9,6 +9,7 @@ public class AuraMathProperties {
     private int connectTimeoutMs = 30_000;
     private int readTimeoutMs = 60_000;
     private int syncReadTimeoutMs = 600_000;
+    private int marketingTimeoutMs = 15_000;
     private Cache cache = new Cache();
 
     public String getBaseUrl() { return baseUrl; }
@@ -23,12 +24,16 @@ public class AuraMathProperties {
     public int getSyncReadTimeoutMs() { return syncReadTimeoutMs; }
     public void setSyncReadTimeoutMs(int syncReadTimeoutMs) { this.syncReadTimeoutMs = syncReadTimeoutMs; }
 
+    public int getMarketingTimeoutMs() { return marketingTimeoutMs; }
+    public void setMarketingTimeoutMs(int marketingTimeoutMs) { this.marketingTimeoutMs = marketingTimeoutMs; }
+
     public Cache getCache() { return cache; }
     public void setCache(Cache cache) { this.cache = cache; }
 
     public static class Cache {
         private int defaultTtlSeconds = 60;
         private int categoriesTtlSeconds = 300;
+        private int listTtlSeconds = 300;
         private int maxEntries = 1000;
 
         public int getDefaultTtlSeconds() { return defaultTtlSeconds; }
@@ -36,6 +41,9 @@ public class AuraMathProperties {
 
         public int getCategoriesTtlSeconds() { return categoriesTtlSeconds; }
         public void setCategoriesTtlSeconds(int categoriesTtlSeconds) { this.categoriesTtlSeconds = categoriesTtlSeconds; }
+
+        public int getListTtlSeconds() { return listTtlSeconds; }
+        public void setListTtlSeconds(int listTtlSeconds) { this.listTtlSeconds = listTtlSeconds; }
 
         public int getMaxEntries() { return maxEntries; }
         public void setMaxEntries(int maxEntries) { this.maxEntries = maxEntries; }

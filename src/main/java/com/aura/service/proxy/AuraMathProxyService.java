@@ -1,6 +1,7 @@
 package com.aura.service.proxy;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ConnectTimeoutException;
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ import reactor.netty.http.client.PrematureCloseException;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -126,6 +128,116 @@ public class AuraMathProxyService {
             return buildClientResponse(entity, false, null, null, wrapperPath);
         } catch (Exception ex) {
             return handleException(ex, wrapperPath, upstreamPath, start);
+        }
+    }
+
+    /**
+     * Forward a GET to the upstream marketing surface with the contract used by
+     * {@code /v1/marketing/**}: 15s overall timeout, TTL-cached on 2xx, upstream
+     * 5xx mapped to a sanitized 502 ({@code error: upstream_failure}).
+     */
+    public ResponseEntity<String> forwardMarketingGet(String wrapperPath,
+                                                      String upstreamPath,
+                                                      long ttlSeconds) {
+        // Concatenate rather than going through UriComponentsBuilder: the controller has
+        // already percent-encoded each path segment, and a second pass would turn '%' into
+        // '%25'. The string is used both as the actual request URI and the cache key.
+        String fullUrl = props.getBaseUrl() + upstreamPath;
+        String cacheKey = buildCacheKey("GET", fullUrl, null);
+
+        CachedResponse cached = cache.get(cacheKey);
+        if (cached != null) {
+            log.info("proxy hit cache wrapper_path={} upstream_path={} status={} duration_ms=0",
+                    wrapperPath, upstreamPath, cached.status());
+            return ResponseEntity.status(cached.status())
+                    .headers(cached.headers())
+                    .body(cached.body());
+        }
+
+        // Controller pre-encodes path segments (spaces → %20, non-ASCII → percent-encoded).
+        // Passing an absolute URI keeps those bytes intact; UriBuilder.path() would otherwise
+        // percent-encode the existing '%' characters and produce %25xx.
+        URI absoluteUri = URI.create(fullUrl);
+
+        long start = System.currentTimeMillis();
+        try {
+            ResponseEntity<String> entity = client.method(HttpMethod.GET)
+                    .uri(absoluteUri)
+                    .retrieve()
+                    .onStatus(s -> true, r -> Mono.empty())
+                    .toEntity(String.class)
+                    .block(Duration.ofMillis(props.getMarketingTimeoutMs()));
+
+            long duration = System.currentTimeMillis() - start;
+            int status = entity == null ? 502 : entity.getStatusCode().value();
+            log.info("proxy wrapper_path={} upstream_path={} status={} duration_ms={}",
+                    wrapperPath, upstreamPath, status, duration);
+
+            return buildMarketingResponse(entity, cacheKey, ttlSeconds, wrapperPath, upstreamPath);
+        } catch (Exception ex) {
+            return handleException(ex, wrapperPath, upstreamPath, start);
+        }
+    }
+
+    private ResponseEntity<String> buildMarketingResponse(ResponseEntity<String> upstreamEntity,
+                                                          String cacheKey,
+                                                          long ttlSeconds,
+                                                          String wrapperPath,
+                                                          String upstreamPath) {
+        if (upstreamEntity == null) {
+            return upstreamUnavailable(wrapperPath);
+        }
+        int status = upstreamEntity.getStatusCode().value();
+        String body = upstreamEntity.getBody();
+        MediaType ct = upstreamEntity.getHeaders().getContentType();
+        String contentType = ct != null ? ct.toString() : MediaType.APPLICATION_JSON_VALUE;
+
+        if (status >= 200 && status < 300) {
+            cache.put(cacheKey, new CachedResponse(status, body, contentType),
+                    Duration.ofSeconds(ttlSeconds).toNanos());
+            HttpHeaders out = new HttpHeaders();
+            out.add(HttpHeaders.CONTENT_TYPE, contentType);
+            return ResponseEntity.status(status).headers(out).body(body);
+        }
+
+        if (status >= 500) {
+            logUpstream5xx(body, upstreamPath);
+            return sanitizedUpstreamFailure(upstreamPath);
+        }
+
+        HttpHeaders out = new HttpHeaders();
+        out.add(HttpHeaders.CONTENT_TYPE, contentType);
+        return ResponseEntity.status(status).headers(out).body(body);
+    }
+
+    private void logUpstream5xx(String body, String upstreamPath) {
+        if (body == null || body.isBlank()) {
+            log.error("upstream_failure upstream_path={} body=<empty>", upstreamPath);
+            return;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            String message = node.path("message").asText("");
+            String path = node.path("path").asText("");
+            log.error("upstream_failure upstream_path={} reported_path={} message={}",
+                    upstreamPath, path, message);
+        } catch (IOException e) {
+            log.error("upstream_failure upstream_path={} body=<unparseable>", upstreamPath);
+        }
+    }
+
+    private ResponseEntity<String> sanitizedUpstreamFailure(String upstreamPath) {
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("error", "upstream_failure");
+        body.put("upstream_path", upstreamPath);
+        try {
+            return ResponseEntity.status(502)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(objectMapper.writeValueAsString(body));
+        } catch (JsonProcessingException e) {
+            return ResponseEntity.status(502)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"error\":\"upstream_failure\",\"upstream_path\":\"" + upstreamPath + "\"}");
         }
     }
 
