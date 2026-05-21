@@ -58,13 +58,15 @@ class SentimentAlertServiceTest {
     }
 
     static class NoopDispatcher extends AlertDispatcher {
+        final java.util.List<com.aura.service.entity.SentimentAlert> dispatched = new java.util.ArrayList<>();
+
         NoopDispatcher() {
             super(null, null, null);
         }
 
         @Override
         public void dispatch(com.aura.service.entity.SentimentAlert alert) {
-            // no-op for tests
+            dispatched.add(alert);
         }
     }
 
@@ -405,5 +407,43 @@ class SentimentAlertServiceTest {
         service.scanForInfluencerNegatives();
 
         verify(alertRepository, times(1)).save(any(SentimentAlert.class));
+    }
+
+    // ------------------------------------------------------------------
+    // Dispatcher invocation
+    // ------------------------------------------------------------------
+
+    @Test
+    void dispatchesSpikeAlertAfterPersistence() {
+        stubWindowCounts(60, 30, 1000, 200);
+        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.scanForSpikes();
+
+        NoopDispatcher d = (NoopDispatcher) alertDispatcher;
+        assertThat(d.dispatched).hasSize(1);
+        assertThat(d.dispatched.get(0).getKind()).isEqualTo(SentimentAlert.Kind.SPIKE);
+        assertThat(d.dispatched.get(0).getManagedEntityId()).isEqualTo(ENTITY_ID);
+    }
+
+    @Test
+    void dispatchesInfluencerNegativeAlertAfterPersistence() {
+        stubInitialWatermark(100L);
+        ManagedEntity entity = entityWithKeywords(ENTITY_ID, "comedy");
+        Mention m = mention(101L, entity, "alice", "https://x.com/alice/1", Sentiment.NEGATIVE);
+
+        when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
+                .thenReturn(List.of(m));
+        spreaderLookup.put("comedy", Set.of("alice"));
+        when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.scanForInfluencerNegatives();
+
+        NoopDispatcher d = (NoopDispatcher) alertDispatcher;
+        assertThat(d.dispatched).hasSize(1);
+        assertThat(d.dispatched.get(0).getKind()).isEqualTo(SentimentAlert.Kind.INFLUENCER_NEGATIVE);
+        assertThat(d.dispatched.get(0).getSourceMentionId()).isEqualTo(101L);
     }
 }
