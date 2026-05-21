@@ -2,9 +2,20 @@ package com.aura.service;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+import java.time.Clock;
 
 @SpringBootApplication
+@EnableScheduling
 public class AuraServiceApplication {
+
+    @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
+    }
+
 
 	public static void main(String[] args) {
 		SpringApplication.run(AuraServiceApplication.class, args);
