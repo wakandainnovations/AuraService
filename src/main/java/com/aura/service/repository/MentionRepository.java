@@ -33,6 +33,11 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
 
     long countByManagedEntityIdInAndSentiment(List<Long> entityIds, Sentiment sentiment);
 
+    List<Mention> findByIdGreaterThanAndSentimentOrderByIdAsc(Long id, Sentiment sentiment);
+
+    @Query("SELECT COALESCE(MAX(m.id), 0) FROM Mention m")
+    long findMaxId();
+
     @Query("SELECT m.platform, m.sentiment, COUNT(m) FROM Mention m WHERE m.managedEntity.id = :entityId GROUP BY m.platform, m.sentiment")
     List<Object[]> countByPlatformForEntity(@Param("entityId") Long entityId);
 

@@ -2,6 +2,8 @@ package com.aura.service.repository;
 
 import com.aura.service.entity.SentimentAlert;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -14,4 +16,9 @@ public interface SentimentAlertRepository extends JpaRepository<SentimentAlert, 
             SentimentAlert.Status status,
             Instant triggeredAfter
     );
+
+    boolean existsByKindAndSourceMentionId(SentimentAlert.Kind kind, Long sourceMentionId);
+
+    @Query("SELECT MAX(a.sourceMentionId) FROM SentimentAlert a WHERE a.kind = :kind")
+    Long findMaxSourceMentionIdByKind(@Param("kind") SentimentAlert.Kind kind);
 }

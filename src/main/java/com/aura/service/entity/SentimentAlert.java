@@ -17,7 +17,8 @@ import java.time.Instant;
 public class SentimentAlert {
 
     public enum Kind {
-        SPIKE
+        SPIKE,
+        INFLUENCER_NEGATIVE
     }
 
     public enum Status {
@@ -49,4 +50,13 @@ public class SentimentAlert {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Status status;
+
+    @Column(name = "source_mention_id")
+    private Long sourceMentionId;
+
+    @Column(name = "matched_author")
+    private String matchedAuthor;
+
+    @Column(name = "permalink")
+    private String permalink;
 }
