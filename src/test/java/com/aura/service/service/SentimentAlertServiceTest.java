@@ -1,5 +1,6 @@
 package com.aura.service.service;
 
+import com.aura.service.alert.AlertDispatcher;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
@@ -36,6 +37,7 @@ class SentimentAlertServiceTest {
     private MentionRepository mentionRepository;
     private SentimentAlertRepository alertRepository;
     private StubSpreaderLookup spreaderLookup;
+    private AlertDispatcher alertDispatcher;
     private Clock clock;
     private SentimentAlertService service;
 
@@ -45,13 +47,25 @@ class SentimentAlertServiceTest {
         mentionRepository = mock(MentionRepository.class);
         alertRepository = mock(SentimentAlertRepository.class);
         spreaderLookup = new StubSpreaderLookup();
+        alertDispatcher = new NoopDispatcher();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new SentimentAlertService(
-                entityRepository, mentionRepository, alertRepository, spreaderLookup, clock);
+                entityRepository, mentionRepository, alertRepository, spreaderLookup, alertDispatcher, clock);
 
         ManagedEntity entity = new ManagedEntity();
         entity.setId(ENTITY_ID);
         when(entityRepository.findAll()).thenReturn(List.of(entity));
+    }
+
+    static class NoopDispatcher extends AlertDispatcher {
+        NoopDispatcher() {
+            super(null, null, null);
+        }
+
+        @Override
+        public void dispatch(com.aura.service.entity.SentimentAlert alert) {
+            // no-op for tests
+        }
     }
 
     /**

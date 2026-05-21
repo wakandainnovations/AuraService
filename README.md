@@ -1069,6 +1069,11 @@ Sentiment alerts are produced by `SentimentAlertService`, which runs two backgro
 - **`SPIKE`** — every 5 minutes, scans each managed entity's rolling 60-minute window. Fires when the negative-sentiment ratio exceeds 1.5x the 7-day baseline (with a 10-mention minimum and a 30-minute dedup window).
 - **`INFLUENCER_NEGATIVE`** — every 1 minute, picks up newly inserted `NEGATIVE` mentions (id-based watermark, bulk-insert friendly) whose author appears in the top-50 spreader list for any of the managed entity's keywords. Spreader lookups are cached for 10 minutes per keyword.
 
+After an alert is persisted, `AlertDispatcher` fans it out to two async channels (failures are caught and logged — they do not block alert persistence):
+
+- **Email** — `EmailChannel` interface with a log-only `NoopEmailChannel` `@Component` shipped by default (swap in SendGrid in prod). Subject is `[Aura] {entityName} negative spike`; body lists the top 3 most recent negative mentions for the entity with their permalinks.
+- **Webhook** — `WebhookChannel` POSTs the alert JSON to every user's configured `alertWebhookUrl` (see [Set Alert Webhook URL](#set-alert-webhook-url)).
+
 All routes below are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
 ### List Alerts
@@ -1257,6 +1262,59 @@ Content-Type: application/json
 - `200 OK` — Alert dismissed.
 - `400 Bad Request` — `reason` missing or blank.
 - `404 Not Found` — No alert with the given id.
+
+---
+
+### Set Alert Webhook URL
+
+**Endpoint:** `PUT /api/users/me/webhook`
+
+**Description:** Set (or clear) the webhook URL where the calling user wants alert JSON delivered. When `WebhookChannel` dispatches an alert, it POSTs the alert payload to this URL with `Content-Type: application/json`. Pass an empty string or `null` to disable webhook delivery for the user.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "webhookUrl": "https://hooks.example.com/aura/alerts/abc123"
+}
+```
+
+**Validation:**
+- `webhookUrl` — max length 2048 characters. Blank values are stored as `null` (disables webhook delivery).
+
+**Response:**
+```json
+{
+  "username": "ops_user",
+  "alertWebhookUrl": "https://hooks.example.com/aura/alerts/abc123"
+}
+```
+
+**Status Codes:**
+- `200 OK` — Webhook URL updated.
+- `404 Not Found` — Authenticated user record not found.
+
+**Webhook Payload (sent to `webhookUrl` on each alert):**
+```json
+{
+  "id": 42,
+  "managedEntityId": 1,
+  "entityName": "The Quantum Paradox",
+  "kind": "INFLUENCER_NEGATIVE",
+  "status": "OPEN",
+  "triggeredAt": "2026-05-21T12:00:00Z",
+  "currentValue": 0.0,
+  "baselineValue": 0.0,
+  "sourceMentionId": 9123,
+  "matchedAuthor": "alice",
+  "permalink": "https://x.com/alice/status/9123"
+}
+```
 
 ---
 

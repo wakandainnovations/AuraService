@@ -24,4 +24,7 @@ public class User {
     
     @Column(nullable = false)
     private String role;
+
+    @Column(name = "alert_webhook_url")
+    private String alertWebhookUrl;
 }

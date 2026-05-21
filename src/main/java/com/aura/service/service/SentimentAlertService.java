@@ -1,5 +1,6 @@
 package com.aura.service.service;
 
+import com.aura.service.alert.AlertDispatcher;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
@@ -35,6 +36,7 @@ public class SentimentAlertService {
     private final MentionRepository mentionRepository;
     private final SentimentAlertRepository alertRepository;
     private final TopSpreaderLookupService spreaderLookup;
+    private final AlertDispatcher alertDispatcher;
     private final Clock clock;
 
     private volatile Long influencerWatermark;
@@ -84,9 +86,10 @@ public class SentimentAlertService {
                 .baselineValue(baselineRatio)
                 .status(SentimentAlert.Status.OPEN)
                 .build();
-        alertRepository.save(alert);
+        SentimentAlert saved = alertRepository.save(alert);
         log.info("Created SPIKE alert for entity {} (current={}, baseline={})",
                 entityId, currentRatio, baselineRatio);
+        alertDispatcher.dispatch(saved);
     }
 
     @Scheduled(fixedDelayString = "PT1M")
@@ -159,9 +162,10 @@ public class SentimentAlertService {
                 .matchedAuthor(author)
                 .permalink(mention.getPermalink())
                 .build();
-        alertRepository.save(alert);
+        SentimentAlert saved = alertRepository.save(alert);
         log.info("Created INFLUENCER_NEGATIVE alert for entity {} mention {} author {}",
                 entity.getId(), mention.getId(), author);
+        alertDispatcher.dispatch(saved);
     }
 
     private long currentInfluencerWatermark() {
