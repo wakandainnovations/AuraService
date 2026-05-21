@@ -24,6 +24,8 @@ public class SentimentAlert {
     public enum Status {
         OPEN,
         ACKNOWLEDGED,
+        ACKED,
+        DISMISSED,
         RESOLVED
     }
 
@@ -59,4 +61,19 @@ public class SentimentAlert {
 
     @Column(name = "permalink")
     private String permalink;
+
+    @Column(name = "acked_at")
+    private Instant ackedAt;
+
+    @Column(name = "acked_by")
+    private String ackedBy;
+
+    @Column(name = "dismissed_at")
+    private Instant dismissedAt;
+
+    @Column(name = "dismissed_by")
+    private String dismissedBy;
+
+    @Column(name = "dismiss_reason", columnDefinition = "TEXT")
+    private String dismissReason;
 }

@@ -1062,6 +1062,204 @@ GET /api/analytics/11
 
 ---
 
+## Alerts APIs
+
+Sentiment alerts are produced by `SentimentAlertService`, which runs two background detectors:
+
+- **`SPIKE`** — every 5 minutes, scans each managed entity's rolling 60-minute window. Fires when the negative-sentiment ratio exceeds 1.5x the 7-day baseline (with a 10-mention minimum and a 30-minute dedup window).
+- **`INFLUENCER_NEGATIVE`** — every 1 minute, picks up newly inserted `NEGATIVE` mentions (id-based watermark, bulk-insert friendly) whose author appears in the top-50 spreader list for any of the managed entity's keywords. Spreader lookups are cached for 10 minutes per keyword.
+
+All routes below are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+
+### List Alerts
+
+**Endpoint:** `GET /api/alerts`
+
+**Description:** Paged list of alerts, sorted by `triggeredAt` descending (most recent first). Both filters are optional and AND-combined when present.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `entityId` — Filter to a single managed entity (Optional)
+- `status` — Filter by status: `OPEN`, `ACKED`, `DISMISSED` (Optional)
+- `page` — Page number (default: `0`)
+- `size` — Page size (default: `20`)
+
+**Example Request:**
+```
+GET /api/alerts?entityId=1&status=OPEN&page=0&size=20
+```
+
+**Response:**
+```json
+{
+  "content": [
+    {
+      "id": 42,
+      "managedEntityId": 1,
+      "entityName": "The Quantum Paradox",
+      "kind": "INFLUENCER_NEGATIVE",
+      "status": "OPEN",
+      "triggeredAt": "2026-05-21T12:00:00Z",
+      "currentValue": 0.0,
+      "baselineValue": 0.0,
+      "sourceMentionId": 9123,
+      "matchedAuthor": "alice",
+      "permalink": "https://x.com/alice/status/9123",
+      "ackedAt": null,
+      "ackedBy": null,
+      "dismissedAt": null,
+      "dismissedBy": null,
+      "dismissReason": null,
+      "reason": "Top-50 spreader alice posted a negative mention about The Quantum Paradox"
+    },
+    {
+      "id": 41,
+      "managedEntityId": 1,
+      "entityName": "The Quantum Paradox",
+      "kind": "SPIKE",
+      "status": "OPEN",
+      "triggeredAt": "2026-05-21T11:35:00Z",
+      "currentValue": 0.5,
+      "baselineValue": 0.2,
+      "sourceMentionId": null,
+      "matchedAuthor": null,
+      "permalink": null,
+      "ackedAt": null,
+      "ackedBy": null,
+      "dismissedAt": null,
+      "dismissedBy": null,
+      "dismissReason": null,
+      "reason": "Negative-sentiment ratio rose to 50% (baseline 20%) for The Quantum Paradox"
+    }
+  ],
+  "pageable": {
+    "pageNumber": 0,
+    "pageSize": 20
+  },
+  "totalElements": 2,
+  "totalPages": 1,
+  "last": true
+}
+```
+
+**Status Code:** `200 OK`
+
+**Field Notes:**
+- `kind` is one of `SPIKE`, `INFLUENCER_NEGATIVE`.
+- `status` is one of `OPEN`, `ACKED`, `DISMISSED`.
+- `currentValue` / `baselineValue` are the rolling and 7-day negative-sentiment ratios for `SPIKE` alerts; both are `0.0` for `INFLUENCER_NEGATIVE`.
+- `sourceMentionId`, `matchedAuthor`, `permalink` are populated for `INFLUENCER_NEGATIVE` and `null` for `SPIKE`.
+- `reason` is a server-rendered, 1-line human-readable summary suitable for direct display.
+
+---
+
+### Acknowledge Alert
+
+**Endpoint:** `POST /api/alerts/{id}/ack`
+
+**Description:** Mark an alert as acknowledged by the calling user. Sets `status=ACKED`, `ackedAt` to the current server time, and `ackedBy` to the authenticated username. Body is not required.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Alert ID
+
+**Example Request:**
+```
+POST /api/alerts/42/ack
+```
+
+**Response:**
+```json
+{
+  "id": 42,
+  "managedEntityId": 1,
+  "entityName": "The Quantum Paradox",
+  "kind": "INFLUENCER_NEGATIVE",
+  "status": "ACKED",
+  "triggeredAt": "2026-05-21T12:00:00Z",
+  "currentValue": 0.0,
+  "baselineValue": 0.0,
+  "sourceMentionId": 9123,
+  "matchedAuthor": "alice",
+  "permalink": "https://x.com/alice/status/9123",
+  "ackedAt": "2026-05-21T12:05:11Z",
+  "ackedBy": "ops_user",
+  "dismissedAt": null,
+  "dismissedBy": null,
+  "dismissReason": null,
+  "reason": "Top-50 spreader alice posted a negative mention about The Quantum Paradox"
+}
+```
+
+**Status Codes:**
+- `200 OK` — Alert acknowledged.
+- `404 Not Found` — No alert with the given id.
+
+---
+
+### Dismiss Alert
+
+**Endpoint:** `POST /api/alerts/{id}/dismiss`
+
+**Description:** Dismiss an alert with a required reason. Sets `status=DISMISSED`, `dismissedAt` to the current server time, `dismissedBy` to the authenticated username, and `dismissReason` to the supplied text.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Alert ID
+
+**Request Body:**
+```json
+{
+  "reason": "false positive — known reviewer"
+}
+```
+
+**Validation:**
+- `reason` is required and must be non-blank.
+
+**Response:**
+```json
+{
+  "id": 42,
+  "managedEntityId": 1,
+  "entityName": "The Quantum Paradox",
+  "kind": "INFLUENCER_NEGATIVE",
+  "status": "DISMISSED",
+  "triggeredAt": "2026-05-21T12:00:00Z",
+  "currentValue": 0.0,
+  "baselineValue": 0.0,
+  "sourceMentionId": 9123,
+  "matchedAuthor": "alice",
+  "permalink": "https://x.com/alice/status/9123",
+  "ackedAt": null,
+  "ackedBy": null,
+  "dismissedAt": "2026-05-21T12:07:42Z",
+  "dismissedBy": "ops_user",
+  "dismissReason": "false positive — known reviewer",
+  "reason": "Top-50 spreader alice posted a negative mention about The Quantum Paradox"
+}
+```
+
+**Status Codes:**
+- `200 OK` — Alert dismissed.
+- `400 Bad Request` — `reason` missing or blank.
+- `404 Not Found` — No alert with the given id.
+
+---
+
 ## AuraMath Proxy APIs
 
 The following endpoints are thin wrappers over the upstream **AuraMath** service. Each wrapper forwards the request to the corresponding upstream route verbatim and preserves the upstream HTTP status code. Wrapper paths (`/v1/**`) **do not** require JWT authentication — the upstream service is responsible for its own auth. See the [AuraMath Proxy](#auramath-proxy-v1-healthz) section below for configuration, error envelopes, and runtime details.
