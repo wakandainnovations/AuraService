@@ -101,6 +101,14 @@ CREATE TABLE mentions (
     sentiment VARCHAR(255) NOT NULL,
     CONSTRAINT fk_mentions_managed_entities FOREIGN KEY (managed_entity_id) REFERENCES managed_entities(id)
 );
+
+CREATE TABLE user_entity_views (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    entity_id BIGINT NOT NULL,
+    last_seen_at TIMESTAMP NOT NULL,
+    CONSTRAINT uk_user_entity_views_user_entity UNIQUE (user_id, entity_id)
+);
 ```
 
 ## API Documentation
@@ -412,6 +420,42 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Status Code:** `200 OK`
+
+**Side effect:** Each successful call upserts a row in `user_entity_views` recording that the authenticated user viewed `entityId` at the current server time. The timestamp is exposed via `GET /api/dashboard/{entityId}/last-seen`.
+
+---
+
+### 8a. Get Last-Seen Timestamp
+
+**Endpoint:** `GET /api/dashboard/{entityId}/last-seen`
+
+**Description:** Return the most recent time the authenticated user opened the dashboard for `entityId` (set automatically by `/stats` and `/mentions`). Useful for flagging "new since you last looked" mentions in the UI.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - Entity ID (e.g., 1)
+
+**Response (user has previously viewed the entity):**
+```json
+{
+  "lastSeenAt": "2026-05-21T09:30:00Z"
+}
+```
+
+**Response (no prior view recorded):**
+```json
+{
+  "lastSeenAt": null
+}
+```
+
+**Status Codes:**
+- `200 OK` — `lastSeenAt` is either an ISO-8601 instant or `null`
+- `401 Unauthorized` — no JWT supplied
 
 ---
 
@@ -791,6 +835,8 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
   - `escalated` — `true` iff at least one `CrisisPlan` row exists for this mention.
 
 **Status Code:** `200 OK`
+
+**Side effect:** Each successful call upserts the authenticated user's `last_seen_at` for `entityId` in `user_entity_views` (same row touched by `/{entityId}/stats`). Read it back via `GET /api/dashboard/{entityId}/last-seen`.
 
 ---
 
