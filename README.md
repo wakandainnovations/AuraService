@@ -1005,6 +1005,163 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+## Mention Action APIs
+
+Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All three endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+
+- **Draft reply** generates a reply via `LLMService.generateReply` (entity name + mention content + sentiment) and persists a `ReplyDraft` row (`status=DRAFT`). Outer quotes from the LLM output are stripped to match the existing `/api/interact/generate-reply` behavior.
+- **Post reply** loads a previously created draft, calls `SocialMediaService.postReply(platform, postId, text)` against the mention's source platform and post id, and flips the draft to `status=POSTED` with `postedAt` set to the server time.
+- **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
+
+Every response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
+
+### Draft Reply
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/draft-reply`
+
+**Description:** Generate an AI-drafted reply for the mention and persist it as a `ReplyDraft` in `DRAFT` status. The calling user is recorded as the draft's owner.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID to draft a reply for
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/draft-reply
+```
+
+**Response:**
+```json
+{
+  "mention": {
+    "id": 9123,
+    "managedEntityId": 1,
+    "platform": "X",
+    "postId": "tweet_12345",
+    "content": "This movie was terrible! Waste of money.",
+    "author": "alice",
+    "postDate": "2026-05-21T11:50:00Z",
+    "sentiment": "NEGATIVE",
+    "permalink": "https://x.com/alice/status/9123",
+    "sentimentScore": 12
+  },
+  "draftId": 501,
+  "generatedText": "We hear you, and we're sorry the film didn't land for you. If you have a moment, we'd love to know which scene fell flat — your feedback genuinely shapes what we make next."
+}
+```
+
+**Status Codes:**
+- `200 OK` — Draft created.
+- `404 Not Found` — No mention with the given id.
+
+---
+
+### Post Reply
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/post-reply`
+
+**Description:** Publish a previously drafted reply to the mention's source platform. Calls `SocialMediaService.postReply` with the mention's `platform` and `postId` and the draft's stored text. On success the draft is updated to `status=POSTED` and `postedAt` is set to the current server time.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID the draft was created against
+
+**Request Body:**
+```json
+{
+  "draft_id": 501
+}
+```
+
+**Validation:**
+- `draft_id` is required.
+- The draft must belong to the same `mentionId` provided in the path — drafts from a different mention are rejected with `404`.
+
+**Response:**
+```json
+{
+  "mention": {
+    "id": 9123,
+    "managedEntityId": 1,
+    "platform": "X",
+    "postId": "tweet_12345",
+    "content": "This movie was terrible! Waste of money.",
+    "author": "alice",
+    "postDate": "2026-05-21T11:50:00Z",
+    "sentiment": "NEGATIVE",
+    "permalink": "https://x.com/alice/status/9123",
+    "sentimentScore": 12
+  },
+  "draftId": 501,
+  "text": "We hear you, and we're sorry the film didn't land for you...",
+  "postedAt": "2026-05-21T12:14:08Z",
+  "result": "Reply posted successfully (mock)"
+}
+```
+
+**Status Codes:**
+- `200 OK` — Reply posted and draft marked `POSTED`.
+- `400 Bad Request` — `draft_id` missing.
+- `404 Not Found` — Mention not found, draft not found, or draft belongs to a different mention.
+
+**Note:** The default `MockSocialMediaService` only logs to console and returns the literal string `"Reply posted successfully (mock)"`. In production, swap in a real `SocialMediaService` implementation per platform.
+
+---
+
+### Escalate to Crisis
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/escalate-to-crisis`
+
+**Description:** Generate a crisis-management plan for the mention's managed entity and persist it as a `CrisisPlan` row attributed to the calling user. The mention's `content` is passed as the crisis description.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID to escalate
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/escalate-to-crisis
+```
+
+**Response:**
+```json
+{
+  "mention": {
+    "id": 9123,
+    "managedEntityId": 1,
+    "platform": "X",
+    "postId": "tweet_12345",
+    "content": "This movie was terrible! Waste of money.",
+    "author": "alice",
+    "postDate": "2026-05-21T11:50:00Z",
+    "sentiment": "NEGATIVE",
+    "permalink": "https://x.com/alice/status/9123",
+    "sentimentScore": 12
+  },
+  "planId": 88,
+  "plan": "Immediate Response (0 to 4 Hours): ...\nAssessment & Intelligence: ...\nStakeholder Communication Strategy: ...\nAction & Remediation: ...\nMonitoring & Post-Mortem: ..."
+}
+```
+
+**Status Codes:**
+- `200 OK` — Plan generated and persisted.
+- `404 Not Found` — No mention with the given id.
+
+---
+
 ## Analytics APIs
 
 ### 20. Get Box Office Prediction
