@@ -459,6 +459,54 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+### 8b. Get What's Changed Since Last Visit
+
+**Endpoint:** `GET /api/dashboard/{entityId}/whats-changed`
+
+**Description:** Return a summary of how an entity's sentiment landscape has shifted since the authenticated user last viewed it (as tracked in `user_entity_views`). Designed to power "new since you last looked" callouts on the dashboard.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - Entity ID (e.g., 1)
+
+**Response fields:**
+- `sentiment_score_delta` — current `netSentimentScore` (positive / negative mention counts) minus the same score computed against only mentions with `postDate <= lastSeenAt`.
+- `new_mentions_count` — mentions whose `postDate > lastSeenAt`.
+- `new_negative_count` — same filter, restricted to `sentiment = NEGATIVE`.
+- `new_super_spreader_count` — distinct authors who (a) posted about this entity since `lastSeenAt`, (b) had no prior mentions for this entity at or before `lastSeenAt`, AND (c) appear in the top-spreaders list for at least one of the entity's keywords (resolved via the AuraMath proxy, same source as `INFLUENCER_NEGATIVE` alerts).
+- `competitor_delta` — map of competitor name to `sentiment_score_delta` computed for that competitor against the same `lastSeenAt` cutoff.
+
+**Response (user has previously viewed the entity):**
+```json
+{
+  "sentiment_score_delta": 0.75,
+  "new_mentions_count": 42,
+  "new_negative_count": 7,
+  "new_super_spreader_count": 3,
+  "competitor_delta": {
+    "CompA": 1.5,
+    "CompB": -0.4
+  }
+}
+```
+
+**Response (first visit — no `lastSeenAt` recorded yet):**
+```json
+{}
+```
+
+All five fields are omitted (null) together when the user has no prior view of `entityId`, the user can't be resolved, or the entity doesn't exist.
+
+**Status Codes:**
+- `200 OK`
+- `401 Unauthorized` — no JWT supplied
+
+---
+
 ### 9. Get Cluster Statistics
 
 **Endpoint:** `GET /api/dashboard/cluster/stats`
