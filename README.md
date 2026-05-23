@@ -504,6 +504,12 @@ Example below is a real response for entity 6 (`Parasakthi`) with `lastSeenAt` b
 
 All five fields are omitted (null) together when the user has no prior view of `entityId`, the user can't be resolved, or the entity doesn't exist.
 
+**cURL example:**
+```bash
+curl -X GET http://localhost:8080/api/dashboard/6/whats-changed \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
 **Status Codes:**
 - `200 OK`
 - `403 Forbidden` — no JWT supplied (or invalid token); Spring Security rejects unauthenticated dashboard requests at the filter level
