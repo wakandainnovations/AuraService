@@ -481,15 +481,18 @@ Authorization: Bearer {jwt_token}
 - `competitor_delta` — map of competitor name to `sentiment_score_delta` computed for that competitor against the same `lastSeenAt` cutoff.
 
 **Response (user has previously viewed the entity):**
+
+Example below is a real response for entity 6 (`Parasakthi`) with `lastSeenAt` backdated to `2026-01-01T00:00:00Z`. The user has seen 1902 new mentions since that timestamp, 772 of which are negative; the entity's overall positive-to-negative ratio has dropped by ~0.74, while both tracked competitors have climbed:
+
 ```json
 {
-  "sentiment_score_delta": 0.75,
-  "new_mentions_count": 42,
-  "new_negative_count": 7,
-  "new_super_spreader_count": 3,
+  "sentiment_score_delta": -0.7391025641025641,
+  "new_mentions_count": 1902,
+  "new_negative_count": 772,
+  "new_super_spreader_count": 0,
   "competitor_delta": {
-    "CompA": 1.5,
-    "CompB": -0.4
+    "With Love": 2.5913621262458473,
+    "Dhurandhar2": 2.3970588235294117
   }
 }
 ```
