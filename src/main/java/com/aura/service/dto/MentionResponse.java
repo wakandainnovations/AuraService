@@ -2,11 +2,14 @@ package com.aura.service.dto;
 
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.Sentiment;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -22,4 +25,19 @@ public class MentionResponse {
     private Sentiment sentiment;
     private String permalink;
     private Short sentimentScore;
+
+    @JsonProperty("available_actions")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private List<String> availableActions;
+
+    @JsonProperty("action_history_summary")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private ActionHistorySummary actionHistorySummary;
+
+    public MentionResponse(Long id, Long managedEntityId, Platform platform, String postId,
+                           String content, String author, Instant postDate, Sentiment sentiment,
+                           String permalink, Short sentimentScore) {
+        this(id, managedEntityId, platform, postId, content, author, postDate, sentiment,
+                permalink, sentimentScore, null, null);
+    }
 }

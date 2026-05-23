@@ -1,13 +1,17 @@
 package com.aura.service.service;
 
 import com.aura.service.dto.*;
+import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
+import com.aura.service.entity.ReplyDraft;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
+import com.aura.service.repository.ReplyDraftRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -27,8 +31,13 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class DashboardService {
     
+    private static final List<String> AVAILABLE_ACTIONS =
+            List.of("draft-reply", "escalate", "mobilize", "report-abuse");
+
     private final MentionRepository mentionRepository;
     private final ManagedEntityRepository entityRepository;
+    private final ReplyDraftRepository replyDraftRepository;
+    private final CrisisPlanRepository crisisPlanRepository;
     
     public EntityStatsResponse getEntityStats(Long entityId) {
         long totalMentions = mentionRepository.countByManagedEntityId(entityId);
@@ -274,8 +283,9 @@ public class DashboardService {
                 platformName,
                 pageable
         );
-        
-        return mentions.map(this::mapToMentionResponse);
+
+        Map<Long, ActionHistorySummary> summaries = loadActionSummaries(mentions.getContent());
+        return mentions.map(m -> mapToMentionResponseWithActions(m, summaries));
     }
     
     public Page<MentionResponse> getClusterMentions(
@@ -310,7 +320,8 @@ public class DashboardService {
 
         Page<Mention> mentionPage = new PageImpl<>(pageContent, pageable, filteredMentions.size());
 
-        return mentionPage.map(this::mapToMentionResponse);
+        Map<Long, ActionHistorySummary> summaries = loadActionSummaries(pageContent);
+        return mentionPage.map(m -> mapToMentionResponseWithActions(m, summaries));
     }
     
     public HourlyActivityResponse getHourlyActivity(
@@ -383,7 +394,12 @@ public class DashboardService {
         );
     }
 
-    private MentionResponse mapToMentionResponse(Mention mention) {
+    private MentionResponse mapToMentionResponseWithActions(
+            Mention mention,
+            Map<Long, ActionHistorySummary> summaries
+    ) {
+        ActionHistorySummary summary = summaries.getOrDefault(
+                mention.getId(), new ActionHistorySummary(0, 0, false));
         return new MentionResponse(
                 mention.getId(),
                 mention.getManagedEntity().getId(),
@@ -394,7 +410,37 @@ public class DashboardService {
                 mention.getPostDate(),
                 mention.getSentiment(),
                 mention.getPermalink(),
-                mention.getSentimentScore()
+                mention.getSentimentScore(),
+                AVAILABLE_ACTIONS,
+                summary
         );
+    }
+
+    private Map<Long, ActionHistorySummary> loadActionSummaries(List<Mention> mentions) {
+        if (mentions.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> mentionIds = mentions.stream().map(Mention::getId).toList();
+
+        Map<Long, ActionHistorySummary> summaries = new HashMap<>();
+        for (Long id : mentionIds) {
+            summaries.put(id, new ActionHistorySummary(0, 0, false));
+        }
+
+        for (ReplyDraft draft : replyDraftRepository.findByMentionIdIn(mentionIds)) {
+            ActionHistorySummary s = summaries.get(draft.getMentionId());
+            if (s == null) continue;
+            s.setDrafts(s.getDrafts() + 1);
+            if (draft.getStatus() == ReplyDraft.Status.POSTED) {
+                s.setPosted(s.getPosted() + 1);
+            }
+        }
+        for (CrisisPlan plan : crisisPlanRepository.findByMentionIdIn(mentionIds)) {
+            ActionHistorySummary s = summaries.get(plan.getMentionId());
+            if (s != null) {
+                s.setEscalated(true);
+            }
+        }
+        return summaries;
     }
 }
