@@ -48,7 +48,7 @@ class DashboardControllerLastSeenTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         UserEntityViewService viewService =
                 new UserEntityViewService(viewRepository, userRepository, clock);
-        DashboardController controller = new DashboardController(null, viewService, null);
+        DashboardController controller = new DashboardController(null, viewService, null, null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

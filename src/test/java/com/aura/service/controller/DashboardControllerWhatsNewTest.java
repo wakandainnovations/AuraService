@@ -1,7 +1,7 @@
 package com.aura.service.controller;
 
-import com.aura.service.dto.WhatsChangedResponse;
-import com.aura.service.service.WhatsChangedService;
+import com.aura.service.dto.WhatsNewCard;
+import com.aura.service.service.WhatsNewService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -15,38 +15,35 @@ import org.springframework.security.web.method.annotation.AuthenticationPrincipa
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-class DashboardControllerWhatsChangedTest {
+class DashboardControllerWhatsNewTest {
 
     private static final Long ENTITY_ID = 7L;
     private static final String USERNAME = "ops_user";
 
     /**
-     * Hand-written test double — JDK in use breaks Mockito's inline mock maker for non-final
-     * concrete classes (see SentimentAlertServiceTest for the same workaround).
+     * Hand-written test double — the JDK in use breaks Mockito's inline mock maker for non-final
+     * concrete classes, mirroring the workaround in {@link DashboardControllerWhatsChangedTest}.
      */
-    static class StubWhatsChanged extends WhatsChangedService {
-        private final java.util.Map<String, WhatsChangedResponse> responsesByUsername =
-                new java.util.HashMap<>();
+    static class StubWhatsNew extends WhatsNewService {
+        private final java.util.Map<String, List<WhatsNewCard>> responses = new java.util.HashMap<>();
 
-        StubWhatsChanged() {
+        StubWhatsNew() {
             super(null, null, null, null, null);
         }
 
-        void put(String username, Long entityId, WhatsChangedResponse response) {
-            responsesByUsername.put(key(username, entityId), response);
+        void put(String username, Long entityId, List<WhatsNewCard> cards) {
+            responses.put(key(username, entityId), cards);
         }
 
         @Override
-        public WhatsChangedResponse computeDelta(String username, Long entityId) {
-            return responsesByUsername.getOrDefault(
-                    key(username, entityId), new WhatsChangedResponse());
+        public List<WhatsNewCard> getCards(String username, Long entityId) {
+            return responses.getOrDefault(key(username, entityId), List.of());
         }
 
         private static String key(String username, Long entityId) {
@@ -54,13 +51,13 @@ class DashboardControllerWhatsChangedTest {
         }
     }
 
-    private StubWhatsChanged whatsChangedService;
+    private StubWhatsNew whatsNewService;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        whatsChangedService = new StubWhatsChanged();
-        DashboardController controller = new DashboardController(null, null, whatsChangedService, null);
+        whatsNewService = new StubWhatsNew();
+        DashboardController controller = new DashboardController(null, null, null, whatsNewService);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
@@ -82,31 +79,31 @@ class DashboardControllerWhatsChangedTest {
     }
 
     @Test
-    void getWhatsChanged_returnsSnakeCaseFields() throws Exception {
+    void getWhatsNew_returnsSnakeCaseFields() throws Exception {
         authenticate();
-        Map<String, Double> competitors = new LinkedHashMap<>();
-        competitors.put("CompA", 1.5);
-        WhatsChangedResponse body = new WhatsChangedResponse(0.75, 42L, 7L, 3L, competitors);
-        whatsChangedService.put(USERNAME, ENTITY_ID, body);
+        WhatsNewCard card = new WhatsNewCard(
+                WhatsNewService.KIND_COMPETITOR_DROP,
+                "CompA's sentiment dropped 0.40 since your last visit",
+                -0.4,
+                List.of(901L, 902L));
+        whatsNewService.put(USERNAME, ENTITY_ID, List.of(card));
 
-        mvc.perform(get("/api/dashboard/{entityId}/whats-changed", ENTITY_ID))
+        mvc.perform(get("/api/dashboard/{entityId}/whats-new", ENTITY_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sentiment_score_delta").value(0.75))
-                .andExpect(jsonPath("$.new_mentions_count").value(42))
-                .andExpect(jsonPath("$.new_negative_count").value(7))
-                .andExpect(jsonPath("$.new_super_spreader_count").value(3))
-                .andExpect(jsonPath("$.competitor_delta.CompA").value(1.5));
+                .andExpect(jsonPath("$[0].kind").value("COMPETITOR_DROP"))
+                .andExpect(jsonPath("$[0].headline").value(card.getHeadline()))
+                .andExpect(jsonPath("$[0].value").value(-0.4))
+                .andExpect(jsonPath("$[0].evidence_mention_ids[0]").value(901))
+                .andExpect(jsonPath("$[0].evidence_mention_ids[1]").value(902));
     }
 
     @Test
-    void getWhatsChanged_returnsNullFieldsForFirstVisit() throws Exception {
+    void getWhatsNew_returnsEmptyArrayWhenNoCards() throws Exception {
         authenticate();
-        // No stubbed response -> default empty WhatsChangedResponse from StubWhatsChanged.
 
-        mvc.perform(get("/api/dashboard/{entityId}/whats-changed", ENTITY_ID))
+        mvc.perform(get("/api/dashboard/{entityId}/whats-new", ENTITY_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sentiment_score_delta").doesNotExist())
-                .andExpect(jsonPath("$.new_mentions_count").doesNotExist())
-                .andExpect(jsonPath("$.competitor_delta").doesNotExist());
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 }

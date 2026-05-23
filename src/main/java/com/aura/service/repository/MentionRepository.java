@@ -59,6 +59,12 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     List<Mention> findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
             Long entityId, Sentiment sentiment);
 
+    List<Mention> findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
+            Long entityId, Sentiment sentiment, Instant after);
+
+    List<Mention> findTop3ByManagedEntityIdAndAuthorAndSentimentAndPostDateAfterOrderByPostDateDesc(
+            Long entityId, String author, Sentiment sentiment, Instant after);
+
     @Query("SELECT COALESCE(MAX(m.id), 0) FROM Mention m")
     long findMaxId();
 

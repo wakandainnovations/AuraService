@@ -6,6 +6,7 @@ import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.UserEntityViewService;
 import com.aura.service.service.WhatsChangedService;
+import com.aura.service.service.WhatsNewService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -26,6 +27,7 @@ public class DashboardController {
     private final DashboardService dashboardService;
     private final UserEntityViewService userEntityViewService;
     private final WhatsChangedService whatsChangedService;
+    private final WhatsNewService whatsNewService;
 
     @GetMapping("/{entityId}/stats")
     public ResponseEntity<EntityStatsResponse> getStats(
@@ -60,6 +62,16 @@ public class DashboardController {
         WhatsChangedResponse response = whatsChangedService.computeDelta(
                 principal.getUsername(), entityId);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/whats-new")
+    public ResponseEntity<List<WhatsNewCard>> getWhatsNew(
+            @PathVariable Long entityId,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        List<WhatsNewCard> cards = whatsNewService.getCards(
+                principal.getUsername(), entityId);
+        return ResponseEntity.ok(cards);
     }
 
     @GetMapping("/cluster/stats")

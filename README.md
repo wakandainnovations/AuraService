@@ -516,6 +516,86 @@ curl -X GET http://localhost:8080/api/dashboard/6/whats-changed \
 
 ---
 
+### 8c. Get What's New (Reward Cards)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/whats-new`
+
+**Description:** Return a short, prioritized list of "reward cards" derived from the same `whats-changed` deltas, designed to give the dashboard a fast hit of variable, dopaminergic feedback on open. At most 5 cards are returned; within each priority tier the order is randomized so two consecutive opens with identical underlying state still feel slightly different.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - Entity ID (e.g., 1)
+
+**Card shape:**
+- `kind` — discriminator: `COMPETITOR_DROP`, `NEW_POSITIVE_SUPER_SPREADER`, `SENTIMENT_RISE`, or `NEGATIVE_SPIKE`.
+- `headline` — human-readable one-liner suitable for direct rendering.
+- `value` — the signed magnitude behind the card. For `COMPETITOR_DROP` and `SENTIMENT_RISE` it's the score delta; for `NEGATIVE_SPIKE` it's the new negative-mention count; for `NEW_POSITIVE_SUPER_SPREADER` it's the number of positive mentions cited as evidence.
+- `evidence_mention_ids` — up to 3 mention IDs that back this card, suitable for deep-linking into `/api/dashboard/{entityId}/mentions`.
+
+**Card priority (highest first):**
+1. **`COMPETITOR_DROP`** — one card per competitor whose `sentiment_score_delta` (same definition as `whats-changed`) fell by more than `0.05` since `lastSeenAt`. Evidence: up to 3 most-recent `NEGATIVE` mentions of the competitor after `lastSeenAt`.
+2. **`NEW_POSITIVE_SUPER_SPREADER`** — one card per author who (a) posted about this entity since `lastSeenAt`, (b) had no prior mentions for this entity at or before `lastSeenAt`, (c) appears in the top-spreaders list for at least one of the entity's keywords (resolved via the AuraMath proxy, same source as `whats-changed`), AND (d) has at least one `POSITIVE` mention in the window. Evidence: those positive mentions.
+3. **`SENTIMENT_RISE`** — single card when the entity's own `sentiment_score_delta` is greater than `+0.05`. Evidence: up to 3 most-recent `POSITIVE` mentions after `lastSeenAt`.
+4. **`NEGATIVE_SPIKE`** — single card when at least 5 new `NEGATIVE` mentions arrived since `lastSeenAt`. Evidence: up to 3 most-recent `NEGATIVE` mentions after `lastSeenAt`. (Intentionally last so it can re-trigger the alert/crisis flow without dominating the reward feed.)
+
+The endpoint collects all qualifying cards in priority order, shuffles ties within each tier, and returns the first 5.
+
+**Response (user has previously viewed the entity):**
+
+Example below is a representative shape for an entity whose two tracked competitors have both slipped, a new top-spreader is posting positively, and overall sentiment has climbed:
+
+```json
+[
+  {
+    "kind": "COMPETITOR_DROP",
+    "headline": "With Love's sentiment dropped 2.59 since your last visit",
+    "value": -2.591362126245847,
+    "evidence_mention_ids": [48211, 48207, 48199]
+  },
+  {
+    "kind": "COMPETITOR_DROP",
+    "headline": "Dhurandhar2's sentiment dropped 2.40 since your last visit",
+    "value": -2.397058823529412,
+    "evidence_mention_ids": [49102, 49098]
+  },
+  {
+    "kind": "NEW_POSITIVE_SUPER_SPREADER",
+    "headline": "@cinephile_arjun — a new super-spreader — is posting positively about Parasakthi",
+    "value": 2.0,
+    "evidence_mention_ids": [50314, 50318]
+  },
+  {
+    "kind": "SENTIMENT_RISE",
+    "headline": "Sentiment climbed 0.41 since your last visit",
+    "value": 0.4129032258064516,
+    "evidence_mention_ids": [50301, 50299, 50288]
+  }
+]
+```
+
+**Response (first visit — no `lastSeenAt` recorded yet, or no cards qualify):**
+```json
+[]
+```
+
+An empty array is returned when the user has no prior view of `entityId`, the user can't be resolved, the entity doesn't exist, or no delta crossed any of the card thresholds.
+
+**cURL example:**
+```bash
+curl -X GET http://localhost:8080/api/dashboard/6/whats-new \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
+**Status Codes:**
+- `200 OK`
+- `403 Forbidden` — no JWT supplied (or invalid token); Spring Security rejects unauthenticated dashboard requests at the filter level
+
+---
+
 ### 9. Get Cluster Statistics
 
 **Endpoint:** `GET /api/dashboard/cluster/stats`
