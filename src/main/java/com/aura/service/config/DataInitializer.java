@@ -42,6 +42,7 @@ public class DataInitializer implements CommandLineRunner {
             user.setUsername("user");
             user.setPassword(passwordEncoder.encode("password"));
             user.setRole("ROLE_USER");
+            user.setTimezone("America/New_York");
             userRepository.save(user);
             
             System.out.println("Default user created: username=user, password=password");

@@ -3,8 +3,10 @@ package com.aura.service.alert;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.aura.service.dto.WhatsChangedResponse;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.SentimentAlert;
+import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.MentionRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -13,7 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -109,5 +113,109 @@ class NoopEmailChannelTest {
         channel.send(alert(), "Galaxy Quest");
 
         assertThat(renderedMessage()).contains("(none found)");
+    }
+
+    private User testUser() {
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("alice");
+        user.setPassword("pass");
+        user.setRole("ROLE_USER");
+        user.setTimezone("UTC");
+        return user;
+    }
+
+    @Test
+    void sendDigestLogsSubjectAndEntityEntries() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+        delta.setSentimentScoreDelta(-0.25);
+        delta.setNewMentionsCount(12L);
+        delta.setNewNegativeCount(3L);
+        delta.setNewSuperSpreaderCount(1L);
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Galaxy Quest", delta);
+
+        channel.sendDigest(testUser(), "Your overnight Aura brief: Galaxy Quest", entries);
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("EMAIL DIGEST to=alice");
+        assertThat(msg).contains("Your overnight Aura brief: Galaxy Quest");
+        assertThat(msg).contains("--- Galaxy Quest ---");
+        assertThat(msg).contains("Sentiment delta : -0.25");
+        assertThat(msg).contains("New mentions    : 12");
+        assertThat(msg).contains("New negatives   : 3");
+        assertThat(msg).contains("Super-spreaders : 1");
+    }
+
+    @Test
+    void sendDigestIncludesCompetitorDeltas() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+        delta.setSentimentScoreDelta(0.0);
+        delta.setNewMentionsCount(5L);
+        delta.setNewNegativeCount(0L);
+        delta.setNewSuperSpreaderCount(0L);
+        delta.setCompetitorDelta(Map.of("Rival Film", 0.3));
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("My Film", delta);
+
+        channel.sendDigest(testUser(), "subject", entries);
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("Competitors");
+        assertThat(msg).contains("Rival Film");
+    }
+
+    @Test
+    void sendDigestHandlesNullFieldsGracefully() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Entity", delta);
+
+        channel.sendDigest(testUser(), "subject", entries);
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("Sentiment delta : 0");
+        assertThat(msg).contains("New mentions    : 0");
+        assertThat(msg).contains("New negatives   : 0");
+        assertThat(msg).contains("Super-spreaders : 0");
+        assertThat(msg).doesNotContain("Competitors");
+    }
+
+    @Test
+    void sendDigestMultipleEntities() {
+        WhatsChangedResponse delta1 = new WhatsChangedResponse();
+        delta1.setNewMentionsCount(3L);
+        WhatsChangedResponse delta2 = new WhatsChangedResponse();
+        delta2.setNewMentionsCount(7L);
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Entity A", delta1);
+        entries.put("Entity B", delta2);
+
+        channel.sendDigest(testUser(), "subject", entries);
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("--- Entity A ---");
+        assertThat(msg).contains("--- Entity B ---");
+        assertThat(msg).contains("New mentions    : 3");
+        assertThat(msg).contains("New mentions    : 7");
+    }
+
+    @Test
+    void sendDigestFormatsPositiveSentimentDelta() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+        delta.setSentimentScoreDelta(1.5);
+        delta.setNewMentionsCount(1L);
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Happy Brand", delta);
+
+        channel.sendDigest(testUser(), "subject", entries);
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("Sentiment delta : +1.50");
     }
 }

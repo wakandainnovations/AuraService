@@ -27,4 +27,7 @@ public class User {
 
     @Column(name = "alert_webhook_url")
     private String alertWebhookUrl;
+
+    @Column(nullable = false)
+    private String timezone = "UTC";
 }

@@ -47,6 +47,7 @@ The application will start on `http://localhost:8080`.
 
 - **Username:** `user`
 - **Password:** `password`
+- **Timezone:** `America/New_York`
 
 ### PostGres
 
@@ -61,7 +62,9 @@ CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
-    role VARCHAR(255) NOT NULL
+    role VARCHAR(255) NOT NULL,
+    alert_webhook_url VARCHAR(255),
+    timezone VARCHAR(255) NOT NULL DEFAULT 'UTC'
 );
 
 CREATE TABLE managed_entities (
@@ -1605,6 +1608,25 @@ After an alert is persisted, `AlertDispatcher` fans it out to two async channels
 - **Email** — `EmailChannel` interface with a log-only `NoopEmailChannel` `@Component` shipped by default (swap in SendGrid in prod). Subject is `[Aura] {entityName} negative spike`; body lists the top 3 most recent negative mentions for the entity with their permalinks.
 - **Webhook** — `WebhookChannel` POSTs the alert JSON to every user's configured `alertWebhookUrl` (see [Set Alert Webhook URL](#set-alert-webhook-url)).
 
+### Morning Digest
+
+`MorningDigestService` runs a `@Scheduled(cron = "0 * * * * *")` job (fires every minute at :00) that delivers a per-user overnight digest at 8:00 AM in each user's configured timezone.
+
+**How it works:**
+
+1. Each tick iterates all users and converts the current UTC time to the user's `timezone` (stored on the `users` table; defaults to `UTC`). If the local hour is 8 and the minute is 0, the user is eligible.
+2. For each eligible user, the service looks up every entity the user tracks (via `user_entity_views`) and calls `WhatsChangedService.computeDelta(userId, entityId)` for each one.
+3. Entities with no changes (zero new mentions and zero sentiment delta) are filtered out. If nothing changed overnight, no email is sent.
+4. A headline is picked from the most attention-grabbing entity — super-spreader activity takes priority, then negative mentions (weighted 3x), then total mentions — producing an unpredictable subject line like:
+   - `Your overnight Aura brief: Galaxy Quest picked up 7 negative mentions`
+   - `Your overnight Aura brief: Emma Stone has 2 new super-spreader mentions`
+   - `Your overnight Aura brief: Inception 2 has 14 new mentions`
+5. The digest is dispatched via `EmailChannel.sendDigest(user, subject, entries)`. The default `NoopEmailChannel` logs the full digest to console; swap in a real implementation (SendGrid, SES, etc.) in production.
+
+**User timezone:** Each user has a `timezone` column (IANA zone ID, e.g. `America/New_York`, `Asia/Kolkata`, `UTC`). Invalid or null values fall back to UTC. Set it during registration or via a user-settings endpoint.
+
+**Digest body** includes per-entity: sentiment score delta, new mention count, new negative count, new super-spreader count, and competitor deltas (if any).
+
 All routes below are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
 ### List Alerts
@@ -2363,6 +2385,7 @@ com.aura.service
 - **JwtService:** JWT token generation and validation
 -
 - **DataInitializer:** Pre-loads sample data on startup
+- **MorningDigestService:** Scheduled per-user overnight digest at 8 AM local time via `EmailChannel`
 - **GlobalExceptionHandler:** Centralized error handling
 - **Mock Services:** LLM, Social Media, and Analytics mock implementations
 

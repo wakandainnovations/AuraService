@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -18,6 +19,9 @@ public interface UserEntityViewRepository extends JpaRepository<UserEntityView, 
     @Query("SELECT v.lastSeenAt FROM UserEntityView v " +
             "WHERE v.userId = :userId AND v.entityId = :entityId")
     Optional<Instant> findLastSeen(@Param("userId") Long userId, @Param("entityId") Long entityId);
+
+    @Query("SELECT v.entityId FROM UserEntityView v WHERE v.userId = :userId")
+    List<Long> findEntityIdsByUserId(@Param("userId") Long userId);
 
     @Modifying
     @Query("UPDATE UserEntityView v SET v.lastSeenAt = :lastSeenAt " +

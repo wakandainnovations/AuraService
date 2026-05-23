@@ -121,6 +121,11 @@ class AlertDispatcherTest {
                 throw throwOnSend;
             }
         }
+
+        @Override
+        public void sendDigest(com.aura.service.entity.User user, String subject,
+                               java.util.Map<String, com.aura.service.dto.WhatsChangedResponse> entries) {
+        }
     }
 
     static class RecordingWebhookChannel extends WebhookChannel {
