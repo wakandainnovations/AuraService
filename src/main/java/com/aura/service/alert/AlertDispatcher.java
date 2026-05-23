@@ -5,6 +5,7 @@ import com.aura.service.entity.SentimentAlert;
 import com.aura.service.repository.ManagedEntityRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 @Slf4j
@@ -13,7 +14,8 @@ import org.springframework.stereotype.Component;
 public class AlertDispatcher {
 
     private final EmailChannel emailChannel;
-    private final WebhookChannel webhookChannel;
+    @Qualifier("webhookChannel")
+    private final AlertChannel webhookChannel;
     private final ManagedEntityRepository entityRepository;
 
     public void dispatch(SentimentAlert alert) {
