@@ -237,4 +237,115 @@ class AlertControllerTest {
                         .content(body))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    void create_savesNewSpikeAlertAndReturns201() throws Exception {
+        stubEntityLookup();
+        when(alertRepository.existsByManagedEntityIdAndKindAndStatus(
+                ENTITY_ID, SentimentAlert.Kind.SPIKE, SentimentAlert.Status.OPEN))
+                .thenReturn(false);
+        when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> {
+            SentimentAlert a = inv.getArgument(0);
+            a.setId(1L);
+            return a;
+        });
+
+        String body = mapper.writeValueAsString(java.util.Map.of(
+                "managedEntityId", ENTITY_ID,
+                "kind", "SPIKE",
+                "currentValue", 0.55,
+                "baselineValue", 0.20));
+
+        mvc.perform(post("/api/alerts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.managedEntityId").value(ENTITY_ID))
+                .andExpect(jsonPath("$.kind").value("SPIKE"))
+                .andExpect(jsonPath("$.status").value("OPEN"))
+                .andExpect(jsonPath("$.entityName").value(ENTITY_NAME))
+                .andExpect(jsonPath("$.triggeredAt").exists());
+
+        org.mockito.ArgumentCaptor<SentimentAlert> captor =
+                org.mockito.ArgumentCaptor.forClass(SentimentAlert.class);
+        verify(alertRepository).save(captor.capture());
+        SentimentAlert saved = captor.getValue();
+        assertThat(saved.getManagedEntityId()).isEqualTo(ENTITY_ID);
+        assertThat(saved.getKind()).isEqualTo(SentimentAlert.Kind.SPIKE);
+        assertThat(saved.getStatus()).isEqualTo(SentimentAlert.Status.OPEN);
+        assertThat(saved.getTriggeredAt()).isEqualTo(NOW);
+        assertThat(saved.getCurrentValue()).isEqualTo(0.55);
+        assertThat(saved.getBaselineValue()).isEqualTo(0.20);
+    }
+
+    @Test
+    void create_savesInfluencerNegativeAlertWithAllFields() throws Exception {
+        stubEntityLookup();
+        when(alertRepository.existsByManagedEntityIdAndKindAndStatus(
+                ENTITY_ID, SentimentAlert.Kind.INFLUENCER_NEGATIVE, SentimentAlert.Status.OPEN))
+                .thenReturn(false);
+        when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> {
+            SentimentAlert a = inv.getArgument(0);
+            a.setId(2L);
+            return a;
+        });
+
+        String body = mapper.writeValueAsString(java.util.Map.of(
+                "managedEntityId", ENTITY_ID,
+                "kind", "INFLUENCER_NEGATIVE",
+                "sourceMentionId", 99,
+                "matchedAuthor", "bob",
+                "permalink", "https://x.com/bob/99"));
+
+        mvc.perform(post("/api/alerts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.kind").value("INFLUENCER_NEGATIVE"))
+                .andExpect(jsonPath("$.matchedAuthor").value("bob"))
+                .andExpect(jsonPath("$.permalink").value("https://x.com/bob/99"))
+                .andExpect(jsonPath("$.reason").value(
+                        "Top-50 spreader bob posted a negative mention about " + ENTITY_NAME));
+    }
+
+    @Test
+    void create_returns409WhenOpenAlertAlreadyExists() throws Exception {
+        when(alertRepository.existsByManagedEntityIdAndKindAndStatus(
+                ENTITY_ID, SentimentAlert.Kind.SPIKE, SentimentAlert.Status.OPEN))
+                .thenReturn(true);
+
+        String body = mapper.writeValueAsString(java.util.Map.of(
+                "managedEntityId", ENTITY_ID,
+                "kind", "SPIKE",
+                "currentValue", 0.55,
+                "baselineValue", 0.20));
+
+        mvc.perform(post("/api/alerts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict());
+
+        verify(alertRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void create_returns400WhenManagedEntityIdMissing() throws Exception {
+        String body = mapper.writeValueAsString(java.util.Map.of("kind", "SPIKE"));
+
+        mvc.perform(post("/api/alerts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void create_returns400WhenKindMissing() throws Exception {
+        String body = mapper.writeValueAsString(java.util.Map.of("managedEntityId", ENTITY_ID));
+
+        mvc.perform(post("/api/alerts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
 }
