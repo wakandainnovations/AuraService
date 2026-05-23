@@ -5,6 +5,7 @@ import com.aura.service.enums.Platform;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.UserEntityViewService;
+import com.aura.service.service.WhatsChangedService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -24,6 +25,7 @@ public class DashboardController {
 
     private final DashboardService dashboardService;
     private final UserEntityViewService userEntityViewService;
+    private final WhatsChangedService whatsChangedService;
 
     @GetMapping("/{entityId}/stats")
     public ResponseEntity<EntityStatsResponse> getStats(
@@ -51,6 +53,19 @@ public class DashboardController {
         Map<String, Instant> body = new java.util.HashMap<>();
         body.put("lastSeenAt", lastSeenAt);
         return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/{entityId}/whats-changed")
+    public ResponseEntity<WhatsChangedResponse> getWhatsChanged(
+            @PathVariable Long entityId,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        if (principal == null) {
+            return ResponseEntity.status(401).build();
+        }
+        WhatsChangedResponse response = whatsChangedService.computeDelta(
+                principal.getUsername(), entityId);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/cluster/stats")

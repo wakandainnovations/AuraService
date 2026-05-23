@@ -32,6 +32,26 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     long countByManagedEntityIdAndSentimentAndPostDateBetween(
             Long entityId, Sentiment sentiment, Instant start, Instant end);
 
+    long countByManagedEntityIdAndPostDateAfter(Long entityId, Instant after);
+
+    long countByManagedEntityIdAndSentimentAndPostDateAfter(
+            Long entityId, Sentiment sentiment, Instant after);
+
+    long countByManagedEntityIdAndPostDateLessThanEqual(Long entityId, Instant cutoff);
+
+    long countByManagedEntityIdAndSentimentAndPostDateLessThanEqual(
+            Long entityId, Sentiment sentiment, Instant cutoff);
+
+    @Query("SELECT DISTINCT m.author FROM Mention m " +
+            "WHERE m.managedEntity.id = :entityId AND m.postDate > :after AND m.author IS NOT NULL")
+    List<String> findDistinctAuthorsByEntityIdAndPostDateAfter(
+            @Param("entityId") Long entityId, @Param("after") Instant after);
+
+    @Query("SELECT DISTINCT m.author FROM Mention m " +
+            "WHERE m.managedEntity.id = :entityId AND m.postDate <= :cutoff AND m.author IS NOT NULL")
+    List<String> findDistinctAuthorsByEntityIdAndPostDateLessThanEqual(
+            @Param("entityId") Long entityId, @Param("cutoff") Instant cutoff);
+
     long countByManagedEntityIdInAndSentiment(List<Long> entityIds, Sentiment sentiment);
 
     List<Mention> findByIdGreaterThanAndSentimentOrderByIdAsc(Long id, Sentiment sentiment);
