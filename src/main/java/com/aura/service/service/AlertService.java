@@ -1,6 +1,7 @@
 package com.aura.service.service;
 
 import com.aura.service.dto.AlertResponse;
+import com.aura.service.dto.CreateAlertRequest;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.repository.ManagedEntityRepository;
@@ -42,6 +43,33 @@ public class AlertService {
                         .collect(Collectors.toMap(ManagedEntity::getId, ManagedEntity::getName));
 
         return alerts.map(a -> toResponse(a, nameById.get(a.getManagedEntityId())));
+    }
+
+    @Transactional
+    public Optional<AlertResponse> create(CreateAlertRequest request) {
+        boolean exists = alertRepository.existsByManagedEntityIdAndKindAndStatus(
+                request.getManagedEntityId(),
+                request.getKind(),
+                SentimentAlert.Status.OPEN
+        );
+        if (exists) {
+            return Optional.empty();
+        }
+
+        SentimentAlert alert = SentimentAlert.builder()
+                .managedEntityId(request.getManagedEntityId())
+                .kind(request.getKind())
+                .status(SentimentAlert.Status.OPEN)
+                .triggeredAt(clock.instant())
+                .currentValue(request.getCurrentValue())
+                .baselineValue(request.getBaselineValue())
+                .sourceMentionId(request.getSourceMentionId())
+                .matchedAuthor(request.getMatchedAuthor())
+                .permalink(request.getPermalink())
+                .build();
+
+        SentimentAlert saved = alertRepository.save(alert);
+        return Optional.of(toResponse(saved, lookupEntityName(saved.getManagedEntityId())));
     }
 
     @Transactional

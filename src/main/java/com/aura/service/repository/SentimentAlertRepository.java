@@ -21,6 +21,12 @@ public interface SentimentAlertRepository extends JpaRepository<SentimentAlert, 
 
     boolean existsByKindAndSourceMentionId(SentimentAlert.Kind kind, Long sourceMentionId);
 
+    boolean existsByManagedEntityIdAndKindAndStatus(
+            Long managedEntityId,
+            SentimentAlert.Kind kind,
+            SentimentAlert.Status status
+    );
+
     @Query("SELECT MAX(a.sourceMentionId) FROM SentimentAlert a WHERE a.kind = :kind")
     Long findMaxSourceMentionIdByKind(@Param("kind") SentimentAlert.Kind kind);
 

@@ -1,12 +1,14 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.AlertResponse;
+import com.aura.service.dto.CreateAlertRequest;
 import com.aura.service.dto.DismissAlertRequest;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.service.AlertService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -18,6 +20,13 @@ import org.springframework.web.bind.annotation.*;
 public class AlertController {
 
     private final AlertService alertService;
+
+    @PostMapping
+    public ResponseEntity<AlertResponse> create(@Valid @RequestBody CreateAlertRequest request) {
+        return alertService.create(request)
+                .map(r -> ResponseEntity.status(HttpStatus.CREATED).body(r))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT).build());
+    }
 
     @GetMapping
     public ResponseEntity<Page<AlertResponse>> list(
