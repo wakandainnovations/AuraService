@@ -4,10 +4,13 @@ import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.DashboardService;
+import com.aura.service.service.UserEntityViewService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -18,13 +21,36 @@ import java.util.Map;
 @RequestMapping("/api/dashboard")
 @RequiredArgsConstructor
 public class DashboardController {
-    
+
     private final DashboardService dashboardService;
-    
+    private final UserEntityViewService userEntityViewService;
+
     @GetMapping("/{entityId}/stats")
-    public ResponseEntity<EntityStatsResponse> getStats(@PathVariable Long entityId) {
+    public ResponseEntity<EntityStatsResponse> getStats(
+            @PathVariable Long entityId,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
         EntityStatsResponse response = dashboardService.getEntityStats(entityId);
+        if (principal != null) {
+            userEntityViewService.recordView(principal.getUsername(), entityId);
+        }
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/last-seen")
+    public ResponseEntity<Map<String, Instant>> getLastSeen(
+            @PathVariable Long entityId,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        if (principal == null) {
+            return ResponseEntity.status(401).build();
+        }
+        Instant lastSeenAt = userEntityViewService
+                .findLastSeen(principal.getUsername(), entityId)
+                .orElse(null);
+        Map<String, Instant> body = new java.util.HashMap<>();
+        body.put("lastSeenAt", lastSeenAt);
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping("/cluster/stats")
@@ -91,11 +117,15 @@ public class DashboardController {
             @PathVariable Long entityId,
             @RequestParam(required = false) Platform platform,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size
+            @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size,
+            @AuthenticationPrincipal UserDetails principal
     ) {
         Page<MentionResponse> response = dashboardService.getMentions(
                 entityId, platform, page, size
         );
+        if (principal != null) {
+            userEntityViewService.recordView(principal.getUsername(), entityId);
+        }
         return ResponseEntity.ok(response);
     }
 
