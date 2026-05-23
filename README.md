@@ -455,7 +455,7 @@ Authorization: Bearer {jwt_token}
 
 **Status Codes:**
 - `200 OK` — `lastSeenAt` is either an ISO-8601 instant or `null`
-- `401 Unauthorized` — no JWT supplied
+- `403 Forbidden` — no JWT supplied (or invalid token); Spring Security rejects unauthenticated dashboard requests at the filter level
 
 ---
 
@@ -503,7 +503,7 @@ All five fields are omitted (null) together when the user has no prior view of `
 
 **Status Codes:**
 - `200 OK`
-- `401 Unauthorized` — no JWT supplied
+- `403 Forbidden` — no JWT supplied (or invalid token); Spring Security rejects unauthenticated dashboard requests at the filter level
 
 ---
 
