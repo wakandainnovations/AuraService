@@ -748,7 +748,13 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
       "content": "This movie is absolutely amazing! Best film of the year!",
       "author": "movie_fan_123",
       "postDate": "2025-11-05T10:30:00Z",
-      "sentiment": "POSITIVE"
+      "sentiment": "POSITIVE",
+      "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
+      "action_history_summary": {
+        "drafts": 1,
+        "posted": 0,
+        "escalated": false
+      }
     },
     {
       "id": 2,
@@ -758,7 +764,13 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
       "content": "Incredible performance! Oscar-worthy for sure.",
       "author": "critic_sarah",
       "postDate": "2025-11-03T14:20:00Z",
-      "sentiment": "POSITIVE"
+      "sentiment": "POSITIVE",
+      "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
+      "action_history_summary": {
+        "drafts": 0,
+        "posted": 0,
+        "escalated": false
+      }
     }
   ],
   "pageable": {
@@ -770,6 +782,13 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
   "last": false
 }
 ```
+
+**Per-mention action fields:**
+- `available_actions` — the full set of inline actions the UI can offer for any mention. Always `["draft-reply", "escalate", "mobilize", "report-abuse"]`; emitted on every mention so the frontend doesn't need a separate config call.
+- `action_history_summary` — rollup of prior actions taken against this specific mention, used to dim buttons whose effect has already been applied without an N+1 round-trip to `/api/mentions/{id}/actions`.
+  - `drafts` — number of `ReplyDraft` rows for this mention (any status).
+  - `posted` — subset of those drafts whose status is `POSTED`.
+  - `escalated` — `true` iff at least one `CrisisPlan` row exists for this mention.
 
 **Status Code:** `200 OK`
 
@@ -809,7 +828,13 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
       "content": "This movie is absolutely amazing! Best film of the year!",
       "author": "movie_fan_123",
       "postDate": "2025-11-05T10:30:00Z",
-      "sentiment": "POSITIVE"
+      "sentiment": "POSITIVE",
+      "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
+      "action_history_summary": {
+        "drafts": 1,
+        "posted": 0,
+        "escalated": false
+      }
     },
     {
       "id": 2,
@@ -819,7 +844,13 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
       "content": "Incredible performance! Oscar-worthy for sure.",
       "author": "critic_sarah",
       "postDate": "2025-11-03T14:20:00Z",
-      "sentiment": "POSITIVE"
+      "sentiment": "POSITIVE",
+      "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
+      "action_history_summary": {
+        "drafts": 0,
+        "posted": 0,
+        "escalated": false
+      }
     }
   ],
   "pageable": {
@@ -831,6 +862,8 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
   "last": false
 }
 ```
+
+Each mention carries the same `available_actions` / `action_history_summary` fields as the single-entity endpoint above — see section 15 for the field semantics.
 
 **Status Code:** `200 OK`
 
