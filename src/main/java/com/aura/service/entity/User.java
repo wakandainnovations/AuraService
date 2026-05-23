@@ -28,6 +28,6 @@ public class User {
     @Column(name = "alert_webhook_url")
     private String alertWebhookUrl;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "varchar(255) not null default 'UTC'")
     private String timezone = "UTC";
 }
