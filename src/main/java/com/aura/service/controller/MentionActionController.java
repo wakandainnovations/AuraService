@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.AllyRecommendation;
 import com.aura.service.dto.DraftReplyResponse;
 import com.aura.service.dto.EscalateCrisisResponse;
+import com.aura.service.dto.MentionActionLogEntry;
 import com.aura.service.dto.MentionResponse;
 import com.aura.service.dto.MobilizeAlliesResponse;
 import com.aura.service.dto.PostReplyRequest;
@@ -11,12 +12,14 @@ import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
+import com.aura.service.entity.MobilizeAction;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.proxy.TtlCache;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
+import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
@@ -39,9 +42,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/mentions/{mentionId}/actions")
@@ -56,6 +61,7 @@ public class MentionActionController {
     private final MentionRepository mentionRepository;
     private final ReplyDraftRepository replyDraftRepository;
     private final CrisisPlanRepository crisisPlanRepository;
+    private final MobilizeActionRepository mobilizeActionRepository;
     private final UserRepository userRepository;
     private final TopSpreaderLookupService spreaderLookup;
 
@@ -69,6 +75,67 @@ public class MentionActionController {
 
     @Value("${llm.prompt.generate.ally.dm}")
     private String allyDmPromptTemplate;
+
+    @GetMapping
+    public ResponseEntity<List<MentionActionLogEntry>> listActions(
+            @PathVariable("mentionId") Long mentionId
+    ) {
+        if (!mentionRepository.existsById(mentionId)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<ReplyDraft> drafts = replyDraftRepository.findByMentionId(mentionId);
+        List<CrisisPlan> plans = crisisPlanRepository.findByMentionId(mentionId);
+        List<MobilizeAction> mobilizes = mobilizeActionRepository.findByMentionId(mentionId);
+
+        Set<Long> userIds = new HashSet<>();
+        for (ReplyDraft d : drafts) userIds.add(d.getUserId());
+        for (CrisisPlan p : plans) userIds.add(p.getCreatedBy());
+        for (MobilizeAction m : mobilizes) userIds.add(m.getUserId());
+
+        Map<Long, String> usernames = new java.util.HashMap<>();
+        for (User u : userRepository.findAllById(userIds)) {
+            usernames.put(u.getId(), u.getUsername());
+        }
+
+        List<MentionActionLogEntry> entries = new ArrayList<>(
+                drafts.size() + plans.size() + mobilizes.size());
+        for (ReplyDraft d : drafts) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.REPLY_DRAFT)
+                    .id(d.getId())
+                    .actor(usernames.get(d.getUserId()))
+                    .createdAt(d.getCreatedAt())
+                    .draftStatus(d.getStatus())
+                    .text(d.getText())
+                    .postedAt(d.getPostedAt())
+                    .build());
+        }
+        for (CrisisPlan p : plans) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.CRISIS_PLAN)
+                    .id(p.getId())
+                    .actor(usernames.get(p.getCreatedBy()))
+                    .createdAt(p.getCreatedAt())
+                    .planText(p.getPlanText())
+                    .build());
+        }
+        for (MobilizeAction m : mobilizes) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.MOBILIZE)
+                    .id(m.getId())
+                    .actor(usernames.get(m.getUserId()))
+                    .createdAt(m.getCreatedAt())
+                    .allyCount(m.getAllyCount())
+                    .build());
+        }
+
+        entries.sort(Comparator.comparing(
+                MentionActionLogEntry::getCreatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+
+        return ResponseEntity.ok(entries);
+    }
 
     @PostMapping("/draft-reply")
     public ResponseEntity<DraftReplyResponse> draftReply(
@@ -180,17 +247,20 @@ public class MentionActionController {
 
     @PostMapping("/mobilize-allies")
     public ResponseEntity<MobilizeAlliesResponse> mobilizeAllies(
-            @PathVariable("mentionId") Long mentionId
+            @PathVariable("mentionId") Long mentionId,
+            @AuthenticationPrincipal UserDetails principal
     ) {
         Mention mention = mentionRepository.findById(mentionId).orElse(null);
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
         ManagedEntity entity = mention.getManagedEntity();
+        User user = requireUser(principal);
 
         String cacheKey = entity.getId() + ":" + mention.getId();
         MobilizeAlliesResponse cached = allyCache.get(cacheKey);
         if (cached != null) {
+            recordMobilize(mention, entity, user, cached.getAllies().size());
             return ResponseEntity.ok(cached);
         }
 
@@ -207,6 +277,7 @@ public class MentionActionController {
         if (candidates.isEmpty()) {
             MobilizeAlliesResponse empty = new MobilizeAlliesResponse(toMentionResponse(mention), List.of());
             allyCache.put(cacheKey, empty, ALLY_CACHE_TTL.toNanos());
+            recordMobilize(mention, entity, user, 0);
             return ResponseEntity.ok(empty);
         }
 
@@ -235,7 +306,18 @@ public class MentionActionController {
 
         MobilizeAlliesResponse response = new MobilizeAlliesResponse(toMentionResponse(mention), allies);
         allyCache.put(cacheKey, response, ALLY_CACHE_TTL.toNanos());
+        recordMobilize(mention, entity, user, allies.size());
         return ResponseEntity.ok(response);
+    }
+
+    private void recordMobilize(Mention mention, ManagedEntity entity, User user, int allyCount) {
+        mobilizeActionRepository.save(MobilizeAction.builder()
+                .mentionId(mention.getId())
+                .entityId(entity.getId())
+                .userId(user.getId())
+                .allyCount(allyCount)
+                .createdAt(Instant.now())
+                .build());
     }
 
     private Map<String, SpreaderProfile> fetchSpreaderProfiles(List<String> keywords) {

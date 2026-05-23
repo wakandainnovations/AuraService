@@ -4,12 +4,14 @@ import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
+import com.aura.service.entity.MobilizeAction;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
+import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
@@ -41,6 +43,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -70,6 +73,7 @@ class MentionActionControllerTest {
     private MentionRepository mentionRepository;
     private ReplyDraftRepository replyDraftRepository;
     private CrisisPlanRepository crisisPlanRepository;
+    private MobilizeActionRepository mobilizeActionRepository;
     private UserRepository userRepository;
     private StubSpreaderLookup spreaderLookup;
 
@@ -110,6 +114,7 @@ class MentionActionControllerTest {
         mentionRepository = mock(MentionRepository.class);
         replyDraftRepository = mock(ReplyDraftRepository.class);
         crisisPlanRepository = mock(CrisisPlanRepository.class);
+        mobilizeActionRepository = mock(MobilizeActionRepository.class);
         userRepository = mock(UserRepository.class);
         spreaderLookup = new StubSpreaderLookup();
 
@@ -119,6 +124,7 @@ class MentionActionControllerTest {
                 mentionRepository,
                 replyDraftRepository,
                 crisisPlanRepository,
+                mobilizeActionRepository,
                 userRepository,
                 spreaderLookup
         );
@@ -468,6 +474,151 @@ class MentionActionControllerTest {
 
         assertThat(spreaderLookup.calls()).isEmpty();
         verify(llmService, never()).generateReply(any());
+    }
+
+    @Test
+    void mobilizeAllies_persistsMobilizeActionRowWithActorAndAllyCount() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        spreaderLookup.put("matrix", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1")
+        ));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
+                .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
+        when(llmService.generateReply(any())).thenReturn("hi alice");
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<MobilizeAction> captor = ArgumentCaptor.forClass(MobilizeAction.class);
+        verify(mobilizeActionRepository).save(captor.capture());
+        MobilizeAction saved = captor.getValue();
+        assertThat(saved.getMentionId()).isEqualTo(MENTION_ID);
+        assertThat(saved.getEntityId()).isEqualTo(ENTITY_ID);
+        assertThat(saved.getUserId()).isEqualTo(USER_ID);
+        assertThat(saved.getAllyCount()).isEqualTo(1);
+        assertThat(saved.getCreatedAt()).isNotNull();
+    }
+
+    @Test
+    void mobilizeAllies_persistsRowOnCacheHitsToo() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        spreaderLookup.put("matrix", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1")
+        ));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
+                .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
+        when(llmService.generateReply(any())).thenReturn("hi alice");
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk());
+
+        verify(mobilizeActionRepository, org.mockito.Mockito.times(2)).save(any(MobilizeAction.class));
+    }
+
+    @Test
+    void mobilizeAllies_persistsRowEvenWhenNoKeywords() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, new ArrayList<>());
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<MobilizeAction> captor = ArgumentCaptor.forClass(MobilizeAction.class);
+        verify(mobilizeActionRepository).save(captor.capture());
+        assertThat(captor.getValue().getAllyCount()).isEqualTo(0);
+        assertThat(captor.getValue().getUserId()).isEqualTo(USER_ID);
+    }
+
+    @Test
+    void listActions_returnsMergedEntriesSortedNewestFirstWithActorUsernames() throws Exception {
+        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+
+        Long otherUserId = 99L;
+        String otherUsername = "second_user";
+
+        ReplyDraft draft = ReplyDraft.builder()
+                .id(11L)
+                .mentionId(MENTION_ID)
+                .userId(USER_ID)
+                .text("hello world")
+                .status(ReplyDraft.Status.POSTED)
+                .createdAt(Instant.parse("2026-05-21T09:00:00Z"))
+                .postedAt(Instant.parse("2026-05-21T09:05:00Z"))
+                .build();
+        when(replyDraftRepository.findByMentionId(MENTION_ID)).thenReturn(List.of(draft));
+
+        CrisisPlan plan = CrisisPlan.builder()
+                .id(22L)
+                .entityId(ENTITY_ID)
+                .mentionId(MENTION_ID)
+                .planText("PLAN")
+                .createdBy(otherUserId)
+                .createdAt(Instant.parse("2026-05-21T11:00:00Z"))
+                .build();
+        when(crisisPlanRepository.findByMentionId(MENTION_ID)).thenReturn(List.of(plan));
+
+        MobilizeAction mob = MobilizeAction.builder()
+                .id(33L)
+                .mentionId(MENTION_ID)
+                .entityId(ENTITY_ID)
+                .userId(USER_ID)
+                .allyCount(4)
+                .createdAt(Instant.parse("2026-05-21T10:00:00Z"))
+                .build();
+        when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of(mob));
+
+        User u1 = new User(); u1.setId(USER_ID); u1.setUsername(USERNAME);
+        u1.setPassword("x"); u1.setRole("USER");
+        User u2 = new User(); u2.setId(otherUserId); u2.setUsername(otherUsername);
+        u2.setPassword("x"); u2.setRole("USER");
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1, u2));
+
+        mvc.perform(get("/api/mentions/{id}/actions", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].type").value("CRISIS_PLAN"))
+                .andExpect(jsonPath("$[0].id").value(22))
+                .andExpect(jsonPath("$[0].actor").value(otherUsername))
+                .andExpect(jsonPath("$[0].planText").value("PLAN"))
+                .andExpect(jsonPath("$[1].type").value("MOBILIZE"))
+                .andExpect(jsonPath("$[1].id").value(33))
+                .andExpect(jsonPath("$[1].actor").value(USERNAME))
+                .andExpect(jsonPath("$[1].allyCount").value(4))
+                .andExpect(jsonPath("$[2].type").value("REPLY_DRAFT"))
+                .andExpect(jsonPath("$[2].id").value(11))
+                .andExpect(jsonPath("$[2].actor").value(USERNAME))
+                .andExpect(jsonPath("$[2].draftStatus").value("POSTED"))
+                .andExpect(jsonPath("$[2].text").value("hello world"))
+                .andExpect(jsonPath("$[2].postedAt").exists());
+    }
+
+    @Test
+    void listActions_returnsEmptyListWhenNoActions() throws Exception {
+        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(replyDraftRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(crisisPlanRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        mvc.perform(get("/api/mentions/{id}/actions", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void listActions_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.existsById(404L)).thenReturn(false);
+
+        mvc.perform(get("/api/mentions/{id}/actions", 404L))
+                .andExpect(status().isNotFound());
+
+        verify(replyDraftRepository, never()).findByMentionId(any());
+        verify(crisisPlanRepository, never()).findByMentionId(any());
+        verify(mobilizeActionRepository, never()).findByMentionId(any());
     }
 
     @Test

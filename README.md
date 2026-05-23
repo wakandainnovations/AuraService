@@ -1007,14 +1007,93 @@ Authorization: Bearer {jwt_token}
 
 ## Mention Action APIs
 
-Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All four endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
+- **List actions** returns every `ReplyDraft`, `CrisisPlan`, and mobilize call ever recorded for the mention, with the actor's username on every row, sorted newest first. Used by the UI to show "you already drafted a reply 2h ago" so users don't double-act.
 - **Draft reply** generates a reply via `LLMService.generateReply` (entity name + mention content + sentiment) and persists a `ReplyDraft` row (`status=DRAFT`). Outer quotes from the LLM output are stripped to match the existing `/api/interact/generate-reply` behavior.
 - **Post reply** loads a previously created draft, calls `SocialMediaService.postReply(platform, postId, text)` against the mention's source platform and post id, and flips the draft to `status=POSTED` with `postedAt` set to the server time.
 - **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
-- **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes.
+- **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes. Every call (including cache hits) persists a `MobilizeAction` row attributed to the calling user so the action log can show prior mobilize attempts.
 
-Every response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
+Every action response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
+
+### List Mention Actions
+
+**Endpoint:** `GET /api/mentions/{mentionId}/actions`
+
+**Description:** Return every `ReplyDraft`, `CrisisPlan`, and `MobilizeAction` row recorded for the mention, merged into a single timeline sorted by `createdAt` descending (newest first). Each row carries the acting user's username so the UI can show "you already drafted a reply 2h ago" and prevent users from double-acting.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID to fetch the action log for
+
+**Example Request:**
+```
+GET /api/mentions/9123/actions
+```
+
+**Response:**
+```json
+[
+  {
+    "type": "CRISIS_PLAN",
+    "id": 22,
+    "actor": "ops_user",
+    "createdAt": "2026-05-21T11:00:00Z",
+    "draftStatus": null,
+    "text": null,
+    "postedAt": null,
+    "planText": "Immediate Response (0 to 4 Hours): ...",
+    "allyCount": null
+  },
+  {
+    "type": "MOBILIZE",
+    "id": 33,
+    "actor": "ops_user",
+    "createdAt": "2026-05-21T10:00:00Z",
+    "draftStatus": null,
+    "text": null,
+    "postedAt": null,
+    "planText": null,
+    "allyCount": 4
+  },
+  {
+    "type": "REPLY_DRAFT",
+    "id": 11,
+    "actor": "second_user",
+    "createdAt": "2026-05-21T09:00:00Z",
+    "draftStatus": "POSTED",
+    "text": "We hear you, and we're sorry the film didn't land for you...",
+    "postedAt": "2026-05-21T09:05:00Z",
+    "planText": null,
+    "allyCount": null
+  }
+]
+```
+
+**Response fields:**
+- `type` — one of `REPLY_DRAFT`, `CRISIS_PLAN`, `MOBILIZE`.
+- `id` — primary key of the underlying row (e.g. the `ReplyDraft.id`).
+- `actor` — username of the user who triggered the action (resolved from `User.id`). May be `null` if the user record was hard-deleted.
+- `createdAt` — when the action was recorded (sort key).
+- `draftStatus`, `text`, `postedAt` — set only for `REPLY_DRAFT` rows. `draftStatus` is `DRAFT` or `POSTED`; `postedAt` is `null` for unposted drafts.
+- `planText` — set only for `CRISIS_PLAN` rows; the full generated plan body.
+- `allyCount` — set only for `MOBILIZE` rows; number of allies returned by that call (`0` if no keywords or no positive supporters matched).
+
+**Notes:**
+- Each `ReplyDraft` is a single row even after it's been posted — the draft creation and the subsequent post are not separate timeline entries. Use `postedAt`/`draftStatus` to distinguish.
+- Each call to `POST /mobilize-allies` produces a row, including cache hits, so the timeline reflects every user-triggered mobilize attempt.
+- The endpoint is not paginated — typical mentions accumulate at most a handful of actions.
+
+**Status Codes:**
+- `200 OK` — Returns the (possibly empty) list of actions.
+- `404 Not Found` — No mention with the given id.
+
+---
 
 ### Draft Reply
 
