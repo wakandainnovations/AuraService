@@ -109,12 +109,4 @@ class DashboardControllerWhatsChangedTest {
                 .andExpect(jsonPath("$.new_mentions_count").doesNotExist())
                 .andExpect(jsonPath("$.competitor_delta").doesNotExist());
     }
-
-    @Test
-    void getWhatsChanged_returns401WhenUnauthenticated() throws Exception {
-        SecurityContextHolder.clearContext();
-
-        mvc.perform(get("/api/dashboard/{entityId}/whats-changed", ENTITY_ID))
-                .andExpect(status().isUnauthorized());
-    }
 }

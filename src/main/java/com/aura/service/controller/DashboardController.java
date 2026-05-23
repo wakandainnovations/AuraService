@@ -44,9 +44,6 @@ public class DashboardController {
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
-        if (principal == null) {
-            return ResponseEntity.status(401).build();
-        }
         Instant lastSeenAt = userEntityViewService
                 .findLastSeen(principal.getUsername(), entityId)
                 .orElse(null);
@@ -60,9 +57,6 @@ public class DashboardController {
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
-        if (principal == null) {
-            return ResponseEntity.status(401).build();
-        }
         WhatsChangedResponse response = whatsChangedService.computeDelta(
                 principal.getUsername(), entityId);
         return ResponseEntity.ok(response);

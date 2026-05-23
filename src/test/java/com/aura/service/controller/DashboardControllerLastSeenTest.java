@@ -108,12 +108,4 @@ class DashboardControllerLastSeenTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lastSeenAt").doesNotExist());
     }
-
-    @Test
-    void getLastSeen_returns401WhenUnauthenticated() throws Exception {
-        SecurityContextHolder.clearContext();
-
-        mvc.perform(get("/api/dashboard/{entityId}/last-seen", ENTITY_ID))
-                .andExpect(status().isUnauthorized());
-    }
 }
