@@ -10,8 +10,12 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Slf4j
@@ -23,6 +27,9 @@ public class TopSpreaderLookupService {
     private final AuraMathProxyService proxy;
     private final ObjectMapper objectMapper;
     private final TtlCache<Set<String>> cache = new TtlCache<>(1024);
+    private final TtlCache<List<SpreaderProfile>> profileCache = new TtlCache<>(1024);
+
+    public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier) {}
 
     public TopSpreaderLookupService(AuraMathProxyService proxy, ObjectMapper objectMapper) {
         this.proxy = proxy;
@@ -45,8 +52,25 @@ public class TopSpreaderLookupService {
         return fresh;
     }
 
+    public List<SpreaderProfile> getSpreaderProfiles(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return Collections.emptyList();
+        }
+        List<SpreaderProfile> cached = profileCache.get(keyword);
+        if (cached != null) {
+            return cached;
+        }
+        List<SpreaderProfile> fresh = fetchProfiles(keyword);
+        if (fresh == null) {
+            return Collections.emptyList();
+        }
+        profileCache.put(keyword, fresh, CACHE_TTL.toNanos());
+        return fresh;
+    }
+
     void invalidateAll() {
         cache.clear();
+        profileCache.clear();
     }
 
     private Set<String> fetch(String keyword) {
@@ -84,6 +108,59 @@ public class TopSpreaderLookupService {
             log.warn("Failed to parse top-spreaders payload keyword={}", keyword, e);
             return null;
         }
+    }
+
+    private List<SpreaderProfile> fetchProfiles(String keyword) {
+        ResponseEntity<String> response = proxy.forwardGet(
+                "/v1/top-spreaders/{keyword}",
+                "/api/marketing/top-50-spreaders/" + encodeSegment(keyword),
+                null,
+                false,
+                null
+        );
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            log.warn("top-spreaders profile lookup failed keyword={} status={}",
+                    keyword, response.getStatusCode().value());
+            return null;
+        }
+        String body = response.getBody();
+        if (body == null || body.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            if (!root.isArray()) {
+                log.warn("top-spreaders payload not an array keyword={}", keyword);
+                return List.of();
+            }
+            Map<String, SpreaderProfile> deduped = new LinkedHashMap<>();
+            for (JsonNode element : root) {
+                String author = extractAuthor(element);
+                if (author == null || author.isBlank()) {
+                    continue;
+                }
+                String platform = extractField(element, "primaryPlatform", "platform");
+                String tier = extractField(element, "influenceTier", "tier");
+                deduped.putIfAbsent(author, new SpreaderProfile(author, platform, tier));
+            }
+            return new ArrayList<>(deduped.values());
+        } catch (Exception e) {
+            log.warn("Failed to parse top-spreaders payload keyword={}", keyword, e);
+            return null;
+        }
+    }
+
+    private static String extractField(JsonNode element, String... fields) {
+        if (!element.isObject()) {
+            return null;
+        }
+        for (String field : fields) {
+            JsonNode v = element.get(field);
+            if (v != null && v.isTextual() && !v.asText().isBlank()) {
+                return v.asText();
+            }
+        }
+        return null;
     }
 
     private static String extractAuthor(JsonNode element) {

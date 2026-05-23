@@ -1,6 +1,7 @@
 package com.aura.service.controller;
 
 import com.aura.service.entity.CrisisPlan;
+import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.ReplyDraft;
@@ -13,6 +14,7 @@ import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.SocialMediaService;
+import com.aura.service.service.TopSpreaderLookupService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +61,9 @@ class MentionActionControllerTest {
             "entity=[Managed Entity] post=[Paste the user's post here] sentiment=[Positive / Negative / Neutral]";
     private static final String CRISIS_PROMPT_TEMPLATE =
             "entity=[Managed Entity] crisis=[Crisis Description]";
+    private static final String ALLY_DM_PROMPT_TEMPLATE =
+            "entity=[Managed Entity] handle=[Ally Handle] platform=[Ally Platform] " +
+                    "tier=[Ally Tier] mention=[Mention Content]";
 
     private LLMService llmService;
     private SocialMediaService socialMediaService;
@@ -63,6 +71,34 @@ class MentionActionControllerTest {
     private ReplyDraftRepository replyDraftRepository;
     private CrisisPlanRepository crisisPlanRepository;
     private UserRepository userRepository;
+    private StubSpreaderLookup spreaderLookup;
+
+    /**
+     * Hand-written test double — Mockito's inline mock maker can't mock this class on the
+     * current JDK (same workaround as {@code SentimentAlertServiceTest.StubSpreaderLookup}).
+     */
+    static class StubSpreaderLookup extends TopSpreaderLookupService {
+        private final java.util.Map<String, List<TopSpreaderLookupService.SpreaderProfile>> byKeyword = new java.util.HashMap<>();
+        private final java.util.List<String> calls = new java.util.ArrayList<>();
+
+        StubSpreaderLookup() {
+            super(null, null);
+        }
+
+        void put(String keyword, List<TopSpreaderLookupService.SpreaderProfile> profiles) {
+            byKeyword.put(keyword, profiles);
+        }
+
+        java.util.List<String> calls() {
+            return calls;
+        }
+
+        @Override
+        public List<TopSpreaderLookupService.SpreaderProfile> getSpreaderProfiles(String keyword) {
+            calls.add(keyword);
+            return byKeyword.getOrDefault(keyword, List.of());
+        }
+    }
 
     private MockMvc mvc;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -75,6 +111,7 @@ class MentionActionControllerTest {
         replyDraftRepository = mock(ReplyDraftRepository.class);
         crisisPlanRepository = mock(CrisisPlanRepository.class);
         userRepository = mock(UserRepository.class);
+        spreaderLookup = new StubSpreaderLookup();
 
         MentionActionController controller = new MentionActionController(
                 llmService,
@@ -82,10 +119,12 @@ class MentionActionControllerTest {
                 mentionRepository,
                 replyDraftRepository,
                 crisisPlanRepository,
-                userRepository
+                userRepository,
+                spreaderLookup
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);
+        ReflectionTestUtils.setField(controller, "allyDmPromptTemplate", ALLY_DM_PROMPT_TEMPLATE);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
@@ -105,9 +144,20 @@ class MentionActionControllerTest {
     }
 
     private Mention buildMention(Sentiment sentiment) {
+        return buildMention(sentiment, new ArrayList<>());
+    }
+
+    private Mention buildMention(Sentiment sentiment, List<String> keywords) {
         ManagedEntity entity = new ManagedEntity();
         entity.setId(ENTITY_ID);
         entity.setName(ENTITY_NAME);
+        List<EntityKeyword> eks = new ArrayList<>();
+        for (String kw : keywords) {
+            EntityKeyword ek = new EntityKeyword();
+            ek.setKeyword(kw);
+            eks.add(ek);
+        }
+        entity.setKeywords(eks);
 
         Mention m = new Mention();
         m.setId(MENTION_ID);
@@ -340,5 +390,96 @@ class MentionActionControllerTest {
 
         verify(llmService, never()).generateCrisisPlan(any());
         verify(crisisPlanRepository, never()).save(any());
+    }
+
+    @Test
+    void mobilizeAllies_returnsRankedPositiveSupportersWithDmTemplate() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix", "sequel"));
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+
+        spreaderLookup.put("matrix", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1"),
+                new TopSpreaderLookupService.SpreaderProfile("bob", "INSTAGRAM", "TIER_2"),
+                new TopSpreaderLookupService.SpreaderProfile("carol", "TIKTOK", "TIER_3")
+        ));
+        spreaderLookup.put("sequel", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("dave", "REDDIT", "TIER_2")
+        ));
+
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
+                .thenReturn(Arrays.<Object[]>asList(
+                        new Object[]{"alice", Sentiment.POSITIVE, 8L},
+                        new Object[]{"alice", Sentiment.NEGATIVE, 1L},
+                        new Object[]{"bob", Sentiment.POSITIVE, 5L},
+                        new Object[]{"bob", Sentiment.NEUTRAL, 2L},
+                        new Object[]{"carol", Sentiment.NEGATIVE, 4L},
+                        new Object[]{"carol", Sentiment.POSITIVE, 1L},
+                        new Object[]{"dave", Sentiment.POSITIVE, 3L}
+                ));
+
+        when(llmService.generateReply(any())).thenAnswer(inv -> {
+            String prompt = inv.getArgument(0);
+            if (prompt.contains("handle=alice")) return "Hey alice, would love your take.";
+            if (prompt.contains("handle=bob")) return "Hi bob, mind sharing this?";
+            return "Hey friend.";
+        });
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mention.id").value(MENTION_ID))
+                .andExpect(jsonPath("$.allies.length()").value(3))
+                .andExpect(jsonPath("$.allies[0].globalUserId").value("alice"))
+                .andExpect(jsonPath("$.allies[0].primaryPlatform").value("TWITTER"))
+                .andExpect(jsonPath("$.allies[0].influenceTier").value("TIER_1"))
+                .andExpect(jsonPath("$.allies[0].suggestedDm").value("Hey alice, would love your take."))
+                .andExpect(jsonPath("$.allies[1].globalUserId").value("bob"))
+                .andExpect(jsonPath("$.allies[2].globalUserId").value("dave"));
+
+        verify(llmService, org.mockito.Mockito.times(3)).generateReply(any());
+    }
+
+    @Test
+    void mobilizeAllies_cachesResponsePer5MinutesPerEntityMention() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        spreaderLookup.put("matrix", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1")
+        ));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
+                .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
+        when(llmService.generateReply(any())).thenReturn("hi alice");
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allies[0].globalUserId").value("alice"));
+
+        assertThat(spreaderLookup.calls()).containsExactly("matrix");
+        verify(llmService, org.mockito.Mockito.times(1)).generateReply(any());
+    }
+
+    @Test
+    void mobilizeAllies_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", 404L))
+                .andExpect(status().isNotFound());
+
+        assertThat(spreaderLookup.calls()).isEmpty();
+        verify(llmService, never()).generateReply(any());
+    }
+
+    @Test
+    void mobilizeAllies_returnsEmptyWhenEntityHasNoKeywords() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, new ArrayList<>());
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allies.length()").value(0));
+
+        assertThat(spreaderLookup.calls()).isEmpty();
+        verify(llmService, never()).generateReply(any());
     }
 }

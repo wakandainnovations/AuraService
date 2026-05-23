@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,6 +41,14 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
 
     @Query("SELECT COALESCE(MAX(m.id), 0) FROM Mention m")
     long findMaxId();
+
+    @Query("SELECT m.author, m.sentiment, COUNT(m) FROM Mention m " +
+            "WHERE m.managedEntity.id = :entityId AND m.author IN :authors " +
+            "GROUP BY m.author, m.sentiment")
+    List<Object[]> countSentimentByAuthorsForEntity(
+            @Param("entityId") Long entityId,
+            @Param("authors") Collection<String> authors
+    );
 
     @Query("SELECT m.platform, m.sentiment, COUNT(m) FROM Mention m WHERE m.managedEntity.id = :entityId GROUP BY m.platform, m.sentiment")
     List<Object[]> countByPlatformForEntity(@Param("entityId") Long entityId);

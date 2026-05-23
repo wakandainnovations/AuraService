@@ -1,21 +1,28 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.AllyRecommendation;
 import com.aura.service.dto.DraftReplyResponse;
 import com.aura.service.dto.EscalateCrisisResponse;
 import com.aura.service.dto.MentionResponse;
+import com.aura.service.dto.MobilizeAlliesResponse;
 import com.aura.service.dto.PostReplyRequest;
 import com.aura.service.dto.PostReplyResponse;
 import com.aura.service.entity.CrisisPlan;
+import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.User;
+import com.aura.service.enums.Sentiment;
+import com.aura.service.proxy.TtlCache;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.SocialMediaService;
+import com.aura.service.service.TopSpreaderLookupService;
+import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,13 +30,26 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/mentions/{mentionId}/actions")
 @RequiredArgsConstructor
 public class MentionActionController {
+
+    static final int ALLY_LIMIT = 10;
+    static final Duration ALLY_CACHE_TTL = Duration.ofMinutes(5);
 
     private final LLMService llmService;
     private final SocialMediaService socialMediaService;
@@ -37,12 +57,18 @@ public class MentionActionController {
     private final ReplyDraftRepository replyDraftRepository;
     private final CrisisPlanRepository crisisPlanRepository;
     private final UserRepository userRepository;
+    private final TopSpreaderLookupService spreaderLookup;
+
+    private final TtlCache<MobilizeAlliesResponse> allyCache = new TtlCache<>(1024);
 
     @Value("${llm.prompt.generate.reply}")
     private String generateReplyPrompt;
 
     @Value("${llm.prompt.generate.crisis.plan}")
     private String crisisPlanPromptTemplate;
+
+    @Value("${llm.prompt.generate.ally.dm}")
+    private String allyDmPromptTemplate;
 
     @PostMapping("/draft-reply")
     public ResponseEntity<DraftReplyResponse> draftReply(
@@ -150,6 +176,155 @@ public class MentionActionController {
                 plan.getId(),
                 generatedPlan
         ));
+    }
+
+    @PostMapping("/mobilize-allies")
+    public ResponseEntity<MobilizeAlliesResponse> mobilizeAllies(
+            @PathVariable("mentionId") Long mentionId
+    ) {
+        Mention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
+            return ResponseEntity.notFound().build();
+        }
+        ManagedEntity entity = mention.getManagedEntity();
+
+        String cacheKey = entity.getId() + ":" + mention.getId();
+        MobilizeAlliesResponse cached = allyCache.get(cacheKey);
+        if (cached != null) {
+            return ResponseEntity.ok(cached);
+        }
+
+        List<String> keywords = new ArrayList<>();
+        if (entity.getKeywords() != null) {
+            for (EntityKeyword ek : entity.getKeywords()) {
+                if (ek != null && ek.getKeyword() != null && !ek.getKeyword().isBlank()) {
+                    keywords.add(ek.getKeyword());
+                }
+            }
+        }
+
+        Map<String, SpreaderProfile> candidates = fetchSpreaderProfiles(keywords);
+        if (candidates.isEmpty()) {
+            MobilizeAlliesResponse empty = new MobilizeAlliesResponse(toMentionResponse(mention), List.of());
+            allyCache.put(cacheKey, empty, ALLY_CACHE_TTL.toNanos());
+            return ResponseEntity.ok(empty);
+        }
+
+        Map<String, Long> positiveCounts = filterPredominantlyPositive(entity.getId(), candidates.keySet());
+
+        List<SpreaderProfile> ranked = candidates.values().stream()
+                .filter(p -> positiveCounts.containsKey(p.globalUserId()))
+                .sorted(Comparator
+                        .comparingLong((SpreaderProfile p) ->
+                                positiveCounts.getOrDefault(p.globalUserId(), 0L)).reversed()
+                        .thenComparing(p -> tierRank(p.influenceTier()))
+                        .thenComparing(SpreaderProfile::globalUserId))
+                .limit(ALLY_LIMIT)
+                .toList();
+
+        List<AllyRecommendation> allies = new ArrayList<>(ranked.size());
+        for (SpreaderProfile p : ranked) {
+            String dm = generateAllyDm(entity.getName(), mention.getContent(), p);
+            allies.add(new AllyRecommendation(
+                    p.globalUserId(),
+                    p.primaryPlatform(),
+                    p.influenceTier(),
+                    dm
+            ));
+        }
+
+        MobilizeAlliesResponse response = new MobilizeAlliesResponse(toMentionResponse(mention), allies);
+        allyCache.put(cacheKey, response, ALLY_CACHE_TTL.toNanos());
+        return ResponseEntity.ok(response);
+    }
+
+    private Map<String, SpreaderProfile> fetchSpreaderProfiles(List<String> keywords) {
+        if (keywords.isEmpty()) {
+            return Map.of();
+        }
+        List<List<SpreaderProfile>> perKeyword = Flux.fromIterable(keywords)
+                .flatMap(kw -> Mono.fromCallable(() -> spreaderLookup.getSpreaderProfiles(kw))
+                        .subscribeOn(Schedulers.boundedElastic()))
+                .collectList()
+                .blockOptional()
+                .orElse(List.of());
+
+        Map<String, SpreaderProfile> deduped = new LinkedHashMap<>();
+        for (List<SpreaderProfile> profiles : perKeyword) {
+            for (SpreaderProfile p : profiles) {
+                if (p.globalUserId() == null || p.globalUserId().isBlank()) {
+                    continue;
+                }
+                deduped.merge(p.globalUserId(), p, (existing, incoming) -> new SpreaderProfile(
+                        existing.globalUserId(),
+                        existing.primaryPlatform() != null ? existing.primaryPlatform() : incoming.primaryPlatform(),
+                        existing.influenceTier() != null ? existing.influenceTier() : incoming.influenceTier()
+                ));
+            }
+        }
+        return deduped;
+    }
+
+    private Map<String, Long> filterPredominantlyPositive(Long entityId, java.util.Set<String> authors) {
+        if (authors.isEmpty()) {
+            return Map.of();
+        }
+        List<Object[]> rows = mentionRepository.countSentimentByAuthorsForEntity(entityId, authors);
+        Map<String, EnumMap<Sentiment, Long>> byAuthor = new LinkedHashMap<>();
+        for (Object[] row : rows) {
+            String author = (String) row[0];
+            Sentiment sentiment = (Sentiment) row[1];
+            long count = ((Number) row[2]).longValue();
+            byAuthor.computeIfAbsent(author, k -> new EnumMap<>(Sentiment.class))
+                    .merge(sentiment, count, Long::sum);
+        }
+        Map<String, Long> positive = new LinkedHashMap<>();
+        for (Map.Entry<String, EnumMap<Sentiment, Long>> e : byAuthor.entrySet()) {
+            EnumMap<Sentiment, Long> counts = e.getValue();
+            long pos = counts.getOrDefault(Sentiment.POSITIVE, 0L);
+            long neg = counts.getOrDefault(Sentiment.NEGATIVE, 0L);
+            long neu = counts.getOrDefault(Sentiment.NEUTRAL, 0L);
+            if (pos > 0 && pos > neg && pos >= neu) {
+                positive.put(e.getKey(), pos);
+            }
+        }
+        return positive;
+    }
+
+    private String generateAllyDm(String entityName, String mentionContent, SpreaderProfile profile) {
+        String prompt = allyDmPromptTemplate
+                .replace("[Managed Entity]", nullSafe(entityName))
+                .replace("[Ally Handle]", nullSafe(profile.globalUserId()))
+                .replace("[Ally Platform]", nullSafe(profile.primaryPlatform()))
+                .replace("[Ally Tier]", nullSafe(profile.influenceTier()))
+                .replace("[Mention Content]", nullSafe(mentionContent));
+
+        String generated = llmService.generateReply(prompt);
+        if (generated == null) {
+            return "";
+        }
+        int firstQuote = generated.indexOf('"');
+        int lastQuote = generated.lastIndexOf('"');
+        if (firstQuote != -1 && lastQuote != -1 && firstQuote != lastQuote) {
+            generated = generated.substring(firstQuote + 1, lastQuote);
+        }
+        return generated;
+    }
+
+    private static int tierRank(String tier) {
+        if (tier == null) return Integer.MAX_VALUE;
+        String t = tier.toUpperCase();
+        return switch (t) {
+            case "TIER_1", "TIER1", "T1" -> 1;
+            case "TIER_2", "TIER2", "T2" -> 2;
+            case "TIER_3", "TIER3", "T3" -> 3;
+            case "TIER_4", "TIER4", "T4" -> 4;
+            default -> Integer.MAX_VALUE - 1;
+        };
+    }
+
+    private static String nullSafe(String s) {
+        return s == null ? "" : s;
     }
 
     private User requireUser(UserDetails principal) {

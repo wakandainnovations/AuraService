@@ -1007,11 +1007,12 @@ Authorization: Bearer {jwt_token}
 
 ## Mention Action APIs
 
-Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All three endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All four endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
 - **Draft reply** generates a reply via `LLMService.generateReply` (entity name + mention content + sentiment) and persists a `ReplyDraft` row (`status=DRAFT`). Outer quotes from the LLM output are stripped to match the existing `/api/interact/generate-reply` behavior.
 - **Post reply** loads a previously created draft, calls `SocialMediaService.postReply(platform, postId, text)` against the mention's source platform and post id, and flips the draft to `status=POSTED` with `postedAt` set to the server time.
 - **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
+- **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes.
 
 Every response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
 
@@ -1158,6 +1159,84 @@ POST /api/mentions/9123/actions/escalate-to-crisis
 
 **Status Codes:**
 - `200 OK` — Plan generated and persisted.
+- `404 Not Found` — No mention with the given id.
+
+---
+
+### Mobilize Allies
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/mobilize-allies`
+
+**Description:** Identify a shortlist of known supporters (top spreaders who are predominantly positive about this entity) and produce a per-ally suggested DM template ops can use to amplify the mention.
+
+The endpoint:
+1. Loads the mention's managed entity and its keywords.
+2. Fans out parallel calls to `GET /v1/top-spreaders/{keyword}` for every keyword (via the existing AuraMath `WebClient` and `TopSpreaderLookupService`). Per-keyword spreader profiles are cached for 10 minutes by the lookup service.
+3. Dedups the union of spreaders by `globalUserId`.
+4. Filters the candidates to authors whose mention sentiment for this entity in `MentionRepository` is **predominantly POSITIVE** — i.e. positive count > 0, strictly greater than negative count, and ≥ neutral count.
+5. Ranks survivors by positive-mention count (desc), then influence tier (`TIER_1` first), then `globalUserId` (lexicographic), and keeps the top 10.
+6. For each surviving ally, calls `LLMService.generateReply` with the `llm.prompt.generate.ally.dm` template (`[Managed Entity]`, `[Ally Handle]`, `[Ally Platform]`, `[Ally Tier]`, `[Mention Content]`) and strips outer quotes from the output.
+7. Caches the response in-process per `(entityId, mentionId)` key for **5 minutes**.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID to mobilize allies for
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/mobilize-allies
+```
+
+**Response:**
+```json
+{
+  "mention": {
+    "id": 9123,
+    "managedEntityId": 1,
+    "platform": "X",
+    "postId": "tweet_12345",
+    "content": "Just rewatched the trailer — this looks incredible.",
+    "author": "fan42",
+    "postDate": "2026-05-21T11:50:00Z",
+    "sentiment": "POSITIVE",
+    "permalink": "https://x.com/fan42/status/9123",
+    "sentimentScore": 88
+  },
+  "allies": [
+    {
+      "globalUserId": "alice",
+      "primaryPlatform": "TWITTER",
+      "influenceTier": "TIER_1",
+      "suggestedDm": "Hey alice — you've been one of the strongest voices for The Quantum Paradox lately. Would love your take on the new trailer if you have a second."
+    },
+    {
+      "globalUserId": "bob",
+      "primaryPlatform": "INSTAGRAM",
+      "influenceTier": "TIER_2",
+      "suggestedDm": "Hi bob, the trailer just dropped and reminded me of your thread last week — any chance you'd share your reaction?"
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `mention` — full `MentionResponse` so the UI can render the source mention alongside the recommendations without a second fetch.
+- `allies` — up to 10 entries. Empty when the entity has no keywords, no top-spreader matches, or no candidate is predominantly positive.
+  - `globalUserId` — author identifier as returned by the upstream top-spreaders endpoint (matched against `Mention.author` for the sentiment filter).
+  - `primaryPlatform` — best platform to DM on, sourced from the spreader payload (may be `null` if upstream omits it).
+  - `influenceTier` — spreader tier from the upstream payload, e.g. `TIER_1`..`TIER_4` (may be `null`).
+  - `suggestedDm` — LLM-generated DM template, outer quotes stripped.
+
+**Caching:**
+- The full response is cached per `(entityId, mentionId)` for 5 minutes. Within that window the upstream and the LLM are not re-invoked.
+- Underlying per-keyword spreader profiles are cached by `TopSpreaderLookupService` for 10 minutes, so cross-mention calls within the same entity also benefit on cold cache.
+
+**Status Codes:**
+- `200 OK` — Allies returned (possibly empty).
 - `404 Not Found` — No mention with the given id.
 
 ---
