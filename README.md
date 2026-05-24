@@ -83,6 +83,11 @@ CREATE TABLE entity_actors (
 CREATE TABLE entity_keywords (
     entity_id BIGINT NOT NULL,
     keyword VARCHAR(255),
+    category VARCHAR(255),
+    language TEXT,
+    state TEXT,
+    industry TEXT,
+    genre TEXT,
     CONSTRAINT fk_entity_keywords_managed_entities FOREIGN KEY (entity_id) REFERENCES managed_entities(id)
 );
 
@@ -627,7 +632,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 9. Get Average Entity Statistics for Multiple Entities
+### 10. Get Average Entity Statistics for Multiple Entities
 
 **Endpoint:** `GET /api/dashboard/cluster/stats/avg`
 
@@ -896,7 +901,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 15. Get Filtered Mentions
+### 16. Get Filtered Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/mentions`
 
@@ -980,7 +985,7 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
 
 ---
 
-### 16. Get Filtered Mentions for a Cluster
+### 17. Get Filtered Mentions for a Cluster
 
 **Endpoint:** `GET /api/dashboard/cluster/mentions`
 
@@ -1055,7 +1060,7 @@ Each mention carries the same `available_actions` / `action_history_summary` fie
 
 ---
 
-### 17. Get Hourly Activity Distribution
+### 18. Get Hourly Activity Distribution
 
 **Endpoint:** `GET /api/dashboard/{entityId}/hourly-activity`
 
@@ -1130,7 +1135,7 @@ GET /api/dashboard/21/hourly-activity?period=DAY
 
 ## Interaction APIs
 
-### 17. Generate Reply
+### 19. Generate Reply
 
 **Endpoint:** `POST /api/interact/generate-reply`
 
@@ -1161,7 +1166,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 18. Post Response
+### 20. Post Response
 
 **Endpoint:** `POST /api/interact/respond`
 
@@ -1194,7 +1199,7 @@ Authorization: Bearer {jwt_token}
 
 ## Crisis Management APIs
 
-### 19. Generate Crisis Plan
+### 21. Generate Crisis Plan
 
 **Endpoint:** `POST /api/crisis/generate-plan`
 
@@ -1236,7 +1241,7 @@ Per-mention actions that wrap the LLM and social-media services into auditable, 
 
 Every action response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
 
-### List Mention Actions
+### 22. List Mention Actions
 
 **Endpoint:** `GET /api/mentions/{mentionId}/actions`
 
@@ -1314,7 +1319,7 @@ GET /api/mentions/9123/actions
 
 ---
 
-### Draft Reply
+### 23. Draft Reply
 
 **Endpoint:** `POST /api/mentions/{mentionId}/actions/draft-reply`
 
@@ -1359,7 +1364,7 @@ POST /api/mentions/9123/actions/draft-reply
 
 ---
 
-### Post Reply
+### 24. Post Reply
 
 **Endpoint:** `POST /api/mentions/{mentionId}/actions/post-reply`
 
@@ -1416,7 +1421,7 @@ Content-Type: application/json
 
 ---
 
-### Escalate to Crisis
+### 25. Escalate to Crisis
 
 **Endpoint:** `POST /api/mentions/{mentionId}/actions/escalate-to-crisis`
 
@@ -1461,7 +1466,7 @@ POST /api/mentions/9123/actions/escalate-to-crisis
 
 ---
 
-### Mobilize Allies
+### 26. Mobilize Allies
 
 **Endpoint:** `POST /api/mentions/{mentionId}/actions/mobilize-allies`
 
@@ -1541,7 +1546,7 @@ POST /api/mentions/9123/actions/mobilize-allies
 
 ## Analytics APIs
 
-### 20. Get Box Office Prediction
+### 27. Get Box Office Prediction
 
 **Endpoint:** `GET /api/analytics/{movieId}`
 
@@ -1629,7 +1634,7 @@ After an alert is persisted, `AlertDispatcher` fans it out to two async channels
 
 All routes below are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
-### List Alerts
+### 28. List Alerts
 
 **Endpoint:** `GET /api/alerts`
 
@@ -1715,7 +1720,7 @@ GET /api/alerts?entityId=1&status=OPEN&page=0&size=20
 
 ---
 
-### Acknowledge Alert
+### 29. Acknowledge Alert
 
 **Endpoint:** `POST /api/alerts/{id}/ack`
 
@@ -1763,7 +1768,7 @@ POST /api/alerts/42/ack
 
 ---
 
-### Dismiss Alert
+### 30. Dismiss Alert
 
 **Endpoint:** `POST /api/alerts/{id}/dismiss`
 
@@ -1818,7 +1823,7 @@ Content-Type: application/json
 
 ---
 
-### Set Alert Webhook URL
+### 31. Set Alert Webhook URL
 
 **Endpoint:** `PUT /api/users/me/webhook`
 
@@ -1871,11 +1876,276 @@ Content-Type: application/json
 
 ---
 
+## Marketing Aggregation APIs
+
+The marketing aggregation APIs aggregate data from the upstream AuraMath service across all keywords matching a set of filters. Instead of querying per keyword, these endpoints let you query by **language** (e.g., Tamil, Telugu), **industry** (e.g., Tollywood, Kollywood), **genre** (e.g., action, drama), **state**, or **entity ID** and get a unified, deduplicated result.
+
+All endpoints are JWT-protected and mounted under `/api/marketing/aggregate/`.
+
+**Common Query Parameters (at least one required):**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `language` | String | Filter keywords by language (e.g., `Tamil`, `Telugu`) |
+| `industry` | String | Filter keywords by movie industry (e.g., `Tollywood`, `Kollywood`) |
+| `state` | String | Filter keywords by state/region |
+| `genre` | String | Filter keywords by genre (e.g., `action`, `drama`) |
+| `entityId` | Long | Filter keywords belonging to a specific managed entity |
+| `groupBy` | String | `keyword` (or `genre` for genre endpoints) to group results instead of flat list |
+
+If none of these filters are provided, the endpoint returns `400 Bad Request`.
+
+**Response format:**
+- **Default (flat):** A deduplicated JSON array merging results from all matching keywords. Duplicates are detected by `globalUserId`, `userId`, `author`, `username`, or `id` fields.
+- **Grouped (`?groupBy=keyword`):** A JSON object keyed by keyword (or genre), each value being the array of results for that keyword.
+
+---
+
+### 32. Aggregated Top Spreaders
+
+**Endpoint:** `GET /api/marketing/aggregate/top-spreaders`
+
+**Description:** Retrieve the union of top spreaders across all keywords matching the given filters. For each matching keyword, calls upstream `GET /api/marketing/top-50-spreaders/{keyword}` and merges the results.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Example Requests:**
+```bash
+# All top spreaders for Tamil movies (flat)
+GET /api/marketing/aggregate/top-spreaders?language=Tamil
+
+# All top spreaders for Tollywood, grouped by keyword
+GET /api/marketing/aggregate/top-spreaders?industry=Tollywood&groupBy=keyword
+
+# Top spreaders for a specific entity
+GET /api/marketing/aggregate/top-spreaders?entityId=1
+
+# Multiple filters
+GET /api/marketing/aggregate/top-spreaders?language=Telugu&industry=Tollywood
+```
+
+**Response (flat, default):**
+```json
+[
+  {
+    "author": "cinephile_arjun",
+    "primaryPlatform": "twitter",
+    "influenceTier": "mega"
+  },
+  {
+    "author": "kollywood_news",
+    "primaryPlatform": "instagram",
+    "influenceTier": "macro"
+  },
+  {
+    "author": "film_buff_42",
+    "primaryPlatform": "youtube",
+    "influenceTier": "micro"
+  }
+]
+```
+
+**Response (grouped, `?groupBy=keyword`):**
+```json
+{
+  "karuppu": [
+    { "author": "cinephile_arjun", "primaryPlatform": "twitter", "influenceTier": "mega" },
+    { "author": "kollywood_news", "primaryPlatform": "instagram", "influenceTier": "macro" }
+  ],
+  "surya": [
+    { "author": "kollywood_news", "primaryPlatform": "instagram", "influenceTier": "macro" },
+    { "author": "film_buff_42", "primaryPlatform": "youtube", "influenceTier": "micro" }
+  ]
+}
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — no filter provided
+
+---
+
+### 33. Aggregated Viral Seeds
+
+**Endpoint:** `GET /api/marketing/aggregate/viral-seeds`
+
+**Description:** Retrieve the union of viral seeds across all keywords matching the given filters. For each matching keyword, calls upstream `GET /api/marketing/viral-seeds?keyword={keyword}` and merges the results.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Example Request:**
+```bash
+GET /api/marketing/aggregate/viral-seeds?language=Tamil
+```
+
+**Response (flat, default):**
+```json
+[
+  { "userId": "seed_user_1" },
+  { "userId": "seed_user_2" }
+]
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — no filter provided
+
+---
+
+### 34. Aggregated Aspect Drivers
+
+**Endpoint:** `GET /api/marketing/aggregate/aspect-drivers`
+
+**Description:** Retrieve the union of aspect drivers across all keywords matching the given filters. For each matching keyword, calls upstream `GET /api/marketing/aspect-drivers/{keyword}` and merges the results.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Example Request:**
+```bash
+GET /api/marketing/aggregate/aspect-drivers?entityId=1
+```
+
+**Response (flat, default):**
+```json
+[
+  { "id": "driver_1" },
+  { "id": "driver_2" }
+]
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — no filter provided
+
+---
+
+### 35. Aggregated Brand Evangelists
+
+**Endpoint:** `GET /api/marketing/aggregate/brand-evangelists`
+
+**Description:** Retrieve the union of brand evangelists across all keywords matching the given filters. For each matching keyword, calls upstream `GET /api/marketing/brand-evangelists/{keyword}` and merges the results.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Example Request:**
+```bash
+GET /api/marketing/aggregate/brand-evangelists?language=Telugu
+```
+
+**Response (flat, default):**
+```json
+[
+  { "author": "evangelist_1" },
+  { "author": "evangelist_2" }
+]
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — no filter provided
+
+---
+
+### 36. Aggregated Genre Data
+
+**Endpoint:** `GET /api/marketing/aggregate/genre/{subType}`
+
+**Description:** Aggregate genre-level data across all distinct genres found on keywords matching the given filters. The service finds all matching keywords, collects their distinct `genre` values, and for each genre calls the corresponding upstream endpoint. Results are merged (deduplicated) or grouped by genre.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `subType` — one of: `potential-viewers`, `super-spreaders`, `channel-strategy`
+
+**Query Parameters:**
+- Same common filters as above (`language`, `industry`, `state`, `genre`, `entityId`)
+- `groupBy=genre` to group results by genre instead of a flat list
+
+**Example Requests:**
+```bash
+# Potential viewers across all genres in Tamil movies
+GET /api/marketing/aggregate/genre/potential-viewers?language=Tamil
+
+# Super spreaders for Kollywood genres, grouped by genre
+GET /api/marketing/aggregate/genre/super-spreaders?industry=Kollywood&groupBy=genre
+
+# Channel strategy for a specific entity's genres
+GET /api/marketing/aggregate/genre/channel-strategy?entityId=1
+```
+
+**Response (flat, default — potential-viewers):**
+```json
+[
+  { "userId": "viewer_1" },
+  { "userId": "viewer_2" },
+  { "userId": "viewer_3" }
+]
+```
+
+**Response (grouped, `?groupBy=genre` — super-spreaders):**
+```json
+{
+  "action": [
+    { "author": "spreader_1" }
+  ],
+  "drama": [
+    { "author": "spreader_2" },
+    { "author": "spreader_3" }
+  ]
+}
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — no filter provided, or invalid `subType`
+
+**Validation Error (invalid subType):**
+```json
+{ "error": "subType must be one of: potential-viewers, super-spreaders, channel-strategy" }
+```
+
+---
+
+### Keyword `genre` Field
+
+The `genre` field was added to `EntityKeyword` to support genre-based aggregation. When creating or updating entity keywords, include the `genre` field to enable the genre aggregation endpoints:
+
+```json
+{
+  "keywords": [
+    {
+      "keyword": "karuppu",
+      "category": "media.movie",
+      "language": "Tamil",
+      "industry": "Kollywood",
+      "genre": "action"
+    }
+  ]
+}
+```
+
+---
+
 ## AuraMath Proxy APIs
 
 The following endpoints are thin wrappers over the upstream **AuraMath** service. Each wrapper forwards the request to the corresponding upstream route verbatim and preserves the upstream HTTP status code. Wrapper paths (`/v1/**`) **do not** require JWT authentication — the upstream service is responsible for its own auth. See the [AuraMath Proxy](#auramath-proxy-v1-healthz) section below for configuration, error envelopes, and runtime details.
 
-### 21. Get Viral Seeds
+### 37. Get Viral Seeds
 
 **Endpoint:** `GET /v1/viral-seeds`
 
@@ -1897,7 +2167,7 @@ GET /v1/viral-seeds?keyword=fantasy
 
 ---
 
-### 22. Get Aspect Drivers
+### 38. Get Aspect Drivers
 
 **Endpoint:** `GET /v1/aspect-drivers/{keyword}`
 
@@ -1919,7 +2189,7 @@ GET /v1/aspect-drivers/fantasy
 
 ---
 
-### 23. Get Top Spreaders
+### 39. Get Top Spreaders
 
 **Endpoint:** `GET /v1/top-spreaders/{keyword}`
 
@@ -1941,7 +2211,7 @@ GET /v1/top-spreaders/fantasy
 
 ---
 
-### 24. Find Lookalikes
+### 40. Find Lookalikes
 
 **Endpoint:** `POST /v1/find-lookalikes`
 
@@ -1975,7 +2245,7 @@ Content-Type: application/json
 
 ---
 
-### 25. Get User Profile
+### 41. Get User Profile
 
 **Endpoint:** `GET /v1/users/{globalUserId}/profile`
 
@@ -1997,7 +2267,7 @@ GET /v1/users/u-42/profile
 
 ---
 
-### 26. Get User Report
+### 42. Get User Report
 
 **Endpoint:** `GET /v1/users/{author}/report`
 
@@ -2019,7 +2289,7 @@ GET /v1/users/alice/report
 
 ---
 
-### 27. List Users
+### 43. List Users
 
 **Endpoint:** `GET /v1/users`
 
@@ -2045,7 +2315,7 @@ GET /v1/users?audienceClassification=GenZ&influenceTier=TIER_1&primaryPlatform=T
 
 ---
 
-### 28. Get User Categories
+### 44. Get User Categories
 
 **Endpoint:** `GET /v1/users/categories`
 
@@ -2064,7 +2334,7 @@ GET /v1/users/categories
 
 ---
 
-### 29. Trigger User Sync
+### 45. Trigger User Sync
 
 **Endpoint:** `POST /v1/users/sync`
 
@@ -2083,7 +2353,7 @@ POST /v1/users/sync
 
 ---
 
-### 30. Get Potential Viewers for a Genre
+### 46. Get Potential Viewers for a Genre
 
 **Endpoint:** `GET /v1/genres/{genre}/potential-viewers`
 
@@ -2105,7 +2375,7 @@ GET /v1/genres/thriller/potential-viewers
 
 ---
 
-### 31. Get Super Spreaders for a Genre
+### 47. Get Super Spreaders for a Genre
 
 **Endpoint:** `GET /v1/genres/{genre}/super-spreaders`
 
@@ -2127,7 +2397,7 @@ GET /v1/genres/sci-fi/super-spreaders
 
 ---
 
-### 32. Get Channel Strategy for a Genre
+### 48. Get Channel Strategy for a Genre
 
 **Endpoint:** `GET /v1/genres/{genre}/channel-strategy`
 
@@ -2149,7 +2419,7 @@ GET /v1/genres/horror/channel-strategy
 
 ---
 
-### 33. List Targets
+### 49. List Targets
 
 **Endpoint:** `GET /v1/targets`
 
@@ -2173,7 +2443,7 @@ GET /v1/targets?genre=drama&minInfluenceScore=12.5&platform=TIKTOK
 
 ---
 
-### 34. Diagnostic: Raw Author Mapping
+### 50. Diagnostic: Raw Author Mapping
 
 **Endpoint:** `GET /v1/diagnostics/raw-mapping/{author}`
 
@@ -2195,7 +2465,7 @@ GET /v1/diagnostics/raw-mapping/alice
 
 ---
 
-### 35. Diagnostic: Temporal Audit
+### 51. Diagnostic: Temporal Audit
 
 **Endpoint:** `GET /v1/diagnostics/temporal-audit/{author}`
 
@@ -2217,7 +2487,7 @@ GET /v1/diagnostics/temporal-audit/alice
 
 ---
 
-### 36. Diagnostic: Process User
+### 52. Diagnostic: Process User
 
 **Endpoint:** `GET /v1/diagnostics/process-user/{author}`
 
@@ -2386,6 +2656,7 @@ com.aura.service
 -
 - **DataInitializer:** Pre-loads sample data on startup
 - **MorningDigestService:** Scheduled per-user overnight digest at 8 AM local time via `EmailChannel`
+- **MarketingAggregationService:** Aggregates marketing data (top spreaders, viral seeds, aspect drivers, brand evangelists, genre data) across multiple keywords filtered by language, industry, genre, state, or entity ID
 - **GlobalExceptionHandler:** Centralized error handling
 - **Mock Services:** LLM, Social Media, and Analytics mock implementations
 
@@ -2476,7 +2747,7 @@ curl -s http://localhost:8080/healthz
 
 ### Endpoint reference
 
-The 16 wrapper endpoints are documented in detail as APIs #21–#36 in the [AuraMath Proxy APIs](#auramath-proxy-apis) section above.
+The 16 wrapper endpoints are documented in detail as APIs #37–#52 in the [AuraMath Proxy APIs](#auramath-proxy-apis) section above.
 
 ### Tests
 

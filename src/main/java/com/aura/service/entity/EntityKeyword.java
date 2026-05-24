@@ -26,4 +26,7 @@ public class EntityKeyword {
 
     @Column(name = "industry", columnDefinition = "TEXT")
     private String industry;
+
+    @Column(name = "genre", columnDefinition = "TEXT")
+    private String genre;
 }

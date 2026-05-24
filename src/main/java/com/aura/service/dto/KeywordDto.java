@@ -13,4 +13,5 @@ public class KeywordDto {
     private String language;
     private String state;
     private String industry;
+    private String genre;
 }

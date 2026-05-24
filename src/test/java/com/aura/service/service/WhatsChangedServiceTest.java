@@ -74,7 +74,7 @@ class WhatsChangedServiceTest {
         entity.setName("Primary");
         List<EntityKeyword> kws = new ArrayList<>();
         for (String k : keywords) {
-            kws.add(new EntityKeyword(k, null, null, null, null));
+            kws.add(new EntityKeyword(k, null, null, null, null, null));
         }
         entity.setKeywords(kws);
         entity.setCompetitors(new ArrayList<>());

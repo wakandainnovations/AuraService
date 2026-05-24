@@ -101,7 +101,8 @@ public class EntityService {
                 dto.getCategory(),
                 dto.getLanguage(),
                 dto.getState(),
-                dto.getIndustry()
+                dto.getIndustry(),
+                dto.getGenre()
         );
     }
 
@@ -138,7 +139,8 @@ public class EntityService {
                         k.getCategory(),
                         k.getLanguage(),
                         k.getState(),
-                        k.getIndustry()))
+                        k.getIndustry(),
+                        k.getGenre()))
                 .collect(Collectors.toList());
     }
 
