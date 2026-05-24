@@ -31,4 +31,8 @@ public interface UserEntityViewRepository extends JpaRepository<UserEntityView, 
             @Param("entityId") Long entityId,
             @Param("lastSeenAt") Instant lastSeenAt
     );
+
+    @Modifying
+    @Query("UPDATE UserEntityView v SET v.lastSeenAt = :lastSeenAt")
+    int resetAllLastSeen(@Param("lastSeenAt") Instant lastSeenAt);
 }

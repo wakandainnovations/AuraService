@@ -33,6 +33,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
+                                "/api/dev/**",
                                 "/h2-console/**",
                                 "/v1/**",
                                 "/healthz",
