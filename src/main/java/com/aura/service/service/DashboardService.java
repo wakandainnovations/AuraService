@@ -1,6 +1,7 @@
 package com.aura.service.service;
 
 import com.aura.service.dto.*;
+import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
@@ -306,6 +307,75 @@ public class DashboardService {
                 .fromNetSentiment(fromNetSentiment)
                 .toNetSentiment(toNetSentiment)
                 .netSentimentDelta(toNetSentiment - fromNetSentiment)
+                .build();
+    }
+
+    public CheckpointImpactResponse getCheckpointImpact(Long entityId, int windowDays) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Checkpoint> checkpoints = checkpointRepository.findByManagedEntityIdOrderByCheckpointDateAsc(entityId);
+
+        List<CheckpointImpact> impacts = new ArrayList<>();
+        for (Checkpoint cp : checkpoints) {
+            LocalDate cpDate = cp.getCheckpointDate();
+            Instant beforeStart = cpDate.minusDays(windowDays).atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant beforeEnd = cpDate.atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+            Instant afterStart = cpDate.atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant afterEnd = cpDate.plusDays(windowDays).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+
+            long beforePositive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.POSITIVE, beforeStart, beforeEnd);
+            long beforeNegative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEGATIVE, beforeStart, beforeEnd);
+            long beforeNeutral = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEUTRAL, beforeStart, beforeEnd);
+            long beforeTotal = beforePositive + beforeNegative + beforeNeutral;
+
+            long afterPositive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.POSITIVE, afterStart, afterEnd);
+            long afterNegative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEGATIVE, afterStart, afterEnd);
+            long afterNeutral = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEUTRAL, afterStart, afterEnd);
+            long afterTotal = afterPositive + afterNegative + afterNeutral;
+
+            double beforePositiveRatio = beforeTotal > 0 ? (double) beforePositive / beforeTotal : 0.0;
+            double afterPositiveRatio = afterTotal > 0 ? (double) afterPositive / afterTotal : 0.0;
+            double beforeNetSentiment = beforeNegative > 0 ? (double) beforePositive / beforeNegative : 0.0;
+            double afterNetSentiment = afterNegative > 0 ? (double) afterPositive / afterNegative : 0.0;
+            double netSentimentChange = afterNetSentiment - beforeNetSentiment;
+
+            String impactDirection;
+            if (netSentimentChange > 0.05) {
+                impactDirection = "POSITIVE";
+            } else if (netSentimentChange < -0.05) {
+                impactDirection = "NEGATIVE";
+            } else {
+                impactDirection = "NEUTRAL";
+            }
+
+            impacts.add(CheckpointImpact.builder()
+                    .checkpointId(cp.getId())
+                    .checkpointDate(cpDate)
+                    .description(cp.getDescription())
+                    .beforeTotalMentions(beforeTotal)
+                    .afterTotalMentions(afterTotal)
+                    .beforePositiveRatio(beforePositiveRatio)
+                    .afterPositiveRatio(afterPositiveRatio)
+                    .positiveRatioChange(afterPositiveRatio - beforePositiveRatio)
+                    .beforeNetSentiment(beforeNetSentiment)
+                    .afterNetSentiment(afterNetSentiment)
+                    .netSentimentChange(netSentimentChange)
+                    .impactDirection(impactDirection)
+                    .build());
+        }
+
+        return CheckpointImpactResponse.builder()
+                .entityId(entityId)
+                .entityName(entity.getName())
+                .windowDays(windowDays)
+                .impacts(impacts)
                 .build();
     }
 

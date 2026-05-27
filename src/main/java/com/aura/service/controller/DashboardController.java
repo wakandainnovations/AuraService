@@ -13,6 +13,9 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -20,6 +23,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
+@Validated
 @RestController
 @RequestMapping("/api/dashboard")
 @RequiredArgsConstructor
@@ -114,6 +118,15 @@ public class DashboardController {
         }
         SentimentDeltaResponse response = dashboardService.getSentimentDelta(
                 entityId, fromDate, toDate, windowDays);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/checkpoint-impact")
+    public ResponseEntity<CheckpointImpactResponse> getCheckpointImpact(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays
+    ) {
+        CheckpointImpactResponse response = dashboardService.getCheckpointImpact(entityId, windowDays);
         return ResponseEntity.ok(response);
     }
 
