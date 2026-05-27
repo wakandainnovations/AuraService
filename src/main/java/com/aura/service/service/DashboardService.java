@@ -258,6 +258,57 @@ public class DashboardService {
         };
     }
     
+    public SentimentDeltaResponse getSentimentDelta(
+            Long entityId, LocalDate fromDate, LocalDate toDate, int windowDays
+    ) {
+        Instant fromStart = fromDate.atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant fromEnd = fromDate.plusDays(windowDays).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+        Instant toStart = toDate.atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant toEnd = toDate.plusDays(windowDays).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+
+        long fromPositive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.POSITIVE, fromStart, fromEnd);
+        long fromNegative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.NEGATIVE, fromStart, fromEnd);
+        long fromNeutral = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.NEUTRAL, fromStart, fromEnd);
+        long fromTotal = fromPositive + fromNegative + fromNeutral;
+
+        long toPositive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.POSITIVE, toStart, toEnd);
+        long toNegative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.NEGATIVE, toStart, toEnd);
+        long toNeutral = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entityId, Sentiment.NEUTRAL, toStart, toEnd);
+        long toTotal = toPositive + toNegative + toNeutral;
+
+        double fromPositiveRatio = fromTotal > 0 ? (double) fromPositive / fromTotal : 0.0;
+        double toPositiveRatio = toTotal > 0 ? (double) toPositive / toTotal : 0.0;
+        double fromNetSentiment = fromNegative > 0 ? (double) fromPositive / fromNegative : 0.0;
+        double toNetSentiment = toNegative > 0 ? (double) toPositive / toNegative : 0.0;
+
+        String fromLabel = checkpointRepository.findByManagedEntityIdAndCheckpointDate(entityId, fromDate)
+                .map(cp -> cp.getDescription()).orElse(null);
+        String toLabel = checkpointRepository.findByManagedEntityIdAndCheckpointDate(entityId, toDate)
+                .map(cp -> cp.getDescription()).orElse(null);
+
+        return SentimentDeltaResponse.builder()
+                .fromDate(fromDate)
+                .toDate(toDate)
+                .fromLabel(fromLabel)
+                .toLabel(toLabel)
+                .fromTotalMentions(fromTotal)
+                .toTotalMentions(toTotal)
+                .mentionsDelta(toTotal - fromTotal)
+                .fromPositiveRatio(fromPositiveRatio)
+                .toPositiveRatio(toPositiveRatio)
+                .positiveRatioDelta(toPositiveRatio - fromPositiveRatio)
+                .fromNetSentiment(fromNetSentiment)
+                .toNetSentiment(toNetSentiment)
+                .netSentimentDelta(toNetSentiment - fromNetSentiment)
+                .build();
+    }
+
     public Map<String, Map<String, Long>> getPlatformMentions(Long entityId) {
         List<Object[]> results = mentionRepository.countByPlatformForEntity(entityId);
         

@@ -16,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -98,6 +99,24 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
     
+    @GetMapping("/{entityId}/sentiment-delta")
+    public ResponseEntity<SentimentDeltaResponse> getSentimentDelta(
+            @PathVariable Long entityId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(defaultValue = "7") int windowDays
+    ) {
+        if (!fromDate.isBefore(toDate)) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (windowDays < 1 || windowDays > 30) {
+            return ResponseEntity.badRequest().build();
+        }
+        SentimentDeltaResponse response = dashboardService.getSentimentDelta(
+                entityId, fromDate, toDate, windowDays);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/sentiment-over-time")
     public ResponseEntity<SentimentOverTimeResponse> getSentimentOverTime(
             @RequestParam TimePeriod period,
