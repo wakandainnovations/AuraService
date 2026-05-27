@@ -401,6 +401,109 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+## Checkpoint Management APIs
+
+Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.
+
+### 7a. Create Checkpoint
+
+**Endpoint:** `POST /api/checkpoints`
+
+**Description:** Create a new checkpoint for a managed entity.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "entityId": 1,
+  "checkpointDate": "2026-03-15",
+  "description": "Trailer Launch"
+}
+```
+
+**Validation:**
+- `entityId` — required.
+- `checkpointDate` — required (ISO-8601 date).
+- `description` — required, non-blank, max 20 characters.
+
+**Response:**
+```json
+{
+  "id": 10,
+  "entityId": 1,
+  "entityName": "The Quantum Paradox",
+  "checkpointDate": "2026-03-15",
+  "description": "Trailer Launch"
+}
+```
+
+**Status Code:** `201 Created`
+
+---
+
+### 7b. List Checkpoints for Entity
+
+**Endpoint:** `GET /api/checkpoints/entity/{entityId}`
+
+**Description:** Retrieve all checkpoints for a managed entity.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` — Entity ID (e.g., 1)
+
+**Response:**
+```json
+[
+  {
+    "id": 10,
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "checkpointDate": "2026-03-15",
+    "description": "Trailer Launch"
+  },
+  {
+    "id": 11,
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "checkpointDate": "2026-04-01",
+    "description": "Opening Weekend"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 7c. Delete Checkpoint
+
+**Endpoint:** `DELETE /api/checkpoints/{checkpointId}`
+
+**Description:** Delete a checkpoint by ID.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `checkpointId` — Checkpoint ID (e.g., 10)
+
+**Response:** No body.
+
+**Status Code:** `204 No Content`
+
+---
+
 ## Dashboard APIs
 
 ### 8. Get Entity Statistics
@@ -778,6 +881,12 @@ GET /api/dashboard/sentiment-over-time?period=WEEK&entityIds=1,3
           "negative": 4,
           "neutral": 3
         }
+      ],
+      "checkpoints": [
+        {
+          "date": "2025-W45",
+          "description": "Trailer Launch"
+        }
       ]
     },
     {
@@ -801,11 +910,15 @@ GET /api/dashboard/sentiment-over-time?period=WEEK&entityIds=1,3
           "negative": 2,
           "neutral": 2
         }
-      ]
+      ],
+      "checkpoints": []
     }
   ]
 }
 ```
+
+**Response fields:**
+- `checkpoints` — list of checkpoint markers for the entity, each with a `date` (formatted to match the requested `period` bucket, e.g. `"2025-W45"` for `WEEK`, `"2025-11-03"` for `DAY`) and `description`. Empty array if the entity has no checkpoints. Checkpoints are sourced from the Checkpoint Management APIs.
 
 **Status Code:** `200 OK`
 
@@ -1133,26 +1246,204 @@ GET /api/dashboard/21/hourly-activity?period=DAY
 
 ---
 
-## Interaction APIs
+### 18a. Get Sentiment Delta
 
-### 19. Generate Reply
+**Endpoint:** `GET /api/dashboard/{entityId}/sentiment-delta`
 
-**Endpoint:** `POST /api/interact/generate-reply`
-
-**Description:** Generate an AI-powered reply to a mention (Mock LLM)
+**Description:** Compare sentiment metrics between two dates. For each date, the service computes metrics over a window of `windowDays` days ending on (and including) that date, then returns the delta between the two windows.
 
 **Headers:**
 ```
 Authorization: Bearer {jwt_token}
 ```
 
-**Request Body:**
+**Path Parameters:**
+- `entityId` — Entity ID (e.g., 1)
+
+**Query Parameters:**
+- `fromDate` (required) — Start date (ISO-8601, e.g., `2026-03-01`)
+- `toDate` (required) — End date (ISO-8601, e.g., `2026-03-15`). Must be after `fromDate`.
+- `windowDays` (optional, default: `7`) — Number of days in each comparison window. Must be 1–30.
+
+**Example Request:**
+```
+GET /api/dashboard/1/sentiment-delta?fromDate=2026-03-01&toDate=2026-03-15&windowDays=7
+```
+
+**Response:**
 ```json
 {
-  "managedEntityName": "The Quantum Paradox",
-  "mentionContent": "This movie was terrible! Waste of money.",
-  "sentiment": "NEGATIVE"
+  "fromDate": "2026-03-01",
+  "toDate": "2026-03-15",
+  "fromLabel": "2026-02-23 to 2026-03-01",
+  "toLabel": "2026-03-09 to 2026-03-15",
+  "fromTotalMentions": 42,
+  "toTotalMentions": 58,
+  "mentionsDelta": 16,
+  "fromPositiveRatio": 0.62,
+  "toPositiveRatio": 0.71,
+  "positiveRatioDelta": 0.09,
+  "fromNetSentiment": 2.15,
+  "toNetSentiment": 3.40,
+  "netSentimentDelta": 1.25
 }
+```
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — `fromDate` is not before `toDate`, or `windowDays` is outside 1–30
+
+---
+
+### 18b. Get Checkpoint Impact
+
+**Endpoint:** `GET /api/dashboard/{entityId}/checkpoint-impact`
+
+**Description:** Compute before/after sentiment metrics for every checkpoint of an entity. For each checkpoint, the service compares a window of `windowDays` days before the checkpoint date with `windowDays` days after it, and reports the change in positive ratio and net sentiment.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` — Entity ID (e.g., 1)
+
+**Query Parameters:**
+- `windowDays` (optional, default: `7`) — Number of days in the before/after window. Must be 1–30.
+
+**Example Request:**
+```
+GET /api/dashboard/1/checkpoint-impact?windowDays=7
+```
+
+**Response:**
+```json
+{
+  "entityId": 1,
+  "entityName": "The Quantum Paradox",
+  "windowDays": 7,
+  "impacts": [
+    {
+      "checkpointId": 10,
+      "checkpointDate": "2026-03-15",
+      "description": "Trailer Launch",
+      "beforeTotalMentions": 42,
+      "afterTotalMentions": 78,
+      "beforePositiveRatio": 0.62,
+      "afterPositiveRatio": 0.74,
+      "positiveRatioChange": 0.12,
+      "beforeNetSentiment": 2.15,
+      "afterNetSentiment": 4.10,
+      "netSentimentChange": 1.95,
+      "impactDirection": "IMPROVED"
+    },
+    {
+      "checkpointId": 11,
+      "checkpointDate": "2026-04-01",
+      "description": "Opening Weekend",
+      "beforeTotalMentions": 65,
+      "afterTotalMentions": 55,
+      "beforePositiveRatio": 0.70,
+      "afterPositiveRatio": 0.58,
+      "positiveRatioChange": -0.12,
+      "beforeNetSentiment": 3.50,
+      "afterNetSentiment": 1.80,
+      "netSentimentChange": -1.70,
+      "impactDirection": "DECLINED"
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `impacts` — one entry per checkpoint, in checkpoint-date order.
+- `impactDirection` — one of `IMPROVED`, `DECLINED`, `STABLE`, derived from the net sentiment change.
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — `windowDays` is outside 1–30
+
+---
+
+### 18c. Get Checkpoint Trend
+
+**Endpoint:** `GET /api/dashboard/{entityId}/checkpoint-trend`
+
+**Description:** Return time-series sentiment metrics at each checkpoint date for an entity. Each trend point includes cumulative and period mention counts, positive ratio, and net sentiment, plus the change from the previous checkpoint.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` — Entity ID (e.g., 1)
+
+**Example Request:**
+```
+GET /api/dashboard/1/checkpoint-trend
+```
+
+**Response:**
+```json
+{
+  "entityId": 1,
+  "entityName": "The Quantum Paradox",
+  "trendPoints": [
+    {
+      "checkpointDate": "2026-03-15",
+      "description": "Trailer Launch",
+      "cumulativeMentions": 120,
+      "periodMentions": 120,
+      "positiveRatio": 0.65,
+      "netSentiment": 2.80,
+      "positiveRatioChangeFromPrevious": null,
+      "netSentimentChangeFromPrevious": null
+    },
+    {
+      "checkpointDate": "2026-04-01",
+      "description": "Opening Weekend",
+      "cumulativeMentions": 245,
+      "periodMentions": 125,
+      "positiveRatio": 0.72,
+      "netSentiment": 3.50,
+      "positiveRatioChangeFromPrevious": 0.07,
+      "netSentimentChangeFromPrevious": 0.70
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `trendPoints` — one entry per checkpoint, in checkpoint-date order.
+- `cumulativeMentions` — total mentions from the beginning up to and including this checkpoint date.
+- `periodMentions` — mentions between the previous checkpoint date (exclusive) and this checkpoint date (inclusive). For the first checkpoint, this equals `cumulativeMentions`.
+- `positiveRatioChangeFromPrevious` / `netSentimentChangeFromPrevious` — `null` for the first trend point; the delta from the previous checkpoint for subsequent points.
+
+**Status Code:** `200 OK`
+
+---
+
+## Interaction APIs
+
+### 19. Generate Reply
+
+**Endpoint:** `GET /api/interact/generate-reply/{post_id}`
+
+**Description:** Generate an AI-powered reply to a mention by looking up the mention's content, sentiment, and managed entity name. (Mock LLM)
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `post_id` — Mention ID (e.g., 1)
+
+**Example Request:**
+```
+GET /api/interact/generate-reply/9123
 ```
 
 **Response:**
@@ -1162,7 +1453,9 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-**Status Code:** `200 OK`
+**Status Codes:**
+- `200 OK`
+- `404 Not Found` — No mention with the given id
 
 ---
 
@@ -1633,6 +1926,66 @@ After an alert is persisted, `AlertDispatcher` fans it out to two async channels
 **Digest body** includes per-entity: sentiment score delta, new mention count, new negative count, new super-spreader count, and competitor deltas (if any).
 
 All routes below are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+
+### 27a. Create Alert
+
+**Endpoint:** `POST /api/alerts`
+
+**Description:** Manually create a sentiment alert for a managed entity. This is the programmatic/internal counterpart to the background detectors — useful for testing or for external systems that detect anomalies outside of the built-in spike/influencer logic. Returns `409 Conflict` (empty body) if a duplicate alert already exists.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "managedEntityId": 1,
+  "kind": "SPIKE",
+  "currentValue": 0.5,
+  "baselineValue": 0.2,
+  "sourceMentionId": null,
+  "matchedAuthor": null,
+  "permalink": null
+}
+```
+
+**Validation:**
+- `managedEntityId` — required.
+- `kind` — required; one of `SPIKE`, `INFLUENCER_NEGATIVE`.
+- `currentValue` / `baselineValue` — the rolling and baseline negative-sentiment ratios (relevant for `SPIKE`; set both to `0.0` for `INFLUENCER_NEGATIVE`).
+- `sourceMentionId`, `matchedAuthor`, `permalink` — optional; typically populated for `INFLUENCER_NEGATIVE` alerts.
+
+**Response:**
+```json
+{
+  "id": 43,
+  "managedEntityId": 1,
+  "entityName": "The Quantum Paradox",
+  "kind": "SPIKE",
+  "status": "OPEN",
+  "triggeredAt": "2026-05-21T12:10:00Z",
+  "currentValue": 0.5,
+  "baselineValue": 0.2,
+  "sourceMentionId": null,
+  "matchedAuthor": null,
+  "permalink": null,
+  "ackedAt": null,
+  "ackedBy": null,
+  "dismissedAt": null,
+  "dismissedBy": null,
+  "dismissReason": null,
+  "reason": "Negative-sentiment ratio rose to 50% (baseline 20%) for The Quantum Paradox"
+}
+```
+
+**Status Codes:**
+- `201 Created` — Alert created.
+- `409 Conflict` — Duplicate alert (empty body).
+
+---
 
 ### 28. List Alerts
 
@@ -2512,6 +2865,41 @@ GET /v1/diagnostics/process-user/alice
 ## AuraMath Marketing Proxy (`/v1/marketing/**`)
 
 A second proxy surface that mirrors the upstream `/api/marketing/{genre,party,celebrity}` resource tree one-for-one. Twelve GET endpoints plus a `/v1/marketing/_catalog` discovery route forward each upstream path verbatim (URL-encoding `{genre}`, `{party}`, and `{celebrity}` segments so spaces, ampersands, and non-ASCII names like `A R Rahman` or `திமுக` pass through correctly). Each request uses a 15-second connect/read budget (`auramath.marketing-timeout-ms`); successful responses are cached in-memory by full URL for 60 seconds, except the three list endpoints (`/genre`, `/party`, `/celebrity`) which use a 5-minute TTL (`auramath.cache.list-ttl-seconds`). 2xx bodies — including empty arrays like `{"totalVoters":0,"voters":[]}` — are returned to the caller byte-for-byte. Upstream 5xx responses are logged with their `message`/`path` and translated to a sanitized `502 { "error":"upstream_failure", "upstream_path":"…" }` so SQL fragments are never leaked to clients; connection failures/timeouts continue to map to `504 { "error":"upstream_unavailable" }`. Wrapped routes: `GET /v1/marketing/genre` (and `/{genre}/{potential-viewers,super-spreaders,channel-strategy}`); `GET /v1/marketing/party` (and `/{party}/{potential-voters,super-spreaders,channel-strategy}`); `GET /v1/marketing/celebrity` (and `/{celebrity}/{potential-fans,super-fans,channel-strategy}`); `GET /v1/marketing/_catalog` returns the full list with its upstream mapping. Integration tests live in `AuraMathMarketingProxyControllerTest` (path-encoding pass-through for ASCII, spaces, ampersands, and Tamil script; upstream-500 → sanitized-502 mapping; cache hit; `_catalog` shape).
+
+---
+
+## Dev APIs
+
+Development-only endpoints, available when the application is **not** running with the `prod` profile. These are excluded in production via `@Profile("!prod")`.
+
+### 53. Reset Demo
+
+**Endpoint:** `POST /api/dev/reset-demo`
+
+**Description:** Reset the demo environment by backdating all `user_entity_views` rows so that the `whats-changed` and `whats-new` dashboard endpoints have fresh deltas to display. Useful for demo walkthroughs and integration testing.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+{
+  "reset": true,
+  "rows_updated": 4,
+  "last_seen_at": "2026-01-01T00:00:00Z"
+}
+```
+
+**Response fields:**
+- `reset` — always `true` on success.
+- `rows_updated` — number of `user_entity_views` rows modified.
+- `last_seen_at` — the timestamp all rows were set to.
+
+**Status Code:** `200 OK`
+
+**Note:** This endpoint is not available when `SPRING_PROFILES_ACTIVE=prod`.
 
 ---
 
