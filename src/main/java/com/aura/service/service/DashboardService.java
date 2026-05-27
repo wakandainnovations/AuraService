@@ -379,6 +379,69 @@ public class DashboardService {
                 .build();
     }
 
+    public CheckpointTrendResponse getCheckpointTrend(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Checkpoint> checkpoints = checkpointRepository.findByManagedEntityIdOrderByCheckpointDateAsc(entityId);
+
+        List<CheckpointTrendPoint> trendPoints = new ArrayList<>();
+        Double previousPositiveRatio = null;
+        Double previousNetSentiment = null;
+
+        for (int i = 0; i < checkpoints.size(); i++) {
+            Checkpoint cp = checkpoints.get(i);
+            LocalDate cpDate = cp.getCheckpointDate();
+
+            LocalDate periodStart = (i == 0)
+                    ? entity.getReleaseDate()
+                    : checkpoints.get(i - 1).getCheckpointDate().plusDays(1);
+
+            Instant periodStartInstant = periodStart.atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant periodEndInstant = cpDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+
+            long periodPositive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.POSITIVE, periodStartInstant, periodEndInstant);
+            long periodNegative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEGATIVE, periodStartInstant, periodEndInstant);
+            long periodNeutral = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                    entityId, Sentiment.NEUTRAL, periodStartInstant, periodEndInstant);
+            long periodMentions = periodPositive + periodNegative + periodNeutral;
+
+            Instant cumulativeCutoff = cpDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+            long cumulativeMentions = mentionRepository.countByManagedEntityIdAndPostDateLessThanEqual(
+                    entityId, cumulativeCutoff);
+
+            double positiveRatio = periodMentions > 0 ? (double) periodPositive / periodMentions : 0.0;
+            double netSentiment = periodNegative > 0 ? (double) periodPositive / periodNegative : 0.0;
+
+            Double positiveRatioChange = (previousPositiveRatio != null)
+                    ? positiveRatio - previousPositiveRatio : null;
+            Double netSentimentChange = (previousNetSentiment != null)
+                    ? netSentiment - previousNetSentiment : null;
+
+            trendPoints.add(CheckpointTrendPoint.builder()
+                    .checkpointDate(cpDate)
+                    .description(cp.getDescription())
+                    .cumulativeMentions(cumulativeMentions)
+                    .periodMentions(periodMentions)
+                    .positiveRatio(positiveRatio)
+                    .netSentiment(netSentiment)
+                    .positiveRatioChangeFromPrevious(positiveRatioChange)
+                    .netSentimentChangeFromPrevious(netSentimentChange)
+                    .build());
+
+            previousPositiveRatio = positiveRatio;
+            previousNetSentiment = netSentiment;
+        }
+
+        return CheckpointTrendResponse.builder()
+                .entityId(entityId)
+                .entityName(entity.getName())
+                .trendPoints(trendPoints)
+                .build();
+    }
+
     public Map<String, Map<String, Long>> getPlatformMentions(Long entityId) {
         List<Object[]> results = mentionRepository.countByPlatformForEntity(entityId);
         

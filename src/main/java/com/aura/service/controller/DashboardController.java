@@ -133,6 +133,14 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/{entityId}/checkpoint-trend")
+    public ResponseEntity<CheckpointTrendResponse> getCheckpointTrend(
+            @PathVariable Long entityId
+    ) {
+        CheckpointTrendResponse response = dashboardService.getCheckpointTrend(entityId);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/sentiment-over-time")
     public ResponseEntity<SentimentOverTimeResponse> getSentimentOverTime(
             @RequestParam TimePeriod period,
