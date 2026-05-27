@@ -8,6 +8,7 @@ import com.aura.service.entity.ReplyDraft;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
@@ -38,6 +39,7 @@ public class DashboardService {
     private final ManagedEntityRepository entityRepository;
     private final ReplyDraftRepository replyDraftRepository;
     private final CrisisPlanRepository crisisPlanRepository;
+    private final CheckpointRepository checkpointRepository;
     
     public EntityStatsResponse getEntityStats(Long entityId) {
         long totalMentions = mentionRepository.countByManagedEntityId(entityId);
@@ -145,25 +147,41 @@ public class DashboardService {
             List<Long> entityIds
     ) {
         List<EntitySentimentData> entitySentiments = new ArrayList<>();
-        
+
         Instant endDate = Instant.now();
 //        Instant endDate = ZonedDateTime.of(2026, 3, 16, 0, 0, 0, 0, ZoneOffset.UTC).toInstant();
         Instant startDate = calculateStartDate(period, endDate);
-        
+
+        LocalDate rangeStart = LocalDate.ofInstant(startDate, ZoneId.systemDefault());
+        LocalDate rangeEnd = LocalDate.ofInstant(endDate, ZoneId.systemDefault());
+        DateTimeFormatter formatter = getFormatterForPeriod(period);
+
         for (Long currentEntityId : entityIds) {
             ManagedEntity entity = entityRepository.findById(currentEntityId)
                     .orElseThrow(() -> new RuntimeException("Entity not found with id: " + currentEntityId));
-            
+
             List<Mention> mentions = mentionRepository.findByEntityIdsAndDateRange(
                     Collections.singletonList(currentEntityId),
                     startDate,
                     endDate
             );
-            
+
             List<TimeSeriesData> timeSeriesData = aggregateMentionsByPeriod(mentions, period, startDate, endDate);
-            entitySentiments.add(new EntitySentimentData(entity.getName(), timeSeriesData));
+
+            List<CheckpointMarker> markers = checkpointRepository
+                    .findByManagedEntityIdAndCheckpointDateBetweenOrderByCheckpointDateAsc(
+                            currentEntityId, rangeStart, rangeEnd)
+                    .stream()
+                    .filter(cp -> !cp.getCheckpointDate().isBefore(rangeStart)
+                            && !cp.getCheckpointDate().isAfter(rangeEnd))
+                    .map(cp -> new CheckpointMarker(
+                            cp.getCheckpointDate().format(formatter),
+                            cp.getDescription()))
+                    .toList();
+
+            entitySentiments.add(new EntitySentimentData(entity.getName(), timeSeriesData, markers));
         }
-        
+
         return new SentimentOverTimeResponse(entitySentiments);
     }
     

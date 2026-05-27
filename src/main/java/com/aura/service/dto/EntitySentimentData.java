@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Data
@@ -12,4 +13,5 @@ import java.util.List;
 public class EntitySentimentData {
     private String name;
     private List<TimeSeriesData> sentiments;
+    private List<CheckpointMarker> checkpoints = new ArrayList<>();
 }
