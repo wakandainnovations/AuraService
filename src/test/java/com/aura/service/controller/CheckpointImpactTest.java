@@ -27,8 +27,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -272,5 +271,32 @@ class CheckpointImpactTest {
         Instant checkpointMidnight = date.atStartOfDay(ZoneOffset.UTC).toInstant();
         assert beforeEnd.isBefore(checkpointMidnight);
         assert !afterStart.isAfter(checkpointMidnight);
+    }
+
+    @Test
+    void windowDaysZero_returns400() throws Exception {
+        mvc.perform(get("/api/dashboard/{entityId}/checkpoint-impact", ENTITY_ID)
+                        .param("windowDays", "0"))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).findByManagedEntityIdOrderByCheckpointDateAsc(ENTITY_ID);
+    }
+
+    @Test
+    void windowDaysNegative_returns400() throws Exception {
+        mvc.perform(get("/api/dashboard/{entityId}/checkpoint-impact", ENTITY_ID)
+                        .param("windowDays", "-5"))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).findByManagedEntityIdOrderByCheckpointDateAsc(ENTITY_ID);
+    }
+
+    @Test
+    void windowDaysAbove30_returns400() throws Exception {
+        mvc.perform(get("/api/dashboard/{entityId}/checkpoint-impact", ENTITY_ID)
+                        .param("windowDays", "31"))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).findByManagedEntityIdOrderByCheckpointDateAsc(ENTITY_ID);
     }
 }

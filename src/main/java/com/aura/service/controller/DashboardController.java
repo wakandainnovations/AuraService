@@ -126,6 +126,9 @@ public class DashboardController {
             @PathVariable Long entityId,
             @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays
     ) {
+        if (windowDays < 1 || windowDays > 30) {
+            return ResponseEntity.badRequest().build();
+        }
         CheckpointImpactResponse response = dashboardService.getCheckpointImpact(entityId, windowDays);
         return ResponseEntity.ok(response);
     }
