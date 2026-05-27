@@ -46,6 +46,6 @@ public class ManagedEntity {
     )
     private List<ManagedEntity> competitors = new ArrayList<>();
 
-    @Column
+    @Column(name = "release_date")
     private LocalDate releaseDate;
 }

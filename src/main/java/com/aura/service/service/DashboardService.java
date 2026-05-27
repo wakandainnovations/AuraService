@@ -393,9 +393,14 @@ public class DashboardService {
             Checkpoint cp = checkpoints.get(i);
             LocalDate cpDate = cp.getCheckpointDate();
 
-            LocalDate periodStart = (i == 0)
-                    ? entity.getReleaseDate()
-                    : checkpoints.get(i - 1).getCheckpointDate().plusDays(1);
+            LocalDate periodStart;
+            if (i == 0) {
+                periodStart = entity.getReleaseDate() != null
+                        ? entity.getReleaseDate()
+                        : cpDate;
+            } else {
+                periodStart = checkpoints.get(i - 1).getCheckpointDate().plusDays(1);
+            }
 
             Instant periodStartInstant = periodStart.atStartOfDay(ZoneOffset.UTC).toInstant();
             Instant periodEndInstant = cpDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
