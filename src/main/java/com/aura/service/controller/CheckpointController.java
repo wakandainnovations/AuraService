@@ -2,6 +2,7 @@ package com.aura.service.controller;
 
 import com.aura.service.dto.CheckpointResponse;
 import com.aura.service.dto.CreateCheckpointRequest;
+import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.service.CheckpointService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,13 @@ public class CheckpointController {
     @GetMapping("/entity/{entityId}")
     public ResponseEntity<List<CheckpointResponse>> listByEntity(@PathVariable("entityId") Long entityId) {
         return ResponseEntity.ok(checkpointService.listByEntity(entityId));
+    }
+
+    @PatchMapping("/{checkpointId}")
+    public ResponseEntity<CheckpointResponse> update(
+            @PathVariable("checkpointId") Long checkpointId,
+            @Valid @RequestBody UpdateCheckpointRequest request) {
+        return ResponseEntity.ok(checkpointService.update(checkpointId, request));
     }
 
     @DeleteMapping("/{checkpointId}")

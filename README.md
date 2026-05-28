@@ -484,7 +484,52 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 7c. Delete Checkpoint
+### 7c. Update Checkpoint
+
+**Endpoint:** `PATCH /api/checkpoints/{checkpointId}`
+
+**Description:** Update the date and/or description of an existing checkpoint. This is a partial update — include only the fields you want to change. Omitted fields are left unchanged.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `checkpointId` — Checkpoint ID (e.g., 10)
+
+**Request Body:**
+```json
+{
+  "checkpointDate": "2026-03-20",
+  "description": "Trailer v2"
+}
+```
+
+**Field Rules:**
+- `checkpointDate` — optional (ISO-8601 date). When provided, must not collide with another checkpoint for the same entity (entity + date is unique).
+- `description` — optional; when provided, must be non-blank and at most 20 characters.
+
+**Response:**
+```json
+{
+  "id": 10,
+  "entityId": 1,
+  "entityName": "The Quantum Paradox",
+  "checkpointDate": "2026-03-20",
+  "description": "Trailer v2"
+}
+```
+
+**Status Code:** `200 OK`
+
+**Errors:**
+- `400 Bad Request` — checkpoint not found, validation failure (description too long/blank), or the new date already has a checkpoint for the entity.
+
+---
+
+### 7d. Delete Checkpoint
 
 **Endpoint:** `DELETE /api/checkpoints/{checkpointId}`
 

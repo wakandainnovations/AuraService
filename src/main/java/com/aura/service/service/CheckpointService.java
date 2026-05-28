@@ -2,6 +2,7 @@ package com.aura.service.service;
 
 import com.aura.service.dto.CheckpointResponse;
 import com.aura.service.dto.CreateCheckpointRequest;
+import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.CheckpointRepository;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -40,6 +42,35 @@ public class CheckpointService {
                 .stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    @Transactional
+    public CheckpointResponse update(Long checkpointId, UpdateCheckpointRequest request) {
+        Checkpoint checkpoint = checkpointRepository.findById(checkpointId)
+                .orElseThrow(() -> new RuntimeException(
+                        "Checkpoint not found with id " + checkpointId));
+
+        if (request.getCheckpointDate() != null) {
+            LocalDate newDate = request.getCheckpointDate();
+            Long entityId = checkpoint.getManagedEntity().getId();
+            checkpointRepository.findByManagedEntityIdAndCheckpointDate(entityId, newDate)
+                    .filter(existing -> !existing.getId().equals(checkpointId))
+                    .ifPresent(existing -> {
+                        throw new RuntimeException(
+                                "A checkpoint already exists for this entity on " + newDate);
+                    });
+            checkpoint.setCheckpointDate(newDate);
+        }
+
+        if (request.getDescription() != null) {
+            if (request.getDescription().isBlank()) {
+                throw new RuntimeException("description must not be blank");
+            }
+            checkpoint.setDescription(request.getDescription());
+        }
+
+        Checkpoint saved = checkpointRepository.save(checkpoint);
+        return toResponse(saved);
     }
 
     @Transactional

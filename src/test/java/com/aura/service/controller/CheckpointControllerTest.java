@@ -147,6 +147,92 @@ class CheckpointControllerTest {
     }
 
     @Test
+    void update_changesDateAndDescriptionAndReturns200() throws Exception {
+        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
+        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(checkpointRepository.findByManagedEntityIdAndCheckpointDate(ENTITY_ID, LocalDate.of(2026, 7, 1)))
+                .thenReturn(Optional.empty());
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        String body = mapper.writeValueAsString(Map.of(
+                "checkpointDate", "2026-07-01",
+                "description", "Trailer drop"));
+
+        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(10))
+                .andExpect(jsonPath("$.checkpointDate").value("2026-07-01"))
+                .andExpect(jsonPath("$.description").value("Trailer drop"));
+
+        verify(checkpointRepository).save(existing);
+    }
+
+    @Test
+    void update_changesOnlyDescriptionWhenDateOmitted() throws Exception {
+        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
+        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        String body = mapper.writeValueAsString(Map.of("description", "Re-release"));
+
+        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.checkpointDate").value("2026-06-15"))
+                .andExpect(jsonPath("$.description").value("Re-release"));
+
+        verify(checkpointRepository, never()).findByManagedEntityIdAndCheckpointDate(any(), any());
+    }
+
+    @Test
+    void update_returns400WhenDescriptionExceeds20Chars() throws Exception {
+        String body = mapper.writeValueAsString(Map.of(
+                "description", "This description is way too long"));
+
+        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).save(any());
+    }
+
+    @Test
+    void update_returns400WhenCheckpointNotFound() throws Exception {
+        when(checkpointRepository.findById(999L)).thenReturn(Optional.empty());
+
+        String body = mapper.writeValueAsString(Map.of("description", "Re-release"));
+
+        mvc.perform(patch("/api/checkpoints/{checkpointId}", 999L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).save(any());
+    }
+
+    @Test
+    void update_returns400WhenDateCollidesWithAnotherCheckpoint() throws Exception {
+        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
+        Checkpoint other = checkpoint(11L, LocalDate.of(2026, 7, 1), "Movie release");
+        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(checkpointRepository.findByManagedEntityIdAndCheckpointDate(ENTITY_ID, LocalDate.of(2026, 7, 1)))
+                .thenReturn(Optional.of(other));
+
+        String body = mapper.writeValueAsString(Map.of("checkpointDate", "2026-07-01"));
+
+        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).save(any());
+    }
+
+    @Test
     void delete_returns204WhenCheckpointExists() throws Exception {
         Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
         when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
