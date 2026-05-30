@@ -17,4 +17,6 @@ public interface CheckpointRepository extends JpaRepository<Checkpoint, Long> {
             Long entityId, LocalDate start, LocalDate end);
 
     Optional<Checkpoint> findByManagedEntityIdAndCheckpointDate(Long entityId, LocalDate date);
+
+    void deleteByManagedEntityId(Long entityId);
 }

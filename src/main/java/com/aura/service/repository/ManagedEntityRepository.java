@@ -13,6 +13,8 @@ import java.util.List;
 public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Long> {
     List<ManagedEntity> findByType(String type);
 
+    List<ManagedEntity> findByCompetitorsId(Long competitorId);
+
     @Query("SELECT ek FROM ManagedEntity e JOIN e.keywords ek WHERE " +
            "(:language IS NULL OR ek.language = :language) AND " +
            "(:industry IS NULL OR ek.industry = :industry) AND " +

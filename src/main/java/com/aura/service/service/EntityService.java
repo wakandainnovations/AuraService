@@ -8,6 +8,7 @@ import com.aura.service.dto.UpdateCompetitorsRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,7 +22,8 @@ import java.util.stream.Collectors;
 public class EntityService {
     
     private final ManagedEntityRepository entityRepository;
-    
+    private final CheckpointRepository checkpointRepository;
+
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
         ManagedEntity entity = new ManagedEntity();
@@ -85,6 +87,28 @@ public class EntityService {
         return mapToDetailResponse(entity);
     }
     
+    @Transactional
+    public void deleteEntity(String entityType, Long id) {
+        ManagedEntity entity = entityRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        if (!entity.getType().equalsIgnoreCase(entityType)) {
+            throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
+        }
+
+        // Detach this entity from any other entity that lists it as a competitor,
+        // otherwise the entity_competitors foreign key would block the delete.
+        List<ManagedEntity> referencingEntities = entityRepository.findByCompetitorsId(id);
+        for (ManagedEntity referencing : referencingEntities) {
+            referencing.getCompetitors().removeIf(competitor -> competitor.getId().equals(id));
+        }
+        entityRepository.saveAll(referencingEntities);
+
+        // Remove dependent checkpoints (managed_entity_id is a non-null foreign key).
+        checkpointRepository.deleteByManagedEntityId(id);
+
+        entityRepository.delete(entity);
+    }
+
     private List<EntityKeyword> toKeywordEntities(List<KeywordDto> dtos) {
         if (dtos == null) {
             return List.of();

@@ -401,6 +401,35 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+### 8. Delete Entity
+
+**Endpoint:** `DELETE /api/entities/{entityType}/{id}`
+
+**Description:** Delete an entity. Any checkpoints belonging to the entity are removed, and the entity is detached from any other entity's competitor list before deletion.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
+- `id` - Entity ID (e.g., 1)
+
+**Example:**
+```
+DELETE /api/entities/movie/1
+```
+
+**Response:** Empty body.
+
+**Status Code:** `204 No Content`
+
+**Error Responses:**
+- `400 Bad Request` - Entity not found, or the entity is not of the given `entityType`.
+
+---
+
 ## Checkpoint Management APIs
 
 Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.

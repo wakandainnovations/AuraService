@@ -57,4 +57,10 @@ public class EntityController {
         EntityDetailResponse response = entityService.updateKeywords(entityType.toUpperCase(), id, request);
         return ResponseEntity.ok(response);
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteEntity(@PathVariable String entityType, @PathVariable Long id) {
+        entityService.deleteEntity(entityType.toUpperCase(), id);
+        return ResponseEntity.noContent().build();
+    }
 }
