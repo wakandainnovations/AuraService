@@ -1535,6 +1535,192 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+## Reply Templates APIs
+
+Reply templates are reusable, user-owned canned responses that the UI can offer when replying to mentions. Each template belongs to the authenticated user; a user can only see and modify their own templates.
+
+A `ReplyTemplate` has:
+
+- `id` — server-assigned identifier.
+- `userId` — the owning user. Always derived from the authenticated principal; never accepted in the request body.
+- `name` — short label for the template (required).
+- `body` — the reply text (required).
+- `tone` — optional free-text tone hint (e.g. `apologetic`, `friendly`, `formal`).
+- `useCount` — number of times the template has been used (starts at `0`, incremented by the `use` endpoint).
+- `createdAt` — server timestamp when the template was created.
+
+All routes are JWT-protected — pass `Authorization: Bearer {jwt_token}`. "Not found" and ownership violations return `400 Bad Request` (via the global error handler) with a `message` describing the failure.
+
+### 20a. Create Reply Template
+
+**Endpoint:** `POST /api/templates`
+
+**Description:** Create a reply template owned by the authenticated user. `useCount` starts at `0` and `createdAt` is set to the current server time.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "name": "Apology - delayed response",
+  "body": "Thanks for flagging this — we're sorry for the delay and are looking into it now.",
+  "tone": "apologetic"
+}
+```
+
+**Validation:**
+- `name` — required, must not be blank.
+- `body` — required, must not be blank.
+- `tone` — optional.
+
+**Response:**
+```json
+{
+  "id": 5,
+  "name": "Apology - delayed response",
+  "body": "Thanks for flagging this — we're sorry for the delay and are looking into it now.",
+  "tone": "apologetic",
+  "useCount": 0,
+  "createdAt": "2026-05-31T09:15:00Z"
+}
+```
+
+**Status Codes:**
+- `200 OK` — Template created.
+- `400 Bad Request` — Validation failure (blank `name` or `body`).
+
+---
+
+### 20b. List Reply Templates
+
+**Endpoint:** `GET /api/templates`
+
+**Description:** List all reply templates owned by the authenticated user, ordered by `createdAt` descending (most recent first).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 6,
+    "name": "Thank you",
+    "body": "Thank you so much for the kind words — it means a lot to the whole team!",
+    "tone": "friendly",
+    "useCount": 12,
+    "createdAt": "2026-05-31T10:00:00Z"
+  },
+  {
+    "id": 5,
+    "name": "Apology - delayed response",
+    "body": "Thanks for flagging this — we're sorry for the delay and are looking into it now.",
+    "tone": "apologetic",
+    "useCount": 0,
+    "createdAt": "2026-05-31T09:15:00Z"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 20c. Update Reply Template
+
+**Endpoint:** `PUT /api/templates/{id}`
+
+**Description:** Replace the `name`, `body`, and `tone` of a template owned by the authenticated user. `useCount` and `createdAt` are preserved.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Reply template ID
+
+**Request Body:** Same shape and validation as [Create Reply Template](#20a-create-reply-template).
+```json
+{
+  "name": "Apology - delayed response (v2)",
+  "body": "Apologies for the delay — we've escalated this and will follow up shortly.",
+  "tone": "formal"
+}
+```
+
+**Response:** The updated template (same shape as a list element).
+
+**Status Codes:**
+- `200 OK` — Template updated.
+- `400 Bad Request` — Validation failure, or no template with that id owned by the calling user.
+
+---
+
+### 20d. Delete Reply Template
+
+**Endpoint:** `DELETE /api/templates/{id}`
+
+**Description:** Delete a reply template owned by the authenticated user.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Reply template ID
+
+**Example:**
+```
+DELETE /api/templates/5
+```
+
+**Status Codes:**
+- `204 No Content` — Template deleted.
+- `400 Bad Request` — No template with that id owned by the calling user.
+
+---
+
+### 20e. Use Reply Template
+
+**Endpoint:** `POST /api/templates/{id}/use`
+
+**Description:** Mark a template as used: increments its `useCount` and returns the template `body` so the UI can drop it straight into a reply box.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Reply template ID
+
+**Example:**
+```
+POST /api/templates/6/use
+```
+
+**Response:**
+```json
+{
+  "body": "Thank you so much for the kind words — it means a lot to the whole team!"
+}
+```
+
+**Status Codes:**
+- `200 OK` — `useCount` incremented; body returned.
+- `400 Bad Request` — No template with that id owned by the calling user.
+
+---
+
 ## Crisis Management APIs
 
 ### 21. Generate Crisis Plan
