@@ -12,4 +12,6 @@ public interface CrisisPlanRepository extends JpaRepository<CrisisPlan, Long> {
     List<CrisisPlan> findByMentionId(Long mentionId);
 
     List<CrisisPlan> findByMentionIdIn(Collection<Long> mentionIds);
+
+    List<CrisisPlan> findByEntityId(Long entityId);
 }

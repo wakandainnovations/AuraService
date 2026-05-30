@@ -1753,6 +1753,135 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+## Playbook Library APIs
+
+A **playbook** is a persisted `CrisisPlan` promoted into a reusable, entity-scoped library. Plans are seeded by the AI draft flow ([Escalate to Crisis](#25-escalate-to-crisis) persists a `CrisisPlan` row), then curated by the team: renamed, tagged, favorited, and re-used as the starting point for future plans.
+
+A `CrisisPlan` exposed through these endpoints has:
+
+- `id` — server-assigned identifier.
+- `entityId` — the managed entity the plan belongs to.
+- `mentionId` — the mention the plan was originally escalated from (carried over on clone).
+- `title` — short, editable label for the playbook (set/edited via update; `null` until named).
+- `planText` — the plan body, AI-drafted on escalation and freely editable afterwards.
+- `tags` — list of free-text tags for filtering the library (e.g. `launch`, `review-bomb`, `legal`).
+- `isFavorite` — whether the playbook is pinned as a favorite. Serialized as `favorite` in JSON.
+- `createdBy` — the user who created (or cloned) the plan.
+- `createdAt` — server timestamp when the plan was created.
+
+All routes are JWT-protected — pass `Authorization: Bearer {jwt_token}`. The library is shared across the team at the entity level (not restricted to the plan's author). "Not found" returns `400 Bad Request` via the global error handler with a `message`.
+
+### 21a. List Playbooks
+
+**Endpoint:** `GET /api/playbooks?entityId=&tag=&favorite=`
+
+**Description:** List playbooks, ordered by `createdAt` descending (most recent first). All query parameters are optional and combine as an AND filter.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `entityId` — optional; restrict to one managed entity. When omitted, all playbooks are scanned.
+- `tag` — optional; keep only playbooks carrying this exact tag.
+- `favorite` — optional `true`/`false`; keep only playbooks matching the favorite flag.
+
+**Example Request:**
+```
+GET /api/playbooks?entityId=1&tag=review-bomb&favorite=true
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 22,
+    "entityId": 1,
+    "mentionId": 9123,
+    "title": "Review-bomb response (playbook)",
+    "planText": "Immediate Response (0 to 4 Hours): ...",
+    "tags": ["review-bomb", "launch"],
+    "favorite": true,
+    "createdBy": 4,
+    "createdAt": "2026-05-21T11:00:00Z"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 21b. Update Playbook
+
+**Endpoint:** `PUT /api/playbooks/{id}`
+
+**Description:** Edit a playbook after the AI draft. Each field is optional — fields omitted (or `null`) are left unchanged — so the UI can rename, retag, (un)favorite, or rewrite the plan text independently.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Playbook (CrisisPlan) ID
+
+**Request Body:**
+```json
+{
+  "title": "Review-bomb response (playbook)",
+  "planText": "Immediate Response (0 to 4 Hours): ...",
+  "tags": ["review-bomb", "launch"],
+  "isFavorite": true
+}
+```
+
+**Validation:**
+- `title` — optional; replaces the title when present.
+- `planText` — optional; when present must not be blank.
+- `tags` — optional; when present, replaces the full tag list.
+- `isFavorite` — optional; when present, sets the favorite flag.
+
+**Response:** The updated playbook (same shape as a list element).
+
+**Status Codes:**
+- `200 OK` — Playbook updated.
+- `400 Bad Request` — Blank `planText`, or no playbook with that id.
+
+---
+
+### 21c. Clone Playbook
+
+**Endpoint:** `POST /api/playbooks/{id}/clone`
+
+**Description:** Start a new playbook from a past one. The clone copies the source's `entityId`, `mentionId`, `planText`, and `tags`; resets `isFavorite` to `false`; sets `createdBy` to the calling user and `createdAt` to the current server time. The new plan is independent of the source — editing it does not affect the original.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Source playbook (CrisisPlan) ID
+
+**Request Body:** Optional. When `title` is provided it names the clone; otherwise the clone is named `"Copy of {source title}"`.
+```json
+{
+  "title": "Q3 launch crisis plan"
+}
+```
+
+**Response:** The newly created playbook (same shape as a list element), with `201 Created`.
+
+**Status Codes:**
+- `201 Created` — Clone created.
+- `400 Bad Request` — No playbook with that id.
+
+---
+
 ## Mention Action APIs
 
 Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
