@@ -1,6 +1,7 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.AllyRecommendation;
+import com.aura.service.dto.DraftReplyRequest;
 import com.aura.service.dto.DraftReplyResponse;
 import com.aura.service.dto.EscalateCrisisResponse;
 import com.aura.service.dto.MentionActionLogEntry;
@@ -14,6 +15,7 @@ import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.entity.ReplyDraft;
+import com.aura.service.entity.ReplyTemplate;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.proxy.TtlCache;
@@ -23,6 +25,7 @@ import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
+import com.aura.service.service.ReplyTemplateService;
 import com.aura.service.service.SocialMediaService;
 import com.aura.service.service.TopSpreaderLookupService;
 import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
@@ -64,11 +67,15 @@ public class MentionActionController {
     private final MobilizeActionRepository mobilizeActionRepository;
     private final UserRepository userRepository;
     private final TopSpreaderLookupService spreaderLookup;
+    private final ReplyTemplateService replyTemplateService;
 
     private final TtlCache<MobilizeAlliesResponse> allyCache = new TtlCache<>(1024);
 
     @Value("${llm.prompt.generate.reply}")
     private String generateReplyPrompt;
+
+    @Value("${llm.prompt.generate.reply.from.template}")
+    private String generateReplyFromTemplatePrompt;
 
     @Value("${llm.prompt.generate.crisis.plan}")
     private String crisisPlanPromptTemplate;
@@ -140,6 +147,7 @@ public class MentionActionController {
     @PostMapping("/draft-reply")
     public ResponseEntity<DraftReplyResponse> draftReply(
             @PathVariable("mentionId") Long mentionId,
+            @RequestBody(required = false) DraftReplyRequest request,
             @AuthenticationPrincipal UserDetails principal
     ) {
         Mention mention = mentionRepository.findById(mentionId).orElse(null);
@@ -147,11 +155,23 @@ public class MentionActionController {
             return ResponseEntity.notFound().build();
         }
         ManagedEntity entity = mention.getManagedEntity();
+        User user = requireUser(principal);
 
-        String prompt = generateReplyPrompt
-                .replace("[Managed Entity]", entity.getName())
-                .replace("[Paste the user's post here]", mention.getContent())
-                .replace("[Positive / Negative / Neutral]", mention.getSentiment().name());
+        String prompt;
+        if (request != null && request.getTemplateId() != null) {
+            ReplyTemplate template = replyTemplateService.requireOwnedTemplate(user.getId(), request.getTemplateId());
+            prompt = generateReplyFromTemplatePrompt
+                    .replace("[Managed Entity]", entity.getName())
+                    .replace("[Template Tone]", nullSafe(template.getTone()))
+                    .replace("[Template Body]", nullSafe(template.getBody()))
+                    .replace("[Paste the user's post here]", mention.getContent())
+                    .replace("[Positive / Negative / Neutral]", mention.getSentiment().name());
+        } else {
+            prompt = generateReplyPrompt
+                    .replace("[Managed Entity]", entity.getName())
+                    .replace("[Paste the user's post here]", mention.getContent())
+                    .replace("[Positive / Negative / Neutral]", mention.getSentiment().name());
+        }
 
         String generated = llmService.generateReply(prompt);
         int firstQuote = generated.indexOf('"');
@@ -160,7 +180,6 @@ public class MentionActionController {
             generated = generated.substring(firstQuote + 1, lastQuote);
         }
 
-        User user = requireUser(principal);
         ReplyDraft draft = ReplyDraft.builder()
                 .mentionId(mention.getId())
                 .userId(user.getId())

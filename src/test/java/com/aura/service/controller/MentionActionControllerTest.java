@@ -13,8 +13,10 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.repository.ReplyTemplateRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
+import com.aura.service.service.ReplyTemplateService;
 import com.aura.service.service.SocialMediaService;
 import com.aura.service.service.TopSpreaderLookupService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -126,7 +128,8 @@ class MentionActionControllerTest {
                 crisisPlanRepository,
                 mobilizeActionRepository,
                 userRepository,
-                spreaderLookup
+                spreaderLookup,
+                new ReplyTemplateService(mock(ReplyTemplateRepository.class))
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);
