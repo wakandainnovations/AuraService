@@ -13,13 +13,29 @@ import java.time.Instant;
 @Repository
 public interface SentimentAlertRepository extends JpaRepository<SentimentAlert, Long> {
 
-    boolean existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-            Long managedEntityId,
-            SentimentAlert.Status status,
-            Instant triggeredAfter
-    );
+    /**
+     * Owner-aware variant of the recent-open-alert dedup check. A null
+     * {@code ownerUserId} matches only alerts with no owner (default-threshold
+     * alerts); a non-null value matches that user's alerts.
+     */
+    @Query("SELECT CASE WHEN COUNT(a) > 0 THEN true ELSE false END FROM SentimentAlert a " +
+            "WHERE a.managedEntityId = :entityId AND a.status = :status AND a.triggeredAt > :after " +
+            "AND ((:ownerUserId IS NULL AND a.ownerUserId IS NULL) OR a.ownerUserId = :ownerUserId)")
+    boolean existsRecentOpenForOwner(@Param("entityId") Long entityId,
+                                     @Param("status") SentimentAlert.Status status,
+                                     @Param("after") Instant after,
+                                     @Param("ownerUserId") Long ownerUserId);
 
-    boolean existsByKindAndSourceMentionId(SentimentAlert.Kind kind, Long sourceMentionId);
+    /**
+     * Dedup check for influencer-negative alerts, scoped per owning user (a
+     * null {@code ownerUserId} matches default-threshold alerts with no owner).
+     */
+    @Query("SELECT CASE WHEN COUNT(a) > 0 THEN true ELSE false END FROM SentimentAlert a " +
+            "WHERE a.kind = :kind AND a.sourceMentionId = :sourceMentionId " +
+            "AND ((:ownerUserId IS NULL AND a.ownerUserId IS NULL) OR a.ownerUserId = :ownerUserId)")
+    boolean existsByKindAndSourceMentionIdForOwner(@Param("kind") SentimentAlert.Kind kind,
+                                                   @Param("sourceMentionId") Long sourceMentionId,
+                                                   @Param("ownerUserId") Long ownerUserId);
 
     boolean existsByManagedEntityIdAndKindAndStatus(
             Long managedEntityId,

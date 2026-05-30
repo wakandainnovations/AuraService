@@ -36,6 +36,13 @@ public class SentimentAlert {
     @Column(name = "managed_entity_id", nullable = false)
     private Long managedEntityId;
 
+    /**
+     * The user whose {@link AlertRule} triggered this alert. Null for alerts
+     * raised by the default fallback thresholds (no matching rule).
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
+
     @Column(name = "triggered_at", nullable = false)
     private Instant triggeredAt;
 

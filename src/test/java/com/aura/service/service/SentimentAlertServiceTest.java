@@ -1,11 +1,13 @@
 package com.aura.service.service;
 
 import com.aura.service.alert.AlertDispatcher;
+import com.aura.service.entity.AlertRule;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.AlertRuleRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.SentimentAlertRepository;
@@ -22,6 +24,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -36,6 +39,7 @@ class SentimentAlertServiceTest {
     private ManagedEntityRepository entityRepository;
     private MentionRepository mentionRepository;
     private SentimentAlertRepository alertRepository;
+    private AlertRuleRepository alertRuleRepository;
     private StubSpreaderLookup spreaderLookup;
     private AlertDispatcher alertDispatcher;
     private Clock clock;
@@ -46,11 +50,13 @@ class SentimentAlertServiceTest {
         entityRepository = mock(ManagedEntityRepository.class);
         mentionRepository = mock(MentionRepository.class);
         alertRepository = mock(SentimentAlertRepository.class);
+        alertRuleRepository = mock(AlertRuleRepository.class);
         spreaderLookup = new StubSpreaderLookup();
         alertDispatcher = new NoopDispatcher();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new SentimentAlertService(
-                entityRepository, mentionRepository, alertRepository, spreaderLookup, alertDispatcher, clock);
+                entityRepository, mentionRepository, alertRepository, alertRuleRepository,
+                spreaderLookup, alertDispatcher, clock);
 
         ManagedEntity entity = new ManagedEntity();
         entity.setId(ENTITY_ID);
@@ -126,8 +132,8 @@ class SentimentAlertServiceTest {
     void createsAlertWhenRatioExceedsBaselineAndCountMeetsThreshold() {
         // current ratio = 30/60 = 0.5; baseline = 200/1000 = 0.2; 0.5 > 0.2 * 1.5 = 0.3
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(false);
 
         service.scanForSpikes();
 
@@ -137,8 +143,8 @@ class SentimentAlertServiceTest {
     @Test
     void persistsExpectedFields() {
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(false);
         org.mockito.ArgumentCaptor<SentimentAlert> captor =
                 org.mockito.ArgumentCaptor.forClass(SentimentAlert.class);
 
@@ -187,8 +193,8 @@ class SentimentAlertServiceTest {
     @Test
     void skipsWhenOpenAlertExistsWithinDedupWindow() {
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(true);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(true);
 
         service.scanForSpikes();
 
@@ -198,14 +204,14 @@ class SentimentAlertServiceTest {
     @Test
     void usesFixedClockForDedupWindowBoundary() {
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(false);
         org.mockito.ArgumentCaptor<Instant> dedupCaptor = org.mockito.ArgumentCaptor.forClass(Instant.class);
 
         service.scanForSpikes();
 
-        verify(alertRepository).existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), dedupCaptor.capture());
+        verify(alertRepository).existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), dedupCaptor.capture(), isNull());
         assertThat(dedupCaptor.getValue())
                 .isEqualTo(NOW.minus(SentimentAlertService.DEDUP_WINDOW));
     }
@@ -222,12 +228,74 @@ class SentimentAlertServiceTest {
         when(mentionRepository.countByManagedEntityIdAndPostDateBetween(999L, rollingStart, NOW))
                 .thenThrow(new RuntimeException("boom"));
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(false);
 
         service.scanForSpikes();
 
         verify(alertRepository).save(any(SentimentAlert.class));
+    }
+
+    // ------------------------------------------------------------------
+    // Rule-driven SPIKE thresholds
+    // ------------------------------------------------------------------
+
+    private AlertRule spikeRule(Long userId, double threshold) {
+        return AlertRule.builder()
+                .userId(userId)
+                .entityId(ENTITY_ID)
+                .kind(SentimentAlert.Kind.SPIKE)
+                .threshold(threshold)
+                .enabled(true)
+                .build();
+    }
+
+    @Test
+    void ruleBasedSpikeUsesAbsoluteRiseAndTagsOwner() {
+        // current 0.5, baseline 0.2 -> absolute rise 0.3, which clears the 0.10 rule
+        stubWindowCounts(60, 30, 1000, 200);
+        when(alertRuleRepository.findApplicable(SentimentAlert.Kind.SPIKE, ENTITY_ID))
+                .thenReturn(List.of(spikeRule(7L, 0.10)));
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), eq(7L))).thenReturn(false);
+        org.mockito.ArgumentCaptor<SentimentAlert> captor =
+                org.mockito.ArgumentCaptor.forClass(SentimentAlert.class);
+
+        service.scanForSpikes();
+
+        verify(alertRepository).save(captor.capture());
+        assertThat(captor.getValue().getOwnerUserId()).isEqualTo(7L);
+        assertThat(captor.getValue().getKind()).isEqualTo(SentimentAlert.Kind.SPIKE);
+    }
+
+    @Test
+    void ruleBasedSpikeDoesNotFireWhenRiseBelowThreshold() {
+        // current 0.3, baseline 0.25 -> rise 0.05, below the 0.10 rule threshold
+        stubWindowCounts(1000, 300, 1000, 250);
+        when(alertRuleRepository.findApplicable(SentimentAlert.Kind.SPIKE, ENTITY_ID))
+                .thenReturn(List.of(spikeRule(7L, 0.10)));
+
+        service.scanForSpikes();
+
+        verify(alertRepository, never()).save(any());
+    }
+
+    @Test
+    void collapsesMultipleRulesPerUserToMostSensitiveThreshold() {
+        // current 0.5, baseline 0.2 -> rise 0.3. User 7 has a strict 0.40 rule
+        // (would not fire) and a lenient 0.10 rule (fires) -> exactly one alert.
+        stubWindowCounts(60, 30, 1000, 200);
+        AlertRule strict = spikeRule(7L, 0.40);
+        AlertRule lenient = spikeRule(7L, 0.10);
+        lenient.setEntityId(null); // wildcard rule for the same user
+        when(alertRuleRepository.findApplicable(SentimentAlert.Kind.SPIKE, ENTITY_ID))
+                .thenReturn(List.of(strict, lenient));
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), eq(7L))).thenReturn(false);
+
+        service.scanForSpikes();
+
+        verify(alertRepository, times(1)).save(any(SentimentAlert.class));
     }
 
     // ------------------------------------------------------------------
@@ -271,8 +339,8 @@ class SentimentAlertServiceTest {
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
         spreaderLookup.put("comedy", Set.of("alice", "bob"));
-        when(alertRepository.existsByKindAndSourceMentionId(
-                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L)).thenReturn(false);
+        when(alertRepository.existsByKindAndSourceMentionIdForOwner(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, null)).thenReturn(false);
 
         org.mockito.ArgumentCaptor<SentimentAlert> captor =
                 org.mockito.ArgumentCaptor.forClass(SentimentAlert.class);
@@ -288,6 +356,35 @@ class SentimentAlertServiceTest {
         assertThat(saved.getMatchedAuthor()).isEqualTo("alice");
         assertThat(saved.getPermalink()).isEqualTo("https://x.com/alice/1");
         assertThat(saved.getTriggeredAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void influencerRuleTagsOwnerOnAlert() {
+        stubInitialWatermark(100L);
+        ManagedEntity entity = entityWithKeywords(ENTITY_ID, "comedy");
+        Mention m = mention(101L, entity, "alice", "https://x.com/alice/1", Sentiment.NEGATIVE);
+
+        when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
+                .thenReturn(List.of(m));
+        spreaderLookup.put("comedy", Set.of("alice"));
+        AlertRule rule = AlertRule.builder()
+                .userId(9L)
+                .entityId(ENTITY_ID)
+                .kind(SentimentAlert.Kind.INFLUENCER_NEGATIVE)
+                .enabled(true)
+                .build();
+        when(alertRuleRepository.findApplicable(SentimentAlert.Kind.INFLUENCER_NEGATIVE, ENTITY_ID))
+                .thenReturn(List.of(rule));
+        when(alertRepository.existsByKindAndSourceMentionIdForOwner(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, 9L)).thenReturn(false);
+        org.mockito.ArgumentCaptor<SentimentAlert> captor =
+                org.mockito.ArgumentCaptor.forClass(SentimentAlert.class);
+
+        service.scanForInfluencerNegatives();
+
+        verify(alertRepository).save(captor.capture());
+        assertThat(captor.getValue().getOwnerUserId()).isEqualTo(9L);
+        assertThat(captor.getValue().getSourceMentionId()).isEqualTo(101L);
     }
 
     @Test
@@ -355,8 +452,8 @@ class SentimentAlertServiceTest {
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
         spreaderLookup.put("comedy", Set.of("alice"));
-        when(alertRepository.existsByKindAndSourceMentionId(
-                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L)).thenReturn(true);
+        when(alertRepository.existsByKindAndSourceMentionIdForOwner(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, null)).thenReturn(true);
 
         service.scanForInfluencerNegatives();
 
@@ -416,8 +513,8 @@ class SentimentAlertServiceTest {
     @Test
     void dispatchesSpikeAlertAfterPersistence() {
         stubWindowCounts(60, 30, 1000, 200);
-        when(alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any())).thenReturn(false);
+        when(alertRepository.existsRecentOpenForOwner(
+                eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(), isNull())).thenReturn(false);
         when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.scanForSpikes();

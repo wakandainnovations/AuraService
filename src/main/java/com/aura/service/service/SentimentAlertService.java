@@ -1,11 +1,13 @@
 package com.aura.service.service;
 
 import com.aura.service.alert.AlertDispatcher;
+import com.aura.service.entity.AlertRule;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.AlertRuleRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.SentimentAlertRepository;
@@ -18,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Slf4j
@@ -35,6 +39,7 @@ public class SentimentAlertService {
     private final ManagedEntityRepository entityRepository;
     private final MentionRepository mentionRepository;
     private final SentimentAlertRepository alertRepository;
+    private final AlertRuleRepository alertRuleRepository;
     private final TopSpreaderLookupService spreaderLookup;
     private final AlertDispatcher alertDispatcher;
     private final Clock clock;
@@ -67,19 +72,47 @@ public class SentimentAlertService {
 
         double currentRatio = (double) negative / total;
         double baselineRatio = computeBaselineRatio(entityId, now);
-        if (baselineRatio <= 0.0 || currentRatio <= baselineRatio * SPIKE_MULTIPLIER) {
+        if (baselineRatio <= 0.0) {
             return;
         }
 
         Instant dedupAfter = now.minus(DEDUP_WINDOW);
-        boolean recentOpenAlertExists = alertRepository.existsByManagedEntityIdAndStatusAndTriggeredAtAfter(
-                entityId, SentimentAlert.Status.OPEN, dedupAfter);
-        if (recentOpenAlertExists) {
+        List<AlertRule> rules = alertRuleRepository.findApplicable(SentimentAlert.Kind.SPIKE, entityId);
+
+        if (rules.isEmpty()) {
+            // No user rule: fall back to the default multiplier threshold and
+            // raise an un-owned alert, preserving the original behaviour.
+            if (currentRatio > baselineRatio * SPIKE_MULTIPLIER) {
+                maybeCreateSpikeAlert(entityId, null, currentRatio, baselineRatio, now, dedupAfter);
+            }
             return;
         }
 
+        // A user may have both an entity-specific and a wildcard rule; collapse
+        // to the most sensitive (lowest) rise threshold per user so each owner
+        // gets at most one alert.
+        Map<Long, Double> riseByUser = new LinkedHashMap<>();
+        for (AlertRule rule : rules) {
+            riseByUser.merge(rule.getUserId(), rule.getThreshold(), Math::min);
+        }
+        for (Map.Entry<Long, Double> entry : riseByUser.entrySet()) {
+            // threshold = minimum absolute rise in negative-sentiment ratio over baseline
+            if (currentRatio - baselineRatio >= entry.getValue()) {
+                maybeCreateSpikeAlert(entityId, entry.getKey(), currentRatio, baselineRatio, now, dedupAfter);
+            }
+        }
+    }
+
+    private void maybeCreateSpikeAlert(Long entityId, Long ownerUserId,
+                                       double currentRatio, double baselineRatio,
+                                       Instant now, Instant dedupAfter) {
+        if (alertRepository.existsRecentOpenForOwner(
+                entityId, SentimentAlert.Status.OPEN, dedupAfter, ownerUserId)) {
+            return;
+        }
         SentimentAlert alert = SentimentAlert.builder()
                 .managedEntityId(entityId)
+                .ownerUserId(ownerUserId)
                 .triggeredAt(now)
                 .kind(SentimentAlert.Kind.SPIKE)
                 .currentValue(currentRatio)
@@ -87,8 +120,8 @@ public class SentimentAlertService {
                 .status(SentimentAlert.Status.OPEN)
                 .build();
         SentimentAlert saved = alertRepository.save(alert);
-        log.info("Created SPIKE alert for entity {} (current={}, baseline={})",
-                entityId, currentRatio, baselineRatio);
+        log.info("Created SPIKE alert for entity {} owner {} (current={}, baseline={})",
+                entityId, ownerUserId, currentRatio, baselineRatio);
         alertDispatcher.dispatch(saved);
     }
 
@@ -146,13 +179,27 @@ public class SentimentAlertService {
             return;
         }
 
-        if (alertRepository.existsByKindAndSourceMentionId(
-                SentimentAlert.Kind.INFLUENCER_NEGATIVE, mention.getId())) {
+        List<AlertRule> rules = alertRuleRepository.findApplicable(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, entity.getId());
+        if (rules.isEmpty()) {
+            // No user rule: fall back to a single un-owned alert (original behaviour).
+            maybeCreateInfluencerAlert(entity.getId(), null, mention, author);
             return;
         }
+        rules.stream()
+                .map(AlertRule::getUserId)
+                .distinct()
+                .forEach(ownerUserId -> maybeCreateInfluencerAlert(entity.getId(), ownerUserId, mention, author));
+    }
 
+    private void maybeCreateInfluencerAlert(Long entityId, Long ownerUserId, Mention mention, String author) {
+        if (alertRepository.existsByKindAndSourceMentionIdForOwner(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, mention.getId(), ownerUserId)) {
+            return;
+        }
         SentimentAlert alert = SentimentAlert.builder()
-                .managedEntityId(entity.getId())
+                .managedEntityId(entityId)
+                .ownerUserId(ownerUserId)
                 .triggeredAt(clock.instant())
                 .kind(SentimentAlert.Kind.INFLUENCER_NEGATIVE)
                 .currentValue(0.0)
@@ -163,8 +210,8 @@ public class SentimentAlertService {
                 .permalink(mention.getPermalink())
                 .build();
         SentimentAlert saved = alertRepository.save(alert);
-        log.info("Created INFLUENCER_NEGATIVE alert for entity {} mention {} author {}",
-                entity.getId(), mention.getId(), author);
+        log.info("Created INFLUENCER_NEGATIVE alert for entity {} mention {} author {} owner {}",
+                entityId, mention.getId(), author, ownerUserId);
         alertDispatcher.dispatch(saved);
     }
 

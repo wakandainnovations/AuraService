@@ -104,6 +104,7 @@ public class AlertService {
         AlertResponse r = new AlertResponse();
         r.setId(a.getId());
         r.setManagedEntityId(a.getManagedEntityId());
+        r.setOwnerUserId(a.getOwnerUserId());
         r.setEntityName(entityName);
         r.setKind(a.getKind());
         r.setStatus(a.getStatus());

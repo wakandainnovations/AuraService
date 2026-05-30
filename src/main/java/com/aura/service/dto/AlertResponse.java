@@ -13,6 +13,7 @@ import java.time.Instant;
 public class AlertResponse {
     private Long id;
     private Long managedEntityId;
+    private Long ownerUserId;
     private String entityName;
     private SentimentAlert.Kind kind;
     private SentimentAlert.Status status;

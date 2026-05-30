@@ -1943,8 +1943,8 @@ GET /api/analytics/11
 
 Sentiment alerts are produced by `SentimentAlertService`, which runs two background detectors:
 
-- **`SPIKE`** — every 5 minutes, scans each managed entity's rolling 60-minute window. Fires when the negative-sentiment ratio exceeds 1.5x the 7-day baseline (with a 10-mention minimum and a 30-minute dedup window).
-- **`INFLUENCER_NEGATIVE`** — every 1 minute, picks up newly inserted `NEGATIVE` mentions (id-based watermark, bulk-insert friendly) whose author appears in the top-50 spreader list for any of the managed entity's keywords. Spreader lookups are cached for 10 minutes per keyword.
+- **`SPIKE`** — every 5 minutes, scans each managed entity's rolling 60-minute window (10-mention minimum, 30-minute dedup window). Per-user [alert rules](#alert-rules-apis) drive the threshold: a rule fires when the negative-sentiment ratio rises by at least `threshold` over the 7-day baseline (e.g. `0.10`), and the resulting alert is tagged with the owning user (`ownerUserId`). When no rule applies to an entity, it falls back to the default behavior — fire when the ratio exceeds 1.5x the baseline — and the alert is left un-owned (`ownerUserId: null`).
+- **`INFLUENCER_NEGATIVE`** — every 1 minute, picks up newly inserted `NEGATIVE` mentions (id-based watermark, bulk-insert friendly) whose author appears in the top-50 spreader list for any of the managed entity's keywords. Spreader lookups are cached for 10 minutes per keyword. If users have `INFLUENCER_NEGATIVE` [alert rules](#alert-rules-apis) for the entity, one owned alert is raised per such user; otherwise a single un-owned alert is raised.
 
 After an alert is persisted, `AlertDispatcher` fans it out to two async channels (failures are caught and logged — they do not block alert persistence):
 
@@ -2008,6 +2008,7 @@ Content-Type: application/json
 {
   "id": 43,
   "managedEntityId": 1,
+  "ownerUserId": null,
   "entityName": "The Quantum Paradox",
   "kind": "SPIKE",
   "status": "OPEN",
@@ -2061,6 +2062,7 @@ GET /api/alerts?entityId=1&status=OPEN&page=0&size=20
     {
       "id": 42,
       "managedEntityId": 1,
+      "ownerUserId": 7,
       "entityName": "The Quantum Paradox",
       "kind": "INFLUENCER_NEGATIVE",
       "status": "OPEN",
@@ -2080,6 +2082,7 @@ GET /api/alerts?entityId=1&status=OPEN&page=0&size=20
     {
       "id": 41,
       "managedEntityId": 1,
+      "ownerUserId": null,
       "entityName": "The Quantum Paradox",
       "kind": "SPIKE",
       "status": "OPEN",
@@ -2112,6 +2115,7 @@ GET /api/alerts?entityId=1&status=OPEN&page=0&size=20
 **Field Notes:**
 - `kind` is one of `SPIKE`, `INFLUENCER_NEGATIVE`.
 - `status` is one of `OPEN`, `ACKED`, `DISMISSED`.
+- `ownerUserId` is the user whose [alert rule](#alert-rules-apis) triggered the alert, or `null` for alerts raised by the default fallback thresholds (no matching rule). Manually-created alerts are un-owned (`null`).
 - `currentValue` / `baselineValue` are the rolling and 7-day negative-sentiment ratios for `SPIKE` alerts; both are `0.0` for `INFLUENCER_NEGATIVE`.
 - `sourceMentionId`, `matchedAuthor`, `permalink` are populated for `INFLUENCER_NEGATIVE` and `null` for `SPIKE`.
 - `reason` is a server-rendered, 1-line human-readable summary suitable for direct display.
@@ -2271,6 +2275,173 @@ Content-Type: application/json
   "permalink": "https://x.com/alice/status/9123"
 }
 ```
+
+---
+
+## Alert Rules APIs
+
+Alert rules let each user own how sentiment alerts fire for them — e.g. *"alert me when competitor X's negative sentiment rises by more than 0.10"*. The background detectors in [Alerts APIs](#alerts-apis) load these rules per user and fall back to built-in defaults when no rule applies.
+
+An `AlertRule` has:
+
+- `userId` — the owning user. Always derived from the authenticated principal; never accepted in the request body. A user can only see and modify their own rules.
+- `entityId` — the managed entity the rule targets, or `null` for a **wildcard** rule that applies to every entity the user watches.
+- `kind` — `SPIKE` or `INFLUENCER_NEGATIVE`.
+- `threshold` — for `SPIKE`, the minimum absolute rise in negative-sentiment ratio over the 7-day baseline that triggers an alert (e.g. `0.10`). Ignored for `INFLUENCER_NEGATIVE`, which is presence-based.
+- `channels` — list of delivery channel hints (e.g. `["EMAIL", "WEBHOOK"]`). Persisted and returned as-is; channel-aware dispatch is not yet wired in (`AlertDispatcher` currently fans every alert out to email and webhook).
+- `enabled` — when `false`, the rule is stored but ignored by the detectors.
+
+When multiple of a user's rules match the same entity (e.g. an entity-specific rule plus a wildcard rule), the detector uses the most sensitive (lowest) `threshold`, so each user receives at most one alert per entity per dedup window. Alerts produced from a rule are tagged with `ownerUserId`; default-fallback alerts (no matching rule) are left un-owned.
+
+All routes are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+
+### 31a. List Alert Rules
+
+**Endpoint:** `GET /api/alert-rules`
+
+**Description:** List all alert rules owned by the authenticated user.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 5,
+    "userId": 7,
+    "entityId": 1,
+    "kind": "SPIKE",
+    "threshold": 0.10,
+    "channels": ["EMAIL", "WEBHOOK"],
+    "enabled": true
+  },
+  {
+    "id": 6,
+    "userId": 7,
+    "entityId": null,
+    "kind": "INFLUENCER_NEGATIVE",
+    "threshold": 0.0,
+    "channels": ["WEBHOOK"],
+    "enabled": true
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 31b. Get Alert Rule
+
+**Endpoint:** `GET /api/alert-rules/{id}`
+
+**Description:** Fetch a single alert rule by id. Only the owner can read it.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Alert rule ID
+
+**Response:** Same shape as a single element above.
+
+**Status Codes:**
+- `200 OK` — Rule found.
+- `404 Not Found` — No rule with that id owned by the calling user.
+
+---
+
+### 31c. Create Alert Rule
+
+**Endpoint:** `POST /api/alert-rules`
+
+**Description:** Create an alert rule owned by the authenticated user.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "entityId": 1,
+  "kind": "SPIKE",
+  "threshold": 0.10,
+  "channels": ["EMAIL", "WEBHOOK"],
+  "enabled": true
+}
+```
+
+**Validation:**
+- `kind` — required; one of `SPIKE`, `INFLUENCER_NEGATIVE`.
+- `threshold` — must be zero or positive.
+- `entityId` — optional; omit (or `null`) for a wildcard rule. When provided, it must reference an existing managed entity, otherwise `400 Bad Request`.
+- `channels` — optional; defaults to an empty list.
+- `enabled` — optional; defaults to `true`.
+
+**Response:** The created rule (same shape as a list element), including its assigned `id` and the resolved `userId`.
+
+**Status Codes:**
+- `201 Created` — Rule created.
+- `400 Bad Request` — Validation failure (e.g. missing `kind`, negative `threshold`, unknown `entityId`).
+
+---
+
+### 31d. Update Alert Rule
+
+**Endpoint:** `PUT /api/alert-rules/{id}`
+
+**Description:** Replace the fields of an existing rule owned by the authenticated user. The body is the same as create; `userId` is never changed.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Alert rule ID
+
+**Request Body:** Same shape as [Create Alert Rule](#31c-create-alert-rule).
+
+**Response:** The updated rule.
+
+**Status Codes:**
+- `200 OK` — Rule updated.
+- `400 Bad Request` — Validation failure (e.g. unknown `entityId`).
+- `404 Not Found` — No rule with that id owned by the calling user.
+
+---
+
+### 31e. Delete Alert Rule
+
+**Endpoint:** `DELETE /api/alert-rules/{id}`
+
+**Description:** Delete a rule owned by the authenticated user. Once deleted, the affected entity falls back to default thresholds (or another of the user's matching rules).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Alert rule ID
+
+**Example:**
+```
+DELETE /api/alert-rules/5
+```
+
+**Status Codes:**
+- `204 No Content` — Rule deleted.
+- `404 Not Found` — No rule with that id owned by the calling user.
 
 ---
 
