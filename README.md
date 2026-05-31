@@ -1794,7 +1794,7 @@ A `CrisisPlan` exposed through these endpoints has:
 - `title` — short, editable label for the playbook (set/edited via update; `null` until named).
 - `planText` — the plan body, AI-drafted on escalation and freely editable afterwards.
 - `tags` — list of free-text tags for filtering the library (e.g. `launch`, `review-bomb`, `legal`).
-- `isFavorite` — whether the playbook is pinned as a favorite. Serialized as `favorite` in JSON.
+- `isFavorite` — whether the playbook is pinned as a favorite.
 - `createdBy` — the user who created (or cloned) the plan.
 - `createdAt` — server timestamp when the plan was created.
 
@@ -1831,7 +1831,7 @@ GET /api/playbooks?entityId=1&tag=review-bomb&favorite=true
     "title": "Review-bomb response (playbook)",
     "planText": "Immediate Response (0 to 4 Hours): ...",
     "tags": ["review-bomb", "launch"],
-    "favorite": true,
+    "isFavorite": true,
     "createdBy": 4,
     "createdAt": "2026-05-21T11:00:00Z"
   }

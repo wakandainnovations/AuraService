@@ -86,7 +86,7 @@ class PlaybookControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(1))
                 .andExpect(jsonPath("$[0].tags[0]").value("review"))
-                .andExpect(jsonPath("$[0].favorite").value(true));
+                .andExpect(jsonPath("$[0].isFavorite").value(true));
     }
 
     @Test
@@ -99,7 +99,7 @@ class PlaybookControllerTest {
                         .content("{\"title\":\"Renamed\",\"isFavorite\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("Renamed"))
-                .andExpect(jsonPath("$.favorite").value(false));
+                .andExpect(jsonPath("$.isFavorite").value(false));
     }
 
     @Test
@@ -118,7 +118,7 @@ class PlaybookControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.title").value("Copy of Negative review surge"))
                 .andExpect(jsonPath("$.createdBy").value(7))
-                .andExpect(jsonPath("$.favorite").value(false));
+                .andExpect(jsonPath("$.isFavorite").value(false));
     }
 
     @Test
