@@ -1913,15 +1913,16 @@ Content-Type: application/json
 
 ## Mention Action APIs
 
-Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. All endpoints are mounted under `/api/mentions/{mentionId}/actions` and are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. Most endpoints are mounted under `/api/mentions/{mentionId}/actions`; **Report abuse** is a sibling route at `/api/mentions/{mentionId}/report-abuse`. All are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
 - **List actions** returns every `ReplyDraft`, `CrisisPlan`, and mobilize call ever recorded for the mention, with the actor's username on every row, sorted newest first. Used by the UI to show "you already drafted a reply 2h ago" so users don't double-act.
 - **Draft reply** generates a reply via `LLMService.generateReply` (entity name + mention content + sentiment) and persists a `ReplyDraft` row (`status=DRAFT`). Outer quotes from the LLM output are stripped to match the existing `/api/interact/generate-reply` behavior.
 - **Post reply** loads a previously created draft, calls `SocialMediaService.postReply(platform, postId, text)` against the mention's source platform and post id, and flips the draft to `status=POSTED` with `postedAt` set to the server time.
 - **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
 - **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes. Every call (including cache hits) persists a `MobilizeAction` row attributed to the calling user so the action log can show prior mobilize attempts.
+- **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The `externalRef` is left `null` until the report is forwarded to an external moderation system.
 
-Every action response includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch.
+Every action response except **Report abuse** includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch; Report abuse returns the persisted `AbuseReport` directly.
 
 ### 22. List Mention Actions
 
@@ -2222,6 +2223,63 @@ POST /api/mentions/9123/actions/mobilize-allies
 
 **Status Codes:**
 - `200 OK` — Allies returned (possibly empty).
+- `404 Not Found` — No mention with the given id.
+
+---
+
+### 26a. Report Abuse
+
+**Endpoint:** `POST /api/mentions/{mentionId}/report-abuse`
+
+**Description:** File an abuse complaint against a mention and persist it as an `AbuseReport` row attributed to the calling user. The report is created with `status=SUBMITTED` and `submittedAt` set to the current server time. `externalRef` stays `null` until the report is forwarded to an external moderation system. Returns the persisted `AbuseReport`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID being reported
+
+**Request Body:**
+```json
+{
+  "category": "HARASSMENT",
+  "notes": "Repeated targeted abuse against the entity's staff."
+}
+```
+
+**Request fields:**
+- `category` *(required)* — abuse category. One of `HARASSMENT`, `MISINFORMATION`, `IMPERSONATION`, `OTHER`.
+- `notes` *(optional)* — free-text context for the report.
+
+**Response:**
+```json
+{
+  "id": 4242,
+  "mentionId": 9123,
+  "userId": 55,
+  "category": "HARASSMENT",
+  "notes": "Repeated targeted abuse against the entity's staff.",
+  "status": "SUBMITTED",
+  "externalRef": null,
+  "submittedAt": "2026-05-31T12:00:00Z"
+}
+```
+
+**Response fields:**
+- `id` — server-assigned identifier for the report.
+- `mentionId` — the reported mention.
+- `userId` — the reporting user, derived from the authenticated principal (never accepted in the body).
+- `category` — the submitted abuse category.
+- `notes` — the submitted notes (`null` if omitted).
+- `status` — always `SUBMITTED` on creation.
+- `externalRef` — reference returned by the external moderation system; `null` until forwarded.
+- `submittedAt` — server timestamp when the report was filed.
+
+**Status Codes:**
+- `200 OK` — Report filed and persisted.
+- `400 Bad Request` — `category` is missing or not a valid value.
 - `404 Not Found` — No mention with the given id.
 
 ---
