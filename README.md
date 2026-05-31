@@ -2789,6 +2789,108 @@ DELETE /api/alert-rules/5
 
 ---
 
+## Workspace APIs
+
+Backup and restore the authenticated user's entire workspace — their reply templates, alert rules, playbooks, and tracked entities — as a single document.
+
+> **Format is intentionally proprietary.** Export and import speak one Aura-specific JSON shape (`format: "aura-workspace-export"`). There is deliberately **no** per-resource CSV or other interoperable export: backing up and restoring within Aura is one request, but extracting individual resources for migration to another tool is not supported. This "easy backup, hard exit" shape is a product retention decision, not a technical limitation — **flagged for product review** (see `WorkspaceController`).
+
+All routes are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+
+### 31f. Export Workspace
+
+**Endpoint:** `GET /api/workspace/export`
+
+**Description:** Returns a single JSON bundle of everything the authenticated user owns: reply templates, alert rules, playbooks (crisis plans they created), and tracked entities (the entities they've viewed, with last-seen timestamps). The response is sent with `Content-Disposition: attachment; filename="aura-workspace.json"` so browsers save it as a backup file.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+{
+  "format": "aura-workspace-export",
+  "version": 1,
+  "exportedAt": "2026-05-31T12:00:00Z",
+  "owner": "alice",
+  "templates": [
+    {
+      "name": "Calm apology",
+      "body": "Thanks for flagging this — we're on it.",
+      "tone": "empathetic",
+      "useCount": 12,
+      "createdAt": "2026-05-01T09:30:00Z"
+    }
+  ],
+  "alertRules": [
+    {
+      "entityId": 1,
+      "kind": "SPIKE",
+      "threshold": 0.10,
+      "channels": ["EMAIL", "WEBHOOK"],
+      "enabled": true
+    }
+  ],
+  "playbooks": [
+    {
+      "entityId": 1,
+      "mentionId": 42,
+      "title": "Trailer backlash response",
+      "planText": "Step 1 ...",
+      "tags": ["launch", "pr"],
+      "isFavorite": true,
+      "createdAt": "2026-05-10T15:00:00Z"
+    }
+  ],
+  "trackedEntities": [
+    {
+      "entityId": 1,
+      "lastSeenAt": "2026-05-30T18:45:00Z"
+    }
+  ]
+}
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 31g. Import Workspace
+
+**Endpoint:** `POST /api/workspace/import`
+
+**Description:** Restores a previously exported bundle into the authenticated user's account. The body must be a document produced by `GET /api/workspace/export` (same `format` and `version`).
+
+Import is **additive** and never deletes existing data:
+- **Templates, alert rules, playbooks** are recreated as new rows owned by the calling user. Re-importing the same bundle duplicates them. Server-assigned IDs and ownership in the file are ignored — ownership is always the authenticated user.
+- **Tracked entities** are upserted by `entityId` (the user's last-seen timestamp for that entity is created or updated).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:** A `aura-workspace-export` document (see the export response above).
+
+**Response:**
+```json
+{
+  "templatesImported": 1,
+  "alertRulesImported": 1,
+  "playbooksImported": 1,
+  "trackedEntitiesImported": 1
+}
+```
+
+**Status Codes:**
+- `200 OK` — Bundle restored; counts reflect what was imported.
+- `400 Bad Request` — Missing body, or `format`/`version` does not match the proprietary Aura format.
+
+---
+
 ## Marketing Aggregation APIs
 
 The marketing aggregation APIs aggregate data from the upstream AuraMath service across all keywords matching a set of filters. Instead of querying per keyword, these endpoints let you query by **language** (e.g., Tamil, Telugu), **industry** (e.g., Tollywood, Kollywood), **genre** (e.g., action, drama), **state**, or **entity ID** and get a unified, deduplicated result.
