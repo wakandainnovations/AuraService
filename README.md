@@ -1920,7 +1920,7 @@ Per-mention actions that wrap the LLM and social-media services into auditable, 
 - **Post reply** loads a previously created draft, calls `SocialMediaService.postReply(platform, postId, text)` against the mention's source platform and post id, and flips the draft to `status=POSTED` with `postedAt` set to the server time.
 - **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
 - **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes. Every call (including cache hits) persists a `MobilizeAction` row attributed to the calling user so the action log can show prior mobilize attempts.
-- **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The `externalRef` is left `null` until the report is forwarded to an external moderation system.
+- **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The report is then forwarded to a per-platform moderation strategy (`AbuseReportDispatcher`) chosen from the mention's platform (X, Reddit, YouTube, Instagram); the strategy returns an external ticket reference that is stamped onto `externalRef`. Platform strategies are stubs today (they log and return a fake ticket id) — the real platform APIs (Reddit `/api/report`, X media moderation endpoints, etc.) are plugged into those strategies later.
 
 Every action response except **Report abuse** includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch; Report abuse returns the persisted `AbuseReport` directly.
 
@@ -2231,7 +2231,7 @@ POST /api/mentions/9123/actions/mobilize-allies
 
 **Endpoint:** `POST /api/mentions/{mentionId}/report-abuse`
 
-**Description:** File an abuse complaint against a mention and persist it as an `AbuseReport` row attributed to the calling user. The report is created with `status=SUBMITTED` and `submittedAt` set to the current server time. `externalRef` stays `null` until the report is forwarded to an external moderation system. Returns the persisted `AbuseReport`.
+**Description:** File an abuse complaint against a mention and persist it as an `AbuseReport` row attributed to the calling user. The report is created with `status=SUBMITTED` and `submittedAt` set to the current server time. It is then forwarded to the platform-specific moderation strategy for the mention's platform, which returns an external ticket reference stored in `externalRef`. (Strategies are stubs today and return a fake ticket id; if no strategy is registered for the platform, `externalRef` stays `null`.) Returns the persisted `AbuseReport`.
 
 **Headers:**
 ```
@@ -2262,7 +2262,7 @@ Authorization: Bearer {jwt_token}
   "category": "HARASSMENT",
   "notes": "Repeated targeted abuse against the entity's staff.",
   "status": "SUBMITTED",
-  "externalRef": null,
+  "externalRef": "x-mod-4242",
   "submittedAt": "2026-05-31T12:00:00Z"
 }
 ```
@@ -2274,7 +2274,7 @@ Authorization: Bearer {jwt_token}
 - `category` — the submitted abuse category.
 - `notes` — the submitted notes (`null` if omitted).
 - `status` — always `SUBMITTED` on creation.
-- `externalRef` — reference returned by the external moderation system; `null` until forwarded.
+- `externalRef` — external ticket reference returned by the platform moderation strategy on submission; `null` only when no strategy is registered for the mention's platform.
 - `submittedAt` — server timestamp when the report was filed.
 
 **Status Codes:**

@@ -1,7 +1,9 @@
 package com.aura.service.service;
 
+import com.aura.service.abuse.AbuseReportDispatcher;
 import com.aura.service.dto.ReportAbuseRequest;
 import com.aura.service.entity.AbuseReport;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.MentionRepository;
@@ -20,11 +22,13 @@ public class AbuseReportService {
     private final AbuseReportRepository abuseReportRepository;
     private final MentionRepository mentionRepository;
     private final UserRepository userRepository;
+    private final AbuseReportDispatcher abuseReportDispatcher;
     private final Clock clock;
 
     @Transactional
     public Optional<AbuseReport> report(Long mentionId, ReportAbuseRequest request, String username) {
-        if (!mentionRepository.existsById(mentionId)) {
+        Optional<Mention> mention = mentionRepository.findById(mentionId);
+        if (mention.isEmpty()) {
             return Optional.empty();
         }
 
@@ -39,7 +43,16 @@ public class AbuseReportService {
                 .submittedAt(clock.instant())
                 .build();
 
-        return Optional.of(abuseReportRepository.save(report));
+        report = abuseReportRepository.save(report);
+
+        // Forward to the platform-specific moderation backend; the returned ticket reference
+        // is persisted via dirty checking on the managed entity within this transaction.
+        String externalRef = abuseReportDispatcher.dispatch(report, mention.get());
+        if (externalRef != null) {
+            report.setExternalRef(externalRef);
+        }
+
+        return Optional.of(report);
     }
 
     private Long resolveUserId(String username) {

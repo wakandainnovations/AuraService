@@ -1,7 +1,14 @@
 package com.aura.service.controller;
 
+import com.aura.service.abuse.AbuseReportDispatcher;
+import com.aura.service.abuse.InstagramAbuseReportStrategy;
+import com.aura.service.abuse.RedditAbuseReportStrategy;
+import com.aura.service.abuse.XAbuseReportStrategy;
+import com.aura.service.abuse.YoutubeAbuseReportStrategy;
 import com.aura.service.entity.AbuseReport;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
+import com.aura.service.enums.Platform;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserRepository;
@@ -21,6 +28,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -54,10 +62,17 @@ class MentionAbuseReportControllerTest {
         userRepository = mock(UserRepository.class);
         abuseReportRepository = mock(AbuseReportRepository.class);
 
+        AbuseReportDispatcher dispatcher = new AbuseReportDispatcher(List.of(
+                new XAbuseReportStrategy(),
+                new RedditAbuseReportStrategy(),
+                new YoutubeAbuseReportStrategy(),
+                new InstagramAbuseReportStrategy()
+        ));
         AbuseReportService service = new AbuseReportService(
                 abuseReportRepository,
                 mentionRepository,
                 userRepository,
+                dispatcher,
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
         MentionAbuseReportController controller = new MentionAbuseReportController(service);
@@ -81,7 +96,7 @@ class MentionAbuseReportControllerTest {
 
     @Test
     void reportAbuse_persistsReportAndReturnsIt() throws Exception {
-        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention(Platform.X)));
         when(abuseReportRepository.save(any(AbuseReport.class))).thenAnswer(inv -> {
             AbuseReport r = inv.getArgument(0);
             r.setId(4242L);
@@ -102,7 +117,7 @@ class MentionAbuseReportControllerTest {
                 .andExpect(jsonPath("$.category").value("HARASSMENT"))
                 .andExpect(jsonPath("$.notes").value("repeated targeted abuse"))
                 .andExpect(jsonPath("$.status").value("SUBMITTED"))
-                .andExpect(jsonPath("$.externalRef").doesNotExist())
+                .andExpect(jsonPath("$.externalRef").value("x-mod-4242"))
                 .andExpect(jsonPath("$.submittedAt").exists());
 
         ArgumentCaptor<AbuseReport> captor = ArgumentCaptor.forClass(AbuseReport.class);
@@ -113,14 +128,19 @@ class MentionAbuseReportControllerTest {
         assertThat(saved.getCategory()).isEqualTo(AbuseReport.Category.HARASSMENT);
         assertThat(saved.getNotes()).isEqualTo("repeated targeted abuse");
         assertThat(saved.getStatus()).isEqualTo(AbuseReport.Status.SUBMITTED);
-        assertThat(saved.getExternalRef()).isNull();
         assertThat(saved.getSubmittedAt()).isEqualTo(NOW);
+        // Dispatcher routes by platform and stamps the external ticket reference.
+        assertThat(saved.getExternalRef()).isEqualTo("x-mod-4242");
     }
 
     @Test
     void reportAbuse_persistsReportWithoutNotes() throws Exception {
-        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
-        when(abuseReportRepository.save(any(AbuseReport.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention(Platform.REDDIT)));
+        when(abuseReportRepository.save(any(AbuseReport.class))).thenAnswer(inv -> {
+            AbuseReport r = inv.getArgument(0);
+            r.setId(77L);
+            return r;
+        });
 
         String body = mapper.writeValueAsString(Map.of("category", "IMPERSONATION"));
 
@@ -128,7 +148,8 @@ class MentionAbuseReportControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.category").value("IMPERSONATION"));
+                .andExpect(jsonPath("$.category").value("IMPERSONATION"))
+                .andExpect(jsonPath("$.externalRef").value("reddit-rpt-77"));
 
         ArgumentCaptor<AbuseReport> captor = ArgumentCaptor.forClass(AbuseReport.class);
         verify(abuseReportRepository).save(captor.capture());
@@ -137,7 +158,7 @@ class MentionAbuseReportControllerTest {
 
     @Test
     void reportAbuse_returns404WhenMentionMissing() throws Exception {
-        when(mentionRepository.existsById(404L)).thenReturn(false);
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
 
         String body = mapper.writeValueAsString(Map.of("category", "MISINFORMATION"));
 
@@ -159,5 +180,13 @@ class MentionAbuseReportControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(abuseReportRepository, never()).save(any());
+    }
+
+    private static Mention mention(Platform platform) {
+        Mention m = new Mention();
+        m.setId(MENTION_ID);
+        m.setPlatform(platform);
+        m.setPostId("post_" + MENTION_ID);
+        return m;
     }
 }
