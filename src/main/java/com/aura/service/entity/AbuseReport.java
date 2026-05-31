@@ -24,7 +24,9 @@ public class AbuseReport {
     }
 
     public enum Status {
-        SUBMITTED
+        SUBMITTED,
+        UPHELD,
+        REJECTED
     }
 
     @Id
@@ -53,4 +55,8 @@ public class AbuseReport {
 
     @Column(name = "submitted_at", nullable = false)
     private Instant submittedAt;
+
+    /** Set when the moderation backend reaches a terminal {@link Status} (UPHELD/REJECTED). */
+    @Column(name = "resolved_at")
+    private Instant resolvedAt;
 }

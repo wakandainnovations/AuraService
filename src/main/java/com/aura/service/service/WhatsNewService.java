@@ -1,11 +1,13 @@
 package com.aura.service.service;
 
 import com.aura.service.dto.WhatsNewCard;
+import com.aura.service.entity.AbuseReport;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserRepository;
@@ -15,8 +17,10 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
@@ -34,12 +38,14 @@ public class WhatsNewService {
     public static final String KIND_NEW_POSITIVE_SUPER_SPREADER = "NEW_POSITIVE_SUPER_SPREADER";
     public static final String KIND_SENTIMENT_RISE = "SENTIMENT_RISE";
     public static final String KIND_NEGATIVE_SPIKE = "NEGATIVE_SPIKE";
+    public static final String KIND_ABUSE_REPORT_UPHELD = "ABUSE_REPORT_UPHELD";
 
     private final MentionRepository mentionRepository;
     private final ManagedEntityRepository entityRepository;
     private final UserEntityViewService viewService;
     private final TopSpreaderLookupService spreaderLookup;
     private final UserRepository userRepository;
+    private final AbuseReportRepository abuseReportRepository;
     private final Random random;
 
     @Autowired
@@ -47,8 +53,10 @@ public class WhatsNewService {
                            ManagedEntityRepository entityRepository,
                            UserEntityViewService viewService,
                            TopSpreaderLookupService spreaderLookup,
-                           UserRepository userRepository) {
-        this(mentionRepository, entityRepository, viewService, spreaderLookup, userRepository, new Random());
+                           UserRepository userRepository,
+                           AbuseReportRepository abuseReportRepository) {
+        this(mentionRepository, entityRepository, viewService, spreaderLookup, userRepository,
+                abuseReportRepository, new Random());
     }
 
     public WhatsNewService(MentionRepository mentionRepository,
@@ -56,12 +64,14 @@ public class WhatsNewService {
                            UserEntityViewService viewService,
                            TopSpreaderLookupService spreaderLookup,
                            UserRepository userRepository,
+                           AbuseReportRepository abuseReportRepository,
                            Random random) {
         this.mentionRepository = mentionRepository;
         this.entityRepository = entityRepository;
         this.viewService = viewService;
         this.spreaderLookup = spreaderLookup;
         this.userRepository = userRepository;
+        this.abuseReportRepository = abuseReportRepository;
         this.random = random;
     }
 
@@ -91,17 +101,21 @@ public class WhatsNewService {
             return List.of();
         }
 
+        // Tier 0 — the user's own resolved abuse reports ("reward of the self"); always top priority.
+        List<WhatsNewCard> tier0 = abuseReportRewardCards(userId, entityId, lastSeen);
         List<WhatsNewCard> tier1 = competitorDropCards(entity, lastSeen);
         List<WhatsNewCard> tier2 = newPositiveSuperSpreaderCards(entity, lastSeen);
         List<WhatsNewCard> tier3 = sentimentRiseCards(entityId, lastSeen);
         List<WhatsNewCard> tier4 = negativeSpikeCards(entityId, lastSeen);
 
+        Collections.shuffle(tier0, random);
         Collections.shuffle(tier1, random);
         Collections.shuffle(tier2, random);
         Collections.shuffle(tier3, random);
         Collections.shuffle(tier4, random);
 
         List<WhatsNewCard> ordered = new ArrayList<>();
+        ordered.addAll(tier0);
         ordered.addAll(tier1);
         ordered.addAll(tier2);
         ordered.addAll(tier3);
@@ -111,6 +125,37 @@ public class WhatsNewService {
             return ordered;
         }
         return new ArrayList<>(ordered.subList(0, MAX_CARDS));
+    }
+
+    private List<WhatsNewCard> abuseReportRewardCards(Long userId, Long entityId, Instant lastSeen) {
+        List<AbuseReport> upheld = abuseReportRepository.findResolvedForUserAndEntitySince(
+                userId, entityId, AbuseReport.Status.UPHELD, lastSeen);
+        if (upheld.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Long> mentionIds = upheld.stream()
+                .map(AbuseReport::getMentionId)
+                .collect(Collectors.toList());
+        Map<Long, String> authorByMention = new HashMap<>();
+        for (Mention mention : mentionRepository.findAllById(mentionIds)) {
+            authorByMention.put(mention.getId(), mention.getAuthor());
+        }
+        List<WhatsNewCard> cards = new ArrayList<>();
+        for (AbuseReport report : upheld) {
+            String handle = formatHandle(authorByMention.get(report.getMentionId()));
+            String headline = String.format(
+                    "Your report on %s was upheld — post removed.", handle);
+            cards.add(new WhatsNewCard(
+                    KIND_ABUSE_REPORT_UPHELD, headline, null, List.of(report.getMentionId())));
+        }
+        return cards;
+    }
+
+    private static String formatHandle(String author) {
+        if (author == null || author.isBlank()) {
+            return "that account";
+        }
+        return author.startsWith("@") ? author : "@" + author;
     }
 
     private List<WhatsNewCard> competitorDropCards(ManagedEntity entity, Instant lastSeen) {

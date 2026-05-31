@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -53,6 +54,30 @@ public class AbuseReportService {
         }
 
         return Optional.of(report);
+    }
+
+    /**
+     * Reports filed against {@code mentionId}, newest first. Empty {@link Optional} when the mention
+     * does not exist, so the caller can return 404 (mirrors {@link #report}).
+     */
+    @Transactional(readOnly = true)
+    public Optional<List<AbuseReport>> listForMention(Long mentionId) {
+        if (mentionId == null || !mentionRepository.existsById(mentionId)) {
+            return Optional.empty();
+        }
+        return Optional.of(abuseReportRepository.findByMentionIdOrderBySubmittedAtDesc(mentionId));
+    }
+
+    /**
+     * The authenticated user's reports, newest first, optionally filtered to a single {@code status}.
+     */
+    @Transactional(readOnly = true)
+    public List<AbuseReport> listForUser(String username, AbuseReport.Status status) {
+        Long userId = resolveUserId(username);
+        if (status == null) {
+            return abuseReportRepository.findByUserIdOrderBySubmittedAtDesc(userId);
+        }
+        return abuseReportRepository.findByUserIdAndStatusOrderBySubmittedAtDesc(userId, status);
     }
 
     private Long resolveUserId(String username) {

@@ -34,7 +34,7 @@ class DashboardControllerWhatsNewTest {
         private final java.util.Map<String, List<WhatsNewCard>> responses = new java.util.HashMap<>();
 
         StubWhatsNew() {
-            super(null, null, null, null, null);
+            super(null, null, null, null, null, null);
         }
 
         void put(String username, Long entityId, List<WhatsNewCard> cards) {

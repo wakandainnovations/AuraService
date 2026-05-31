@@ -1,10 +1,12 @@
 package com.aura.service.service;
 
 import com.aura.service.dto.WhatsNewCard;
+import com.aura.service.entity.AbuseReport;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserEntityViewRepository;
@@ -22,6 +24,7 @@ import java.util.Random;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +36,7 @@ class WhatsNewServiceTest {
 
     private MentionRepository mentionRepository;
     private ManagedEntityRepository entityRepository;
+    private AbuseReportRepository abuseReportRepository;
     private UserEntityViewService viewService;
     private StubSpreaderLookup spreaderLookup;
     private WhatsNewService service;
@@ -41,14 +45,15 @@ class WhatsNewServiceTest {
     void setUp() {
         mentionRepository = mock(MentionRepository.class);
         entityRepository = mock(ManagedEntityRepository.class);
+        abuseReportRepository = mock(AbuseReportRepository.class);
         UserEntityViewRepository viewRepo = mock(UserEntityViewRepository.class);
         UserRepository userRepo = mock(UserRepository.class);
         viewService = new UserEntityViewService(viewRepo, userRepo,
                 Clock.fixed(Instant.parse("2026-05-23T00:00:00Z"), ZoneOffset.UTC));
         spreaderLookup = new StubSpreaderLookup();
         // Deterministic seed so the shuffles inside the service are repeatable.
-        service = new WhatsNewService(
-                mentionRepository, entityRepository, viewService, spreaderLookup, userRepo, new Random(0L));
+        service = new WhatsNewService(mentionRepository, entityRepository, viewService, spreaderLookup,
+                userRepo, abuseReportRepository, new Random(0L));
 
         when(viewRepo.findLastSeen(USER_ID, ENTITY_ID)).thenReturn(Optional.of(LAST_SEEN));
     }
@@ -120,7 +125,7 @@ class WhatsNewServiceTest {
                 mentionRepository, entityRepository,
                 new UserEntityViewService(emptyViewRepo, mock(UserRepository.class),
                         Clock.fixed(Instant.now(), ZoneOffset.UTC)),
-                spreaderLookup, mock(UserRepository.class), new Random(0L));
+                spreaderLookup, mock(UserRepository.class), abuseReportRepository, new Random(0L));
 
         assertThat(firstVisit.getCards(USER_ID, ENTITY_ID)).isEmpty();
     }
@@ -263,6 +268,39 @@ class WhatsNewServiceTest {
     }
 
     @Test
+    void emitsRewardCardForUpheldAbuseReportAtTopPriority() {
+        ManagedEntity entity = entityWith();
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        // A qualifying sentiment-rise card exists too; the personal reward must still come first.
+        stubScoreCounts(ENTITY_ID, 80, 20, 30, 10);
+        stubNoNewSpreaders(entity);
+        when(mentionRepository.countByManagedEntityIdAndSentimentAndPostDateAfter(
+                ENTITY_ID, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(0L);
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
+                ENTITY_ID, Sentiment.POSITIVE, LAST_SEEN)).thenReturn(List.of(mention(701L)));
+
+        AbuseReport upheld = AbuseReport.builder()
+                .id(900L).mentionId(555L).userId(USER_ID)
+                .status(AbuseReport.Status.UPHELD).build();
+        when(abuseReportRepository.findResolvedForUserAndEntitySince(
+                USER_ID, ENTITY_ID, AbuseReport.Status.UPHELD, LAST_SEEN))
+                .thenReturn(List.of(upheld));
+        Mention reported = mention(555L);
+        reported.setAuthor("troll_account");
+        when(mentionRepository.findAllById(any())).thenReturn(List.of(reported));
+
+        List<WhatsNewCard> cards = service.getCards(USER_ID, ENTITY_ID);
+
+        WhatsNewCard reward = cards.get(0);
+        assertThat(reward.getKind()).isEqualTo(WhatsNewService.KIND_ABUSE_REPORT_UPHELD);
+        assertThat(reward.getHeadline())
+                .isEqualTo("Your report on @troll_account was upheld — post removed.");
+        assertThat(reward.getValue()).isNull();
+        assertThat(reward.getEvidenceMentionIds()).containsExactly(555L);
+    }
+
+    @Test
     void respectsPriorityOrderingAndCapsAtFive() {
         // Build many competitor drops to overflow the cap and verify priority + cap.
         List<ManagedEntity> competitors = new ArrayList<>();
@@ -327,9 +365,9 @@ class WhatsNewServiceTest {
         };
 
         WhatsNewService swapped = new WhatsNewService(mentionRepository, entityRepository,
-                viewService, spreaderLookup, mock(UserRepository.class), alwaysSwap);
+                viewService, spreaderLookup, mock(UserRepository.class), abuseReportRepository, alwaysSwap);
         WhatsNewService unswapped = new WhatsNewService(mentionRepository, entityRepository,
-                viewService, spreaderLookup, mock(UserRepository.class), neverSwap);
+                viewService, spreaderLookup, mock(UserRepository.class), abuseReportRepository, neverSwap);
 
         List<WhatsNewCard> swappedCards = swapped.getCards(USER_ID, ENTITY_ID);
         List<WhatsNewCard> unswappedCards = unswapped.getCards(USER_ID, ENTITY_ID);

@@ -38,6 +38,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -180,6 +181,43 @@ class MentionAbuseReportControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(abuseReportRepository, never()).save(any());
+    }
+
+    @Test
+    void listForMention_returnsReportsNewestFirst() throws Exception {
+        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(abuseReportRepository.findByMentionIdOrderBySubmittedAtDesc(MENTION_ID))
+                .thenReturn(List.of(report(11L, AbuseReport.Status.UPHELD),
+                        report(10L, AbuseReport.Status.SUBMITTED)));
+
+        mvc.perform(get("/api/mentions/{id}/abuse-reports", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(11))
+                .andExpect(jsonPath("$[0].status").value("UPHELD"))
+                .andExpect(jsonPath("$[1].id").value(10))
+                .andExpect(jsonPath("$[1].status").value("SUBMITTED"));
+    }
+
+    @Test
+    void listForMention_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.existsById(404L)).thenReturn(false);
+
+        mvc.perform(get("/api/mentions/{id}/abuse-reports", 404L))
+                .andExpect(status().isNotFound());
+
+        verify(abuseReportRepository, never()).findByMentionIdOrderBySubmittedAtDesc(any());
+    }
+
+    private static AbuseReport report(Long id, AbuseReport.Status status) {
+        return AbuseReport.builder()
+                .id(id)
+                .mentionId(MENTION_ID)
+                .userId(USER_ID)
+                .category(AbuseReport.Category.HARASSMENT)
+                .status(status)
+                .submittedAt(NOW)
+                .build();
     }
 
     private static Mention mention(Platform platform) {
