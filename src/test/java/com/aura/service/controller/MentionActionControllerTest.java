@@ -16,6 +16,7 @@ import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReplyTemplateRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.LLMService;
+import com.aura.service.service.MobilizeAlliesService;
 import com.aura.service.service.ReplyTemplateService;
 import com.aura.service.service.SocialMediaService;
 import com.aura.service.service.TopSpreaderLookupService;
@@ -120,6 +121,10 @@ class MentionActionControllerTest {
         userRepository = mock(UserRepository.class);
         spreaderLookup = new StubSpreaderLookup();
 
+        MobilizeAlliesService mobilizeAlliesService =
+                new MobilizeAlliesService(mentionRepository, spreaderLookup, llmService);
+        ReflectionTestUtils.setField(mobilizeAlliesService, "allyDmPromptTemplate", ALLY_DM_PROMPT_TEMPLATE);
+
         MentionActionController controller = new MentionActionController(
                 llmService,
                 socialMediaService,
@@ -128,12 +133,11 @@ class MentionActionControllerTest {
                 crisisPlanRepository,
                 mobilizeActionRepository,
                 userRepository,
-                spreaderLookup,
+                mobilizeAlliesService,
                 new ReplyTemplateService(mock(ReplyTemplateRepository.class))
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);
-        ReflectionTestUtils.setField(controller, "allyDmPromptTemplate", ALLY_DM_PROMPT_TEMPLATE);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
@@ -635,5 +639,38 @@ class MentionActionControllerTest {
 
         assertThat(spreaderLookup.calls()).isEmpty();
         verify(llmService, never()).generateReply(any());
+    }
+
+    @Test
+    void listActions_warmsAllyCacheSoSubsequentMobilizeIsACacheHit() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
+        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        when(replyDraftRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(crisisPlanRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+        spreaderLookup.put("matrix", List.of(
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1")));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
+                .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
+        when(llmService.generateReply(any())).thenReturn("hi alice");
+
+        // Viewing the mention's action panel warms the (expensive) ally cache in the background.
+        mvc.perform(get("/api/mentions/{id}/actions", MENTION_ID))
+                .andExpect(status().isOk());
+        assertThat(spreaderLookup.calls()).containsExactly("matrix");
+        verify(llmService, org.mockito.Mockito.times(1)).generateReply(any());
+        // Warming must NOT record a user mobilize action.
+        verify(mobilizeActionRepository, never()).save(any(MobilizeAction.class));
+
+        // The subsequent click is served from the warmed cache — no recompute...
+        mvc.perform(post("/api/mentions/{id}/actions/mobilize-allies", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allies[0].globalUserId").value("alice"));
+        assertThat(spreaderLookup.calls()).containsExactly("matrix");
+        verify(llmService, org.mockito.Mockito.times(1)).generateReply(any());
+        // ...but the click itself still records exactly one mobilize action.
+        verify(mobilizeActionRepository, org.mockito.Mockito.times(1)).save(any(MobilizeAction.class));
     }
 }
