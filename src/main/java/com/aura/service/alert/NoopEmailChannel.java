@@ -50,9 +50,17 @@ public class NoopEmailChannel implements EmailChannel {
 
     @Async
     @Override
-    public void sendDigest(User user, String subject, Map<String, WhatsChangedResponse> entries) {
+    public void sendDigest(User user, String subject, Map<String, WhatsChangedResponse> entries,
+                           List<String> impactHighlights) {
         StringBuilder body = new StringBuilder();
         body.append("Morning digest for ").append(user.getUsername()).append("\n\n");
+        if (impactHighlights != null && !impactHighlights.isEmpty()) {
+            body.append("Your impact so far:\n");
+            for (String highlight : impactHighlights) {
+                body.append("  * ").append(highlight).append('\n');
+            }
+            body.append('\n');
+        }
         for (Map.Entry<String, WhatsChangedResponse> entry : entries.entrySet()) {
             WhatsChangedResponse delta = entry.getValue();
             body.append("--- ").append(entry.getKey()).append(" ---\n");

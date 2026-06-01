@@ -26,10 +26,14 @@ public class MorningDigestService {
 
     static final int DIGEST_HOUR = 8;
 
+    /** How many impact highlights to lead the digest with — keep it focused on the top wins. */
+    static final int MAX_IMPACT_HIGHLIGHTS = 3;
+
     private final UserRepository userRepository;
     private final UserEntityViewRepository viewRepository;
     private final ManagedEntityRepository entityRepository;
     private final WhatsChangedService whatsChangedService;
+    private final WorkspaceImpactService workspaceImpactService;
     private final EmailChannel emailChannel;
     private final Clock clock;
 
@@ -82,8 +86,26 @@ public class MorningDigestService {
 
         String headline = pickHeadline(entries);
         String subject = "Your overnight Aura brief: " + headline;
-        emailChannel.sendDigest(user, subject, entries);
+        List<String> impactHighlights = topImpactHighlights(user);
+        emailChannel.sendDigest(user, subject, entries, impactHighlights);
         log.info("Morning digest sent for user {} ({} entities)", user.getUsername(), entries.size());
+    }
+
+    /**
+     * The top few "investment made visible" highlights for the user, or an empty list. Computing
+     * impact must never sink the digest, so any failure here degrades to no highlights.
+     */
+    List<String> topImpactHighlights(User user) {
+        try {
+            List<String> highlights = workspaceImpactService.getImpact(user.getId()).getHighlights();
+            if (highlights == null || highlights.isEmpty()) {
+                return List.of();
+            }
+            return highlights.stream().limit(MAX_IMPACT_HIGHLIGHTS).toList();
+        } catch (Exception e) {
+            log.warn("Could not compute impact highlights for user {}", user.getUsername(), e);
+            return List.of();
+        }
     }
 
     String pickHeadline(Map<String, WhatsChangedResponse> entries) {

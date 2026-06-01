@@ -21,6 +21,12 @@ public interface AbuseReportRepository extends JpaRepository<AbuseReport, Long> 
     /** A user's reports in a given status, newest first. */
     List<AbuseReport> findByUserIdAndStatusOrderBySubmittedAtDesc(Long userId, AbuseReport.Status status);
 
+    /** Total reports a user has filed. */
+    long countByUserId(Long userId);
+
+    /** A user's reports in a given status. */
+    long countByUserIdAndStatus(Long userId, AbuseReport.Status status);
+
     /** Reports still in a given status that were submitted before {@code cutoff} (the review window). */
     List<AbuseReport> findByStatusAndSubmittedAtBefore(AbuseReport.Status status, Instant cutoff);
 

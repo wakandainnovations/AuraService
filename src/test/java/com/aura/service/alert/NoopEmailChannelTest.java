@@ -136,7 +136,7 @@ class NoopEmailChannelTest {
         Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
         entries.put("Galaxy Quest", delta);
 
-        channel.sendDigest(testUser(), "Your overnight Aura brief: Galaxy Quest", entries);
+        channel.sendDigest(testUser(), "Your overnight Aura brief: Galaxy Quest", entries, List.of());
 
         String msg = renderedMessage();
         assertThat(msg).contains("EMAIL DIGEST to=alice");
@@ -146,6 +146,37 @@ class NoopEmailChannelTest {
         assertThat(msg).contains("New mentions    : 12");
         assertThat(msg).contains("New negatives   : 3");
         assertThat(msg).contains("Super-spreaders : 1");
+    }
+
+    @Test
+    void sendDigestRendersImpactHighlights() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+        delta.setNewMentionsCount(5L);
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Galaxy Quest", delta);
+
+        channel.sendDigest(testUser(), "subject", entries,
+                List.of("Your playbook library has handled 12 crises.",
+                        "Your templates have saved you 27 drafts."));
+
+        String msg = renderedMessage();
+        assertThat(msg).contains("Your impact so far:");
+        assertThat(msg).contains("Your playbook library has handled 12 crises.");
+        assertThat(msg).contains("Your templates have saved you 27 drafts.");
+    }
+
+    @Test
+    void sendDigestOmitsImpactBlockWhenNoHighlights() {
+        WhatsChangedResponse delta = new WhatsChangedResponse();
+        delta.setNewMentionsCount(5L);
+
+        Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
+        entries.put("Galaxy Quest", delta);
+
+        channel.sendDigest(testUser(), "subject", entries, List.of());
+
+        assertThat(renderedMessage()).doesNotContain("Your impact so far:");
     }
 
     @Test
@@ -160,7 +191,7 @@ class NoopEmailChannelTest {
         Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
         entries.put("My Film", delta);
 
-        channel.sendDigest(testUser(), "subject", entries);
+        channel.sendDigest(testUser(), "subject", entries, List.of());
 
         String msg = renderedMessage();
         assertThat(msg).contains("Competitors");
@@ -174,7 +205,7 @@ class NoopEmailChannelTest {
         Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
         entries.put("Entity", delta);
 
-        channel.sendDigest(testUser(), "subject", entries);
+        channel.sendDigest(testUser(), "subject", entries, List.of());
 
         String msg = renderedMessage();
         assertThat(msg).contains("Sentiment delta : 0");
@@ -195,7 +226,7 @@ class NoopEmailChannelTest {
         entries.put("Entity A", delta1);
         entries.put("Entity B", delta2);
 
-        channel.sendDigest(testUser(), "subject", entries);
+        channel.sendDigest(testUser(), "subject", entries, List.of());
 
         String msg = renderedMessage();
         assertThat(msg).contains("--- Entity A ---");
@@ -213,7 +244,7 @@ class NoopEmailChannelTest {
         Map<String, WhatsChangedResponse> entries = new LinkedHashMap<>();
         entries.put("Happy Brand", delta);
 
-        channel.sendDigest(testUser(), "subject", entries);
+        channel.sendDigest(testUser(), "subject", entries, List.of());
 
         String msg = renderedMessage();
         assertThat(msg).contains("Sentiment delta : +1.50");

@@ -2,6 +2,7 @@ package com.aura.service.service;
 
 import com.aura.service.alert.EmailChannel;
 import com.aura.service.dto.WhatsChangedResponse;
+import com.aura.service.dto.WorkspaceImpactResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.entity.User;
@@ -33,6 +34,7 @@ class MorningDigestServiceTest {
     private UserEntityViewRepository viewRepository;
     private ManagedEntityRepository entityRepository;
     private StubWhatsChangedService whatsChangedService;
+    private StubWorkspaceImpactService workspaceImpactService;
     private RecordingEmailChannel emailChannel;
 
     @BeforeEach
@@ -41,6 +43,7 @@ class MorningDigestServiceTest {
         viewRepository = mock(UserEntityViewRepository.class);
         entityRepository = mock(ManagedEntityRepository.class);
         whatsChangedService = new StubWhatsChangedService();
+        workspaceImpactService = new StubWorkspaceImpactService();
         emailChannel = new RecordingEmailChannel();
     }
 
@@ -48,7 +51,7 @@ class MorningDigestServiceTest {
         Clock clock = Clock.fixed(Instant.parse(instant), ZoneOffset.UTC);
         return new MorningDigestService(
                 userRepository, viewRepository, entityRepository,
-                whatsChangedService, emailChannel, clock);
+                whatsChangedService, workspaceImpactService, emailChannel, clock);
     }
 
     @Test
@@ -398,6 +401,42 @@ class MorningDigestServiceTest {
         assertThat(emailChannel.calls.get(0).subject).contains("Controversial");
     }
 
+    @Test
+    void digestIncludesTopImpactHighlightsCapped() {
+        MorningDigestService service = serviceAt("2026-05-23T08:00:00Z");
+        User user = userWithTimezone("UTC");
+        when(userRepository.findAll()).thenReturn(List.of(user));
+        when(viewRepository.findEntityIdsByUserId(USER_ID)).thenReturn(List.of(ENTITY_ID));
+        whatsChangedService.put(USER_ID, ENTITY_ID, deltaWith(3L, 1L));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entityNamed("Brand")));
+        WorkspaceImpactResponse impact = WorkspaceImpactResponse.builder()
+                .highlights(List.of("one", "two", "three", "four", "five"))
+                .build();
+        workspaceImpactService.put(USER_ID, impact);
+
+        service.sendMorningDigests();
+
+        assertThat(emailChannel.calls).hasSize(1);
+        assertThat(emailChannel.calls.get(0).impactHighlights)
+                .containsExactly("one", "two", "three");
+    }
+
+    @Test
+    void impactFailureDoesNotSinkDigest() {
+        MorningDigestService service = serviceAt("2026-05-23T08:00:00Z");
+        User user = userWithTimezone("UTC");
+        when(userRepository.findAll()).thenReturn(List.of(user));
+        when(viewRepository.findEntityIdsByUserId(USER_ID)).thenReturn(List.of(ENTITY_ID));
+        whatsChangedService.put(USER_ID, ENTITY_ID, deltaWith(3L, 1L));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entityNamed("Brand")));
+        workspaceImpactService.fail(USER_ID, new RuntimeException("boom"));
+
+        service.sendMorningDigests();
+
+        assertThat(emailChannel.calls).hasSize(1);
+        assertThat(emailChannel.calls.get(0).impactHighlights).isEmpty();
+    }
+
     private User userWithTimezone(String tz) {
         return userWithTimezone(USER_ID, "testuser", tz);
     }
@@ -445,15 +484,47 @@ class MorningDigestServiceTest {
         }
     }
 
+    static class StubWorkspaceImpactService extends WorkspaceImpactService {
+        private final Map<Long, WorkspaceImpactResponse> byUser = new HashMap<>();
+        private final Map<Long, RuntimeException> failByUser = new HashMap<>();
+
+        StubWorkspaceImpactService() {
+            super(null, null, null, null, null, null);
+        }
+
+        void put(Long userId, WorkspaceImpactResponse response) {
+            byUser.put(userId, response);
+        }
+
+        void fail(Long userId, RuntimeException error) {
+            failByUser.put(userId, error);
+        }
+
+        @Override
+        public WorkspaceImpactResponse getImpact(Long userId) {
+            RuntimeException error = failByUser.get(userId);
+            if (error != null) {
+                throw error;
+            }
+            WorkspaceImpactResponse response = byUser.get(userId);
+            return response != null
+                    ? response
+                    : WorkspaceImpactResponse.builder().highlights(List.of()).build();
+        }
+    }
+
     static class DigestCall {
         final User user;
         final String subject;
         final Map<String, WhatsChangedResponse> entries;
+        final List<String> impactHighlights;
 
-        DigestCall(User user, String subject, Map<String, WhatsChangedResponse> entries) {
+        DigestCall(User user, String subject, Map<String, WhatsChangedResponse> entries,
+                   List<String> impactHighlights) {
             this.user = user;
             this.subject = subject;
             this.entries = entries;
+            this.impactHighlights = impactHighlights;
         }
     }
 
@@ -465,8 +536,9 @@ class MorningDigestServiceTest {
         }
 
         @Override
-        public void sendDigest(User user, String subject, Map<String, WhatsChangedResponse> entries) {
-            calls.add(new DigestCall(user, subject, entries));
+        public void sendDigest(User user, String subject, Map<String, WhatsChangedResponse> entries,
+                               List<String> impactHighlights) {
+            calls.add(new DigestCall(user, subject, entries, impactHighlights));
         }
     }
 }

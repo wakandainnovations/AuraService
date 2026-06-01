@@ -18,6 +18,8 @@ public interface UserEntityViewRepository extends JpaRepository<UserEntityView, 
 
     List<UserEntityView> findByUserId(Long userId);
 
+    long countByUserId(Long userId);
+
     @Query("SELECT v.lastSeenAt FROM UserEntityView v " +
             "WHERE v.userId = :userId AND v.entityId = :entityId")
     Optional<Instant> findLastSeen(@Param("userId") Long userId, @Param("entityId") Long entityId);

@@ -9,4 +9,6 @@ import java.util.List;
 @Repository
 public interface MobilizeActionRepository extends JpaRepository<MobilizeAction, Long> {
     List<MobilizeAction> findByMentionId(Long mentionId);
+
+    List<MobilizeAction> findByUserId(Long userId);
 }

@@ -1,7 +1,11 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.WorkspaceExportBundle;
+import com.aura.service.dto.WorkspaceImpactResponse;
 import com.aura.service.dto.WorkspaceImportResult;
+import com.aura.service.entity.User;
+import com.aura.service.repository.UserRepository;
+import com.aura.service.service.WorkspaceImpactService;
 import com.aura.service.service.WorkspaceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -34,6 +38,24 @@ import org.springframework.web.bind.annotation.RestController;
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
+    private final WorkspaceImpactService workspaceImpactService;
+    private final UserRepository userRepository;
+
+    /**
+     * The authenticated user's accumulated investment, reflected back as counters plus
+     * display-ready highlight sentences (e.g. "Your playbook library has handled 12 crises.").
+     * Intended for the dashboard header and the morning digest so the value the user has built
+     * up is visible rather than silent.
+     */
+    @GetMapping("/impact")
+    public ResponseEntity<WorkspaceImpactResponse> impact(
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        User user = userRepository.findByUsername(principal.getUsername())
+                .orElseThrow(() -> new RuntimeException(
+                        "Authenticated user not found: " + principal.getUsername()));
+        return ResponseEntity.ok(workspaceImpactService.getImpact(user.getId()));
+    }
 
     @GetMapping("/export")
     public ResponseEntity<WorkspaceExportBundle> export(
