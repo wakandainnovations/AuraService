@@ -312,16 +312,18 @@ public class MentionActionController {
                 .limit(ALLY_LIMIT)
                 .toList();
 
-        List<AllyRecommendation> allies = new ArrayList<>(ranked.size());
-        for (SpreaderProfile p : ranked) {
-            String dm = generateAllyDm(entity.getName(), mention.getContent(), p);
-            allies.add(new AllyRecommendation(
-                    p.globalUserId(),
-                    p.primaryPlatform(),
-                    p.influenceTier(),
-                    dm
-            ));
-        }
+        String entityName = entity.getName();
+        String mentionContent = mention.getContent();
+        List<AllyRecommendation> allies = Flux.fromIterable(ranked)
+                .flatMapSequential(p -> Mono.fromCallable(() -> new AllyRecommendation(
+                                p.globalUserId(),
+                                p.primaryPlatform(),
+                                p.influenceTier(),
+                                generateAllyDm(entityName, mentionContent, p)))
+                        .subscribeOn(Schedulers.boundedElastic()))
+                .collectList()
+                .blockOptional()
+                .orElse(List.of());
 
         MobilizeAlliesResponse response = new MobilizeAlliesResponse(toMentionResponse(mention), allies);
         allyCache.put(cacheKey, response, ALLY_CACHE_TTL.toNanos());
