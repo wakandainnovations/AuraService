@@ -13,14 +13,13 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.UriBuilder;
-import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.PrematureCloseException;
 
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -77,10 +76,15 @@ public class AuraMathProxyService {
             }
         }
 
+        // The controller has already percent-encoded each path segment. Pass the URL as an
+        // absolute URI so those bytes are kept intact; UriBuilder.path() would otherwise
+        // percent-encode the existing '%' characters and produce %25xx (see forwardMarketingGet).
+        URI absoluteUri = URI.create(fullUrl);
+
         long start = System.currentTimeMillis();
         try {
             ResponseEntity<String> entity = client.method(HttpMethod.GET)
-                    .uri(b -> applyQuery(b.path(upstreamPath), queryParams).build())
+                    .uri(absoluteUri)
                     .retrieve()
                     .onStatus(s -> true, r -> Mono.empty())
                     .toEntity(String.class)
@@ -356,26 +360,40 @@ public class AuraMathProxyService {
         }
     }
 
-    private UriBuilder applyQuery(UriBuilder b, Map<String, ?> queryParams) {
-        if (queryParams == null) return b;
+    private String buildFullUrl(String upstreamPath, Map<String, ?> queryParams) {
+        // Concatenate base + path rather than going through UriComponentsBuilder.path(): the
+        // controller has already percent-encoded each path segment, and a second pass would
+        // turn '%' into '%25'. Query param values, by contrast, arrive raw and must be encoded.
+        StringBuilder url = new StringBuilder(props.getBaseUrl()).append(upstreamPath);
+        String query = buildQueryString(queryParams);
+        if (!query.isEmpty()) {
+            url.append('?').append(query);
+        }
+        return url.toString();
+    }
+
+    private String buildQueryString(Map<String, ?> queryParams) {
+        if (queryParams == null) return "";
+        StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, ?> e : queryParams.entrySet()) {
             Object value = e.getValue();
             if (value == null) continue;
             if (value instanceof List<?> list) {
                 for (Object v : list) {
-                    if (v != null) b.queryParam(e.getKey(), v);
+                    if (v != null) appendQueryParam(sb, e.getKey(), v);
                 }
             } else {
-                b.queryParam(e.getKey(), value);
+                appendQueryParam(sb, e.getKey(), value);
             }
         }
-        return b;
+        return sb.toString();
     }
 
-    private String buildFullUrl(String upstreamPath, Map<String, ?> queryParams) {
-        UriComponentsBuilder b = UriComponentsBuilder.fromUriString(props.getBaseUrl()).path(upstreamPath);
-        applyQuery(b, queryParams);
-        return b.toUriString();
+    private void appendQueryParam(StringBuilder sb, String key, Object value) {
+        if (sb.length() > 0) sb.append('&');
+        sb.append(URLEncoder.encode(key, StandardCharsets.UTF_8))
+                .append('=')
+                .append(URLEncoder.encode(value.toString(), StandardCharsets.UTF_8));
     }
 
     private String buildCacheKey(String method, String fullUrl, Object body) {

@@ -191,6 +191,40 @@ class AuraMathProxyControllerTest {
     }
 
     // ------------------------------------------------------------------
+    // 6a. /v1/users/{author}/report — author with a space is single-encoded.
+    // Regression: the proxy used to route the already-encoded segment through
+    // UriBuilder.path(), turning the '%' of "%20" into "%25" and sending the
+    // upstream a doubly-encoded "News7%2520Tamil" (which it read as the literal
+    // text "News7%20Tamil" → "No post history found").
+    // ------------------------------------------------------------------
+    @Test
+    void userReport_authorWithSpace_isSingleEncodedNotDoubleEncoded() throws Exception {
+        enqueueJson("{\"author\":\"News7 Tamil\"}");
+
+        mvc.perform(get("/v1/users/{a}/report", "News7 Tamil"))
+                .andExpect(status().isOk());
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).isEqualTo("/api/marketing/user-report/News7%20Tamil");
+        assertThat(req.getPath()).doesNotContain("%2520");
+    }
+
+    // ------------------------------------------------------------------
+    // 6b. /v1/users/{author}/report — non-ASCII author is percent-encoded once.
+    // ------------------------------------------------------------------
+    @Test
+    void userReport_authorWithNonAscii_isSingleEncoded() throws Exception {
+        enqueueJson("{\"author\":\"Niño\"}");
+
+        mvc.perform(get("/v1/users/{a}/report", "Niño"))
+                .andExpect(status().isOk());
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).isEqualTo("/api/marketing/user-report/Ni%C3%B1o");
+        assertThat(req.getPath()).doesNotContain("%25");
+    }
+
+    // ------------------------------------------------------------------
     // 7. /v1/users — with optional filters
     // ------------------------------------------------------------------
     @Test
@@ -208,6 +242,21 @@ class AuraMathProxyControllerTest {
         assertThat(req.getPath()).contains("audienceClassification=GenZ");
         assertThat(req.getPath()).contains("influenceTier=TIER_1");
         assertThat(req.getPath()).contains("primaryPlatform=TWITTER");
+    }
+
+    // ------------------------------------------------------------------
+    // 7a. /v1/users — a filter value containing a space is encoded in the query
+    // string (and not left raw / double-encoded).
+    // ------------------------------------------------------------------
+    @Test
+    void users_filterValueWithSpace_isEncodedInQuery() throws Exception {
+        enqueueJson("[]");
+
+        mvc.perform(get("/v1/users").param("audienceClassification", "Gen Z"))
+                .andExpect(status().isOk());
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).isEqualTo("/api/marketing/users?audienceClassification=Gen+Z");
     }
 
     // ------------------------------------------------------------------
