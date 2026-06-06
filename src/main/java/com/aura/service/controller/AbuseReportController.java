@@ -1,5 +1,6 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.AbuseReportDto;
 import com.aura.service.entity.AbuseReport;
 import com.aura.service.service.AbuseReportService;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,7 @@ public class AbuseReportController {
      * list to a single lifecycle stage (e.g. {@code SUBMITTED}, {@code UPHELD}, {@code REJECTED}).
      */
     @GetMapping
-    public ResponseEntity<List<AbuseReport>> list(
+    public ResponseEntity<List<AbuseReportDto>> list(
             @RequestParam(value = "status", required = false) AbuseReport.Status status,
             @AuthenticationPrincipal UserDetails principal
     ) {

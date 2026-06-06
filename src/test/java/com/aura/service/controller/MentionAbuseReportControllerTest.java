@@ -119,7 +119,14 @@ class MentionAbuseReportControllerTest {
                 .andExpect(jsonPath("$.notes").value("repeated targeted abuse"))
                 .andExpect(jsonPath("$.status").value("SUBMITTED"))
                 .andExpect(jsonPath("$.externalRef").value("x-mod-4242"))
-                .andExpect(jsonPath("$.submittedAt").exists());
+                .andExpect(jsonPath("$.submittedAt").exists())
+                // The created report is enriched with a summary of the reported mention.
+                .andExpect(jsonPath("$.mention.id").value(MENTION_ID))
+                .andExpect(jsonPath("$.mention.author").value("@troll_handle"))
+                .andExpect(jsonPath("$.mention.text").value("the offending post body"))
+                .andExpect(jsonPath("$.mention.platform").value("X"))
+                .andExpect(jsonPath("$.mention.permalink")
+                        .value("https://x.com/troll_handle/status/" + MENTION_ID));
 
         ArgumentCaptor<AbuseReport> captor = ArgumentCaptor.forClass(AbuseReport.class);
         verify(abuseReportRepository).save(captor.capture());
@@ -185,7 +192,7 @@ class MentionAbuseReportControllerTest {
 
     @Test
     void listForMention_returnsReportsNewestFirst() throws Exception {
-        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention(Platform.X)));
         when(abuseReportRepository.findByMentionIdOrderBySubmittedAtDesc(MENTION_ID))
                 .thenReturn(List.of(report(11L, AbuseReport.Status.UPHELD),
                         report(10L, AbuseReport.Status.SUBMITTED)));
@@ -195,13 +202,17 @@ class MentionAbuseReportControllerTest {
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].id").value(11))
                 .andExpect(jsonPath("$[0].status").value("UPHELD"))
+                .andExpect(jsonPath("$[0].mention.id").value(MENTION_ID))
+                .andExpect(jsonPath("$[0].mention.author").value("@troll_handle"))
                 .andExpect(jsonPath("$[1].id").value(10))
-                .andExpect(jsonPath("$[1].status").value("SUBMITTED"));
+                .andExpect(jsonPath("$[1].status").value("SUBMITTED"))
+                .andExpect(jsonPath("$[1].mention.permalink")
+                        .value("https://x.com/troll_handle/status/" + MENTION_ID));
     }
 
     @Test
     void listForMention_returns404WhenMentionMissing() throws Exception {
-        when(mentionRepository.existsById(404L)).thenReturn(false);
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
 
         mvc.perform(get("/api/mentions/{id}/abuse-reports", 404L))
                 .andExpect(status().isNotFound());
@@ -225,6 +236,9 @@ class MentionAbuseReportControllerTest {
         m.setId(MENTION_ID);
         m.setPlatform(platform);
         m.setPostId("post_" + MENTION_ID);
+        m.setAuthor("@troll_handle");
+        m.setContent("the offending post body");
+        m.setPermalink("https://x.com/troll_handle/status/" + MENTION_ID);
         return m;
     }
 }

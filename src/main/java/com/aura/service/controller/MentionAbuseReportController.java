@@ -1,7 +1,7 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.AbuseReportDto;
 import com.aura.service.dto.ReportAbuseRequest;
-import com.aura.service.entity.AbuseReport;
 import com.aura.service.service.AbuseReportService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +20,7 @@ public class MentionAbuseReportController {
     private final AbuseReportService abuseReportService;
 
     @PostMapping("/report-abuse")
-    public ResponseEntity<AbuseReport> reportAbuse(
+    public ResponseEntity<AbuseReportDto> reportAbuse(
             @PathVariable("mentionId") Long mentionId,
             @Valid @RequestBody ReportAbuseRequest request,
             @AuthenticationPrincipal UserDetails principal
@@ -31,7 +31,7 @@ public class MentionAbuseReportController {
     }
 
     @GetMapping("/abuse-reports")
-    public ResponseEntity<List<AbuseReport>> listForMention(
+    public ResponseEntity<List<AbuseReportDto>> listForMention(
             @PathVariable("mentionId") Long mentionId
     ) {
         return abuseReportService.listForMention(mentionId)

@@ -2,7 +2,9 @@ package com.aura.service.controller;
 
 import com.aura.service.abuse.AbuseReportDispatcher;
 import com.aura.service.entity.AbuseReport;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
+import com.aura.service.enums.Platform;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserRepository;
@@ -22,6 +24,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,12 +39,13 @@ class AbuseReportControllerTest {
     private static final Instant NOW = Instant.parse("2026-05-31T12:00:00Z");
 
     private AbuseReportRepository abuseReportRepository;
+    private MentionRepository mentionRepository;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         abuseReportRepository = mock(AbuseReportRepository.class);
-        MentionRepository mentionRepository = mock(MentionRepository.class);
+        mentionRepository = mock(MentionRepository.class);
         UserRepository userRepository = mock(UserRepository.class);
 
         // Real dispatcher with no strategies — list endpoints never invoke it, and the JDK in use
@@ -76,13 +80,32 @@ class AbuseReportControllerTest {
         when(abuseReportRepository.findByUserIdOrderBySubmittedAtDesc(USER_ID))
                 .thenReturn(List.of(report(2L, AbuseReport.Status.UPHELD),
                         report(1L, AbuseReport.Status.SUBMITTED)));
+        // report(id) references mentionId 100+id; batch-loaded in one findAllById.
+        when(mentionRepository.findAllById(any()))
+                .thenReturn(List.of(mention(102L), mention(101L)));
 
         mvc.perform(get("/api/abuse-reports"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].id").value(2))
                 .andExpect(jsonPath("$[0].userId").value(USER_ID))
-                .andExpect(jsonPath("$[1].id").value(1));
+                .andExpect(jsonPath("$[0].mention.id").value(102))
+                .andExpect(jsonPath("$[0].mention.permalink").value("https://x.com/p/102"))
+                .andExpect(jsonPath("$[1].id").value(1))
+                .andExpect(jsonPath("$[1].mention.id").value(101));
+    }
+
+    @Test
+    void list_whenMentionDeleted_returnsNullMention() throws Exception {
+        when(abuseReportRepository.findByUserIdOrderBySubmittedAtDesc(USER_ID))
+                .thenReturn(List.of(report(2L, AbuseReport.Status.UPHELD)));
+        // No mentions come back from the batch load — the mention was deleted.
+        when(mentionRepository.findAllById(any())).thenReturn(List.of());
+
+        mvc.perform(get("/api/abuse-reports"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(2))
+                .andExpect(jsonPath("$[0].mention.id").doesNotExist());
     }
 
     @Test
@@ -90,12 +113,14 @@ class AbuseReportControllerTest {
         when(abuseReportRepository.findByUserIdAndStatusOrderBySubmittedAtDesc(
                 USER_ID, AbuseReport.Status.UPHELD))
                 .thenReturn(List.of(report(9L, AbuseReport.Status.UPHELD)));
+        when(mentionRepository.findAllById(any())).thenReturn(List.of(mention(109L)));
 
         mvc.perform(get("/api/abuse-reports").param("status", "UPHELD"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value(9))
-                .andExpect(jsonPath("$[0].status").value("UPHELD"));
+                .andExpect(jsonPath("$[0].status").value("UPHELD"))
+                .andExpect(jsonPath("$[0].mention.id").value(109));
 
         verify(abuseReportRepository).findByUserIdAndStatusOrderBySubmittedAtDesc(
                 USER_ID, AbuseReport.Status.UPHELD);
@@ -116,5 +141,16 @@ class AbuseReportControllerTest {
                 .status(status)
                 .submittedAt(NOW)
                 .build();
+    }
+
+    private static Mention mention(Long id) {
+        Mention m = new Mention();
+        m.setId(id);
+        m.setPlatform(Platform.X);
+        m.setPostId("post_" + id);
+        m.setAuthor("@user_" + id);
+        m.setContent("post body " + id);
+        m.setPermalink("https://x.com/p/" + id);
+        return m;
     }
 }
