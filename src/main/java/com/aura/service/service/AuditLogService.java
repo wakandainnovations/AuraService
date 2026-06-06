@@ -40,6 +40,13 @@ public class AuditLogService {
      * Paged audit trail, newest first. Every filter is optional — pass {@code null} to widen.
      */
     public Page<AuditLog> search(String username, Boolean success, Instant from, Instant to, Pageable pageable) {
-        return auditLogRepository.search(username, success, from, to, pageable);
+        // A null argument disables that filter; the repository gates each one on these flags so no
+        // untyped NULL ever reaches PostgreSQL's IS NULL check.
+        return auditLogRepository.search(
+                username != null, username,
+                success != null, success,
+                from != null, from,
+                to != null, to,
+                pageable);
     }
 }

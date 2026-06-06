@@ -14,20 +14,26 @@ import java.time.Instant;
 public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
     /**
-     * Paged audit trail, newest first, with every filter optional. A {@code null} argument disables
-     * that particular filter, so the same query serves the unfiltered list and any combination of
-     * username / outcome / time-window narrowing.
+     * Paged audit trail, newest first, with every filter optional. Each filter is gated by a boolean
+     * flag rather than a {@code :param IS NULL} test: PostgreSQL cannot infer the type of a bare
+     * {@code NULL} bind in an {@code IS NULL} check (it raises "could not determine data type of
+     * parameter"), so each optional value appears only inside a typed comparison whose column tells
+     * the planner its type. {@link com.aura.service.service.AuditLogService} derives the flags.
      */
     @Query("SELECT a FROM AuditLog a WHERE " +
-            "(:username IS NULL OR a.username = :username) AND " +
-            "(:success IS NULL OR a.success = :success) AND " +
-            "(:from IS NULL OR a.timestamp >= :from) AND " +
-            "(:to IS NULL OR a.timestamp <= :to) " +
+            "(:filterUsername = false OR a.username = :username) AND " +
+            "(:filterSuccess = false OR a.success = :success) AND " +
+            "(:filterFrom = false OR a.timestamp >= :from) AND " +
+            "(:filterTo = false OR a.timestamp <= :to) " +
             "ORDER BY a.timestamp DESC")
     Page<AuditLog> search(
+            @Param("filterUsername") boolean filterUsername,
             @Param("username") String username,
+            @Param("filterSuccess") boolean filterSuccess,
             @Param("success") Boolean success,
+            @Param("filterFrom") boolean filterFrom,
             @Param("from") Instant from,
+            @Param("filterTo") boolean filterTo,
             @Param("to") Instant to,
             Pageable pageable);
 }
