@@ -1,6 +1,8 @@
 package com.aura.service.config;
 
+import com.aura.service.security.AuditLogFilter;
 import com.aura.service.security.JwtAuthenticationFilter;
+import com.aura.service.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,14 +20,18 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import java.time.Clock;
+
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
-    
+
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final UserDetailsService userDetailsService;
-    
+    private final AuditLogService auditLogService;
+    private final Clock clock;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -42,13 +48,18 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/openapi.yaml"
                         ).permitAll()
+                        // The audit trail is sensitive (who called what, with request bodies) — admins only.
+                        .requestMatchers("/api/audit-logs/**").hasAuthority("ROLE_ADMIN")
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
                 .authenticationProvider(authenticationProvider())
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Audit every request once authentication has resolved, so the audited principal and
+                // final response status are both available.
+                .addFilterAfter(new AuditLogFilter(auditLogService, clock), JwtAuthenticationFilter.class);
         
         http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
         

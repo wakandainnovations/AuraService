@@ -48,8 +48,18 @@ public class DataInitializer implements CommandLineRunner {
             user.setRole("ROLE_USER");
             user.setTimezone("America/New_York");
             userRepository.save(user);
-            
+
             System.out.println("Default user created: username=user, password=password");
+
+            // Admin account — required to read the audit trail at /api/audit-logs (ROLE_ADMIN only).
+            User admin = new User();
+            admin.setUsername("admin");
+            admin.setPassword(passwordEncoder.encode("admin"));
+            admin.setRole("ROLE_ADMIN");
+            admin.setTimezone("America/New_York");
+            userRepository.save(admin);
+
+            System.out.println("Default admin created: username=admin, password=admin");
         }
     }
     
