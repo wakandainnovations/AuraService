@@ -11,4 +11,6 @@ public interface MobilizeActionRepository extends JpaRepository<MobilizeAction, 
     List<MobilizeAction> findByMentionId(Long mentionId);
 
     List<MobilizeAction> findByUserId(Long userId);
+
+    void deleteByMentionId(Long mentionId);
 }

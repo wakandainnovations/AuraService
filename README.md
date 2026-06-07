@@ -1913,7 +1913,7 @@ Content-Type: application/json
 
 ## Mention Action APIs
 
-Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. Most endpoints are mounted under `/api/mentions/{mentionId}/actions`; **Report abuse** is a sibling route at `/api/mentions/{mentionId}/report-abuse`. All are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
+Per-mention actions that wrap the LLM and social-media services into auditable, persisted operations. Most endpoints are mounted under `/api/mentions/{mentionId}/actions`; **Report abuse** (`/api/mentions/{mentionId}/report-abuse`) and **Delete mention** (`DELETE /api/mentions/{mentionId}`) are sibling routes directly under `/api/mentions/{mentionId}`. All are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
 - **List actions** returns every `ReplyDraft`, `CrisisPlan`, and mobilize call ever recorded for the mention, with the actor's username on every row, sorted newest first. Used by the UI to show "you already drafted a reply 2h ago" so users don't double-act.
 - **Draft reply** generates a reply via `LLMService.generateReply` (entity name + mention content + sentiment) and persists a `ReplyDraft` row (`status=DRAFT`). Outer quotes from the LLM output are stripped to match the existing `/api/interact/generate-reply` behavior.
@@ -2281,6 +2281,53 @@ Authorization: Bearer {jwt_token}
 - `200 OK` — Report filed and persisted.
 - `400 Bad Request` — `category` is missing or not a valid value.
 - `404 Not Found` — No mention with the given id.
+
+---
+
+### 26b. Delete Mention
+
+**Endpoint:** `DELETE /api/mentions/{mentionId}`
+
+**Description:** Permanently remove a mention from the `mentions` table. Intended for purging **false-positive mentions** — posts that were attributed to an entity but should not have been (e.g. a post that slipped past sentiment scoring with a non-zero sentiment value despite being irrelevant). The delete also cleans up every record that hangs off the mention in the same transaction — abuse reports, reply drafts, mobilize actions, and crisis plans filed against it — so no orphaned rows remain. This is a hard delete and cannot be undone.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — ID of the mention to delete (the numeric `id` from any mentions listing, e.g. [Get Filtered Mentions](#16-get-filtered-mentions)). This is the internal mention id, not the platform `post_id`.
+
+**Example:**
+```
+DELETE /api/mentions/9123
+```
+
+**Response:** Empty body.
+
+**Status Codes:**
+- `204 No Content` — Mention (and its dependent records) deleted.
+- `404 Not Found` — No mention with the given id.
+
+**Frontend integration notes:**
+- The mention's `id` is the same value used by the other per-mention routes (`/api/mentions/{mentionId}/actions`, `report-abuse`); reuse it directly — no separate lookup is needed.
+- On a `204`, remove the mention from the local list/cache. Because the row is gone server-side, it will not reappear in subsequent mention queries or be re-counted in sentiment aggregates.
+- Treat a `404` as already-deleted (e.g. a double click or a stale list) and reconcile the UI by dropping the row rather than surfacing a hard error.
+- Guard this behind a confirmation dialog in the UI — it is irreversible and removes the mention for all users of the workspace, not just the caller.
+
+Example call:
+```javascript
+async function deleteMention(mentionId, token) {
+  const res = await fetch(`/api/mentions/${mentionId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 204 || res.status === 404) {
+    return; // gone server-side either way — drop it from the UI
+  }
+  throw new Error(`Failed to delete mention ${mentionId}: ${res.status}`);
+}
+```
 
 ---
 

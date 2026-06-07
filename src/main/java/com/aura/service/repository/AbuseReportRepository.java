@@ -15,6 +15,9 @@ public interface AbuseReportRepository extends JpaRepository<AbuseReport, Long> 
     /** Reports filed against a single mention, newest first. */
     List<AbuseReport> findByMentionIdOrderBySubmittedAtDesc(Long mentionId);
 
+    /** Remove every report filed against a mention (used when the mention itself is deleted). */
+    void deleteByMentionId(Long mentionId);
+
     /** Every report a user has filed, newest first. */
     List<AbuseReport> findByUserIdOrderBySubmittedAtDesc(Long userId);
 

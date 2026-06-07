@@ -13,5 +13,7 @@ public interface ReplyDraftRepository extends JpaRepository<ReplyDraft, Long> {
 
     List<ReplyDraft> findByMentionIdIn(Collection<Long> mentionIds);
 
+    void deleteByMentionId(Long mentionId);
+
     long countByUserIdAndStatus(Long userId, ReplyDraft.Status status);
 }
