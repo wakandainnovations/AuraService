@@ -3586,6 +3586,17 @@ GET /v1/diagnostics/process-user/alice
 
 A second proxy surface that mirrors the upstream `/api/marketing/{genre,party,celebrity}` resource tree one-for-one. Twelve GET endpoints plus a `/v1/marketing/_catalog` discovery route forward each upstream path verbatim (URL-encoding `{genre}`, `{party}`, and `{celebrity}` segments so spaces, ampersands, and non-ASCII names like `A R Rahman` or `திமுக` pass through correctly). Each request uses a 15-second connect/read budget (`auramath.marketing-timeout-ms`); successful responses are cached in-memory by full URL for 60 seconds, except the three list endpoints (`/genre`, `/party`, `/celebrity`) which use a 5-minute TTL (`auramath.cache.list-ttl-seconds`). 2xx bodies — including empty arrays like `{"totalVoters":0,"voters":[]}` — are returned to the caller byte-for-byte. Upstream 5xx responses are logged with their `message`/`path` and translated to a sanitized `502 { "error":"upstream_failure", "upstream_path":"…" }` so SQL fragments are never leaked to clients; connection failures/timeouts continue to map to `504 { "error":"upstream_unavailable" }`. Wrapped routes: `GET /v1/marketing/genre` (and `/{genre}/{potential-viewers,super-spreaders,channel-strategy}`); `GET /v1/marketing/party` (and `/{party}/{potential-voters,super-spreaders,channel-strategy}`); `GET /v1/marketing/celebrity` (and `/{celebrity}/{potential-fans,super-fans,channel-strategy}`); `GET /v1/marketing/_catalog` returns the full list with its upstream mapping. Integration tests live in `AuraMathMarketingProxyControllerTest` (path-encoding pass-through for ASCII, spaces, ampersands, and Tamil script; upstream-500 → sanitized-502 mapping; cache hit; `_catalog` shape).
 
+### Entity intelligence reports
+
+Two additional GET wrappers expose the upstream "entity intelligence report" payload — `GET /v1/marketing/entity-report/{entityId}` (shareable, prospect-facing → upstream `GET /api/marketing/entity-report/{entityId}`) and `GET /v1/marketing/entity/{entityId}/report` (in-app, logged-in view → upstream `GET /api/marketing/entity/{entityId}/report`). Both upstream routes return byte-identical JSON; the `{entityId}` is an opaque `managed_entities` id (treated as a string, **not** assumed numeric, and forwarded verbatim after URL-encoding). A blank id is rejected with `400` before any upstream call. These wrappers apply a report-specific status contract instead of the generic pass-through above, and are **not cached** (each report reflects live scoring):
+
+- Upstream `200` **full report** → `200`, body forwarded unchanged.
+- Upstream `200` carrying a top-level `message` of `"No entity found for this id"` → translated to **`404`**, the upstream body (with its message) preserved.
+- Upstream `200` with the `"No scored post history found for this entity …"` message → **`200`** pass-through (a valid empty result, not an error).
+- Upstream `5xx` / connection failure / timeout (or any other unexpected status) → **`502`** with a small envelope `{ "error":"…", "entityId":"…", "upstreamStatus":<code or null> }` (`upstreamStatus` is the upstream code for a 5xx, or `null` for a connection failure/timeout). Upstream error bodies are logged but never leaked to the caller.
+
+Both routes also appear in `/v1/marketing/_catalog`. Integration tests live in `AuraMathEntityReportProxyControllerTest` (full report, 404 translation, no-history pass-through, upstream-500 → 502 envelope, connection-refused → 502 with null `upstreamStatus`, verbatim/encoded entityId, blank-id 400).
+
 ---
 
 ## Dev APIs

@@ -299,12 +299,14 @@ class AuraMathMarketingProxyControllerTest {
     // ==================================================================
 
     @Test
-    void catalog_listsAllTwelveRoutes_withoutCallingUpstream() throws Exception {
+    void catalog_listsAllRoutes_withoutCallingUpstream() throws Exception {
         mvc.perform(get("/v1/marketing/_catalog"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRoutes").value(12))
+                .andExpect(jsonPath("$.totalRoutes").value(14))
                 .andExpect(jsonPath("$.routes[0].wrapperPath").value("/v1/marketing/genre"))
-                .andExpect(jsonPath("$.routes[0].upstreamPath").value("/api/marketing/genre"));
+                .andExpect(jsonPath("$.routes[0].upstreamPath").value("/api/marketing/genre"))
+                .andExpect(jsonPath("$.routes[12].wrapperPath").value("/v1/marketing/entity-report/{entityId}"))
+                .andExpect(jsonPath("$.routes[13].wrapperPath").value("/v1/marketing/entity/{entityId}/report"));
 
         assertThat(upstream.getRequestCount()).isZero();
     }

@@ -183,6 +183,116 @@ public class AuraMathProxyService {
         }
     }
 
+    /**
+     * Forward a GET to an upstream AuraMath entity intelligence report endpoint
+     * ({@code /api/marketing/entity-report/{id}} or {@code /api/marketing/entity/{id}/report} —
+     * both return byte-identical payloads). Applies the report status contract:
+     * <ul>
+     *   <li>200 full report, or the "no scored history" empty result → forwarded verbatim as 200.</li>
+     *   <li>200 carrying a top-level {@code message} of "No entity found..." → translated to 404,
+     *       upstream body preserved.</li>
+     *   <li>upstream 5xx (or any other unexpected non-2xx) → 502 with the envelope
+     *       {@code {error, entityId, upstreamStatus}}.</li>
+     *   <li>connection failure / timeout / empty response → 502 with {@code upstreamStatus: null}.</li>
+     * </ul>
+     * The body is passed through unchanged; nothing is cached (each report reflects live scoring).
+     */
+    public ResponseEntity<String> forwardEntityReport(String wrapperPath,
+                                                      String upstreamPath,
+                                                      String entityId) {
+        // Controller has already percent-encoded the entityId segment; pass an absolute URI so the
+        // bytes are kept intact (UriBuilder.path() would re-encode '%' into '%25'), as in forwardMarketingGet.
+        URI absoluteUri = URI.create(props.getBaseUrl() + upstreamPath);
+
+        long start = System.currentTimeMillis();
+        try {
+            ResponseEntity<String> entity = client.method(HttpMethod.GET)
+                    .uri(absoluteUri)
+                    .retrieve()
+                    .onStatus(s -> true, r -> Mono.empty())
+                    .toEntity(String.class)
+                    .block(timeoutBudget());
+
+            long duration = System.currentTimeMillis() - start;
+            int status = entity == null ? 502 : entity.getStatusCode().value();
+            log.info("proxy wrapper_path={} upstream_path={} status={} duration_ms={}",
+                    wrapperPath, upstreamPath, status, duration);
+
+            return buildEntityReportResponse(entity, entityId, upstreamPath);
+        } catch (Exception ex) {
+            long duration = System.currentTimeMillis() - start;
+            log.warn("proxy upstream_error wrapper_path={} upstream_path={} duration_ms={} cause={}",
+                    wrapperPath, upstreamPath, duration, ex.getClass().getSimpleName());
+            // Connection failure / read timeout: no upstream status to report.
+            return entityReportGatewayError(entityId, null, "upstream_unavailable");
+        }
+    }
+
+    private ResponseEntity<String> buildEntityReportResponse(ResponseEntity<String> upstreamEntity,
+                                                             String entityId,
+                                                             String upstreamPath) {
+        if (upstreamEntity == null) {
+            return entityReportGatewayError(entityId, null, "upstream_unavailable");
+        }
+        int status = upstreamEntity.getStatusCode().value();
+        String body = upstreamEntity.getBody();
+        MediaType ct = upstreamEntity.getHeaders().getContentType();
+        String contentType = ct != null ? ct.toString() : MediaType.APPLICATION_JSON_VALUE;
+
+        // Upstream contract is "always HTTP 200"; anything else is a gateway-level failure.
+        if (status < 200 || status >= 300) {
+            if (status >= 500) {
+                logUpstream5xx(body, upstreamPath);
+            }
+            return entityReportGatewayError(entityId, status, "upstream_failure");
+        }
+
+        // 200: distinguish a "not found" non-report result (→ 404) from a real report or the
+        // valid "no scored history" empty result (both → 200, passed through unchanged).
+        int outStatus = isNotFoundMessage(topLevelMessage(body, contentType)) ? 404 : 200;
+        HttpHeaders out = new HttpHeaders();
+        out.add(HttpHeaders.CONTENT_TYPE, contentType);
+        return ResponseEntity.status(outStatus).headers(out).body(body);
+    }
+
+    /** Extract a top-level {@code message} string from a JSON object body, or null if absent. */
+    private String topLevelMessage(String body, String contentType) {
+        if (body == null || body.isBlank()) return null;
+        if (contentType == null || !contentType.toLowerCase().contains("json")) return null;
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            if (node.isObject() && node.hasNonNull("message")) {
+                return node.path("message").asText(null);
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private boolean isNotFoundMessage(String message) {
+        return message != null && message.toLowerCase().contains("no entity found");
+    }
+
+    private ResponseEntity<String> entityReportGatewayError(String entityId,
+                                                            Integer upstreamStatus,
+                                                            String error) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", error);
+        body.put("entityId", entityId);
+        body.put("upstreamStatus", upstreamStatus);
+        try {
+            return ResponseEntity.status(502)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(objectMapper.writeValueAsString(body));
+        } catch (JsonProcessingException e) {
+            return ResponseEntity.status(502)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("{\"error\":\"upstream_failure\",\"entityId\":null,\"upstreamStatus\":"
+                            + (upstreamStatus == null ? "null" : upstreamStatus) + "}");
+        }
+    }
+
     private ResponseEntity<String> buildMarketingResponse(ResponseEntity<String> upstreamEntity,
                                                           String cacheKey,
                                                           long ttlSeconds,

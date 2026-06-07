@@ -4,12 +4,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -174,6 +176,37 @@ public class AuraMathMarketingProxyController {
     }
 
     // ------------------------------------------------------------------
+    // Entity intelligence reports
+    //
+    // Two upstream routes return byte-identical "entity intelligence report"
+    // payloads; the only difference is intended audience. Both translate the
+    // upstream "No entity found" 200 into a 404, pass the "no scored history"
+    // 200 through unchanged, and map upstream 5xx / timeouts to a 502 envelope.
+    // ------------------------------------------------------------------
+
+    @Operation(summary = "Shareable entity intelligence report (prospect-facing)")
+    @GetMapping(value = "/entity-report/{entityId}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> shareableEntityReport(@PathVariable("entityId") String entityId) {
+        requireEntityId(entityId);
+        return proxy.forwardEntityReport(
+                "/v1/marketing/entity-report/{entityId}",
+                "/api/marketing/entity-report/" + encodeSegment(entityId),
+                entityId
+        );
+    }
+
+    @Operation(summary = "In-app entity intelligence report (logged-in user view)")
+    @GetMapping(value = "/entity/{entityId}/report", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> inAppEntityReport(@PathVariable("entityId") String entityId) {
+        requireEntityId(entityId);
+        return proxy.forwardEntityReport(
+                "/v1/marketing/entity/{entityId}/report",
+                "/api/marketing/entity/" + encodeSegment(entityId) + "/report",
+                entityId
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Discovery
     // ------------------------------------------------------------------
 
@@ -193,6 +226,8 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/potential-fans", "/api/marketing/celebrity/{celebrity}/potential-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/super-fans", "/api/marketing/celebrity/{celebrity}/super-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/channel-strategy", "/api/marketing/celebrity/{celebrity}/channel-strategy"));
+        routes.add(route("GET", "/v1/marketing/entity-report/{entityId}", "/api/marketing/entity-report/{entityId}"));
+        routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("upstreamBaseUrl", props.getBaseUrl());
@@ -224,6 +259,16 @@ public class AuraMathMarketingProxyController {
         m.put("wrapperPath", wrapperPath);
         m.put("upstreamPath", upstreamPath);
         return m;
+    }
+
+    /**
+     * The entityId arrives as an opaque string (a {@code managed_entities} id) — it is NOT assumed
+     * numeric and is forwarded verbatim. Reject only empty/blank values before hitting upstream.
+     */
+    private static void requireEntityId(String entityId) {
+        if (entityId == null || entityId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "entityId must not be empty");
+        }
     }
 
     private static String encodeSegment(String segment) {
