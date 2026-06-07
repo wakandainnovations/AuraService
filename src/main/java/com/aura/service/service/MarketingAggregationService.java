@@ -106,7 +106,10 @@ public class MarketingAggregationService {
                     }
                 }
             } else if (data != null) {
-                merged.add(data);
+                String dedup = deduplicationKey(data);
+                if (seen.add(dedup)) {
+                    merged.add(data);
+                }
             }
         }
         return merged;
@@ -152,6 +155,11 @@ public class MarketingAggregationService {
                     if (seen.add(dedup)) {
                         merged.add(element);
                     }
+                }
+            } else if (data != null) {
+                String dedup = deduplicationKey(data);
+                if (seen.add(dedup)) {
+                    merged.add(data);
                 }
             }
         }

@@ -179,12 +179,15 @@ class MarketingAggregationControllerTest {
                         new EntityKeyword("movie1", "media.movie", "Tamil", null, null, null)
                 ));
 
-        enqueueJson("[{\"id\":\"driver1\"},{\"id\":\"driver2\"}]");
+        // Upstream /api/marketing/aspect-drivers/{keyword} returns a JSON object
+        // (not an array); the flat aggregation must include it as a single element.
+        enqueueJson("{\"keyword\":\"movie1\",\"id\":\"driver1\"}");
 
         mvc.perform(get("/api/marketing/aggregate/aspect-drivers")
                         .param("entityId", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("driver1"));
 
         RecordedRequest req = takeRequest();
         assertThat(req.getPath()).contains("aspect-drivers/movie1");
@@ -234,6 +237,31 @@ class MarketingAggregationControllerTest {
         assertThat(req1.getPath()).contains("genre/action/potential-viewers");
         RecordedRequest req2 = takeRequest();
         assertThat(req2.getPath()).contains("genre/drama/potential-viewers");
+    }
+
+    @Test
+    void genre_objectResponses_flat_dedupesIdenticalObjects() throws Exception {
+        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+                .thenReturn(List.of(
+                        new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, "action"),
+                        new EntityKeyword("surya-movie", "media.movie", "Tamil", null, null, "drama")
+                ));
+
+        // Object (non-array) upstream responses: identical object from both genres
+        // must collapse to a single element, mirroring the array-branch dedup.
+        enqueueJson("{\"userId\":\"viewer1\",\"score\":9}");
+        enqueueJson("{\"userId\":\"viewer1\",\"score\":9}");
+
+        mvc.perform(get("/api/marketing/aggregate/genre/channel-strategy")
+                        .param("language", "Tamil"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].userId").value("viewer1"));
+
+        RecordedRequest req1 = takeRequest();
+        assertThat(req1.getPath()).contains("genre/action/channel-strategy");
+        RecordedRequest req2 = takeRequest();
+        assertThat(req2.getPath()).contains("genre/drama/channel-strategy");
     }
 
     @Test
