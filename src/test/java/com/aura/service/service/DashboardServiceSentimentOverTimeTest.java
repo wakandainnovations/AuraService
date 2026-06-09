@@ -210,6 +210,66 @@ class DashboardServiceSentimentOverTimeTest {
     }
 
     @Test
+    void day90PeriodProducesDailyBucketsSpanning90Days() {
+        ManagedEntity e = entity(ENTITY_ID, "TestEntity");
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(e));
+
+        when(mentionRepository.findByEntityIdsAndDateRange(
+                eq(Collections.singletonList(ENTITY_ID)), any(Instant.class), any(Instant.class)))
+                .thenReturn(List.of());
+
+        when(checkpointRepository.findByManagedEntityIdAndCheckpointDateBetweenOrderByCheckpointDateAsc(
+                eq(ENTITY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of());
+
+        SentimentOverTimeResponse response = service.getSentimentOverTime(
+                TimePeriod.DAY90, List.of(ENTITY_ID));
+
+        EntitySentimentData data = response.getEntities().get(0);
+        List<String> timeSeriesDates = data.getSentiments().stream()
+                .map(ts -> ts.getDate())
+                .toList();
+
+        // 90-day window, daily buckets -> 91 days inclusive of both endpoints
+        assertThat(timeSeriesDates).hasSize(91);
+
+        DateTimeFormatter dayFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        LocalDate today = LocalDate.now(ZoneId.systemDefault());
+        assertThat(timeSeriesDates).contains(today.format(dayFormatter));
+        assertThat(timeSeriesDates).contains(today.minusDays(90).format(dayFormatter));
+    }
+
+    @Test
+    void checkpoint60DaysAgoIncludedForDay90Period() {
+        ManagedEntity e = entity(ENTITY_ID, "TestEntity");
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(e));
+
+        LocalDate today = LocalDate.now(ZoneId.systemDefault());
+        LocalDate sixtyDaysAgo = today.minusDays(60);
+
+        Checkpoint cp = checkpoint(ENTITY_ID, sixtyDaysAgo, "Quarterly Review");
+
+        when(mentionRepository.findByEntityIdsAndDateRange(
+                eq(Collections.singletonList(ENTITY_ID)), any(Instant.class), any(Instant.class)))
+                .thenReturn(List.of());
+
+        when(checkpointRepository.findByManagedEntityIdAndCheckpointDateBetweenOrderByCheckpointDateAsc(
+                eq(ENTITY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(cp));
+
+        SentimentOverTimeResponse response = service.getSentimentOverTime(
+                TimePeriod.DAY90, List.of(ENTITY_ID));
+
+        EntitySentimentData data = response.getEntities().get(0);
+        assertThat(data.getCheckpoints()).hasSize(1);
+
+        CheckpointMarker marker = data.getCheckpoints().get(0);
+        assertThat(marker.getDescription()).isEqualTo("Quarterly Review");
+        assertThat(marker.getDate()).isEqualTo(sixtyDaysAgo.format(
+                DateTimeFormatter.ofPattern("yyyy-MM-dd")));
+    }
+
+    @Test
     void noCheckpointsReturnsEmptyList() {
         ManagedEntity e = entity(ENTITY_ID, "TestEntity");
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(e));
