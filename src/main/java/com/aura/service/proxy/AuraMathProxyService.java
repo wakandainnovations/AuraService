@@ -274,6 +274,110 @@ public class AuraMathProxyService {
         return message != null && message.toLowerCase().contains("no entity found");
     }
 
+    /**
+     * Forward a GET to the upstream AuraMath entity-report PDF endpoint
+     * ({@code /api/marketing/entity-report/{id}/pdf}). Binary-safe: the body is carried as
+     * raw {@code byte[]} and never decoded through a String/charset, so the PDF is forwarded
+     * byte-for-byte. The upstream returns a real HTTP status, so we branch on it rather than
+     * sniffing the body:
+     * <ul>
+     *   <li>200 → {@code application/pdf} bytes; {@code Content-Type} and {@code Content-Disposition}
+     *       are passed through verbatim.</li>
+     *   <li>404 → short {@code text/plain} message; forwarded through as-is (safe to read as text,
+     *       but we just relay the bytes and the upstream content type).</li>
+     *   <li>upstream 5xx / any other non-2xx → 502 with the JSON envelope
+     *       {@code {error, entityId, upstreamStatus}}.</li>
+     *   <li>connection failure / timeout / empty response → 502 with {@code upstreamStatus: null}.</li>
+     * </ul>
+     */
+    public ResponseEntity<byte[]> forwardEntityReportPdf(String wrapperPath,
+                                                         String upstreamPath,
+                                                         String entityId) {
+        // Controller has already percent-encoded the entityId segment; pass an absolute URI so the
+        // bytes are kept intact (UriBuilder.path() would re-encode '%' into '%25'), as in forwardMarketingGet.
+        URI absoluteUri = URI.create(props.getBaseUrl() + upstreamPath);
+
+        long start = System.currentTimeMillis();
+        try {
+            ResponseEntity<byte[]> entity = client.method(HttpMethod.GET)
+                    .uri(absoluteUri)
+                    .retrieve()
+                    .onStatus(s -> true, r -> Mono.empty())
+                    .toEntity(byte[].class)
+                    .block(timeoutBudget());
+
+            long duration = System.currentTimeMillis() - start;
+            int status = entity == null ? 502 : entity.getStatusCode().value();
+            log.info("proxy wrapper_path={} upstream_path={} status={} duration_ms={}",
+                    wrapperPath, upstreamPath, status, duration);
+
+            return buildEntityReportPdfResponse(entity, entityId, upstreamPath);
+        } catch (Exception ex) {
+            long duration = System.currentTimeMillis() - start;
+            log.warn("proxy upstream_error wrapper_path={} upstream_path={} duration_ms={} cause={}",
+                    wrapperPath, upstreamPath, duration, ex.getClass().getSimpleName());
+            // Connection failure / read timeout: no upstream status to report.
+            return entityReportPdfGatewayError(entityId, null, "upstream_unavailable");
+        }
+    }
+
+    private ResponseEntity<byte[]> buildEntityReportPdfResponse(ResponseEntity<byte[]> upstreamEntity,
+                                                                String entityId,
+                                                                String upstreamPath) {
+        if (upstreamEntity == null) {
+            return entityReportPdfGatewayError(entityId, null, "upstream_unavailable");
+        }
+        int status = upstreamEntity.getStatusCode().value();
+        byte[] body = upstreamEntity.getBody();
+        HttpHeaders upstreamHeaders = upstreamEntity.getHeaders();
+
+        // 200: raw PDF bytes — relay Content-Type and Content-Disposition unchanged.
+        if (status >= 200 && status < 300) {
+            HttpHeaders out = new HttpHeaders();
+            MediaType ct = upstreamHeaders.getContentType();
+            out.setContentType(ct != null ? ct : MediaType.APPLICATION_PDF);
+            String disposition = upstreamHeaders.getFirst(HttpHeaders.CONTENT_DISPOSITION);
+            if (disposition != null) {
+                out.set(HttpHeaders.CONTENT_DISPOSITION, disposition);
+            }
+            return ResponseEntity.status(status).headers(out).body(body);
+        }
+
+        // 404: genuine not-found with a short text/plain message — forward through as-is.
+        if (status == 404) {
+            HttpHeaders out = new HttpHeaders();
+            MediaType ct = upstreamHeaders.getContentType();
+            out.setContentType(ct != null ? ct : MediaType.TEXT_PLAIN);
+            return ResponseEntity.status(404).headers(out).body(body);
+        }
+
+        if (status >= 500) {
+            // Decode for logging only (never forwarded) so 5xx diagnostics stay readable.
+            logUpstream5xx(body == null ? null : new String(body, StandardCharsets.UTF_8), upstreamPath);
+        }
+        return entityReportPdfGatewayError(entityId, status, "upstream_failure");
+    }
+
+    private ResponseEntity<byte[]> entityReportPdfGatewayError(String entityId,
+                                                               Integer upstreamStatus,
+                                                               String error) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", error);
+        body.put("entityId", entityId);
+        body.put("upstreamStatus", upstreamStatus);
+        byte[] bytes;
+        try {
+            bytes = objectMapper.writeValueAsBytes(body);
+        } catch (JsonProcessingException e) {
+            bytes = ("{\"error\":\"upstream_failure\",\"entityId\":null,\"upstreamStatus\":"
+                    + (upstreamStatus == null ? "null" : upstreamStatus) + "}")
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        return ResponseEntity.status(502)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(bytes);
+    }
+
     private ResponseEntity<String> entityReportGatewayError(String entityId,
                                                             Integer upstreamStatus,
                                                             String error) {

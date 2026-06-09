@@ -178,19 +178,23 @@ public class AuraMathMarketingProxyController {
     // ------------------------------------------------------------------
     // Entity intelligence reports
     //
-    // Two upstream routes return byte-identical "entity intelligence report"
-    // payloads; the only difference is intended audience. Both translate the
-    // upstream "No entity found" 200 into a 404, pass the "no scored history"
-    // 200 through unchanged, and map upstream 5xx / timeouts to a 502 envelope.
+    // Two upstream report surfaces with different shapes:
+    //  - entity-report/{id} (prospect-facing) → upstream PDF endpoint: binary
+    //    application/pdf on 200 (bytes + Content-Disposition relayed verbatim), a real
+    //    text/plain 404 forwarded through, upstream 5xx / timeout mapped to a 502 envelope.
+    //  - entity/{id}/report (in-app) → JSON report: the upstream "No entity found" 200 is
+    //    translated to a 404, the "no scored history" 200 passes through unchanged, and
+    //    upstream 5xx / timeout map to a 502 envelope.
     // ------------------------------------------------------------------
 
-    @Operation(summary = "Shareable entity intelligence report (prospect-facing)")
-    @GetMapping(value = "/entity-report/{entityId}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> shareableEntityReport(@PathVariable("entityId") String entityId) {
+    @Operation(summary = "Shareable entity intelligence report PDF (prospect-facing)")
+    @GetMapping(value = "/entity-report/{entityId}",
+            produces = { MediaType.APPLICATION_PDF_VALUE, MediaType.TEXT_PLAIN_VALUE, MediaType.APPLICATION_JSON_VALUE })
+    public ResponseEntity<byte[]> shareableEntityReport(@PathVariable("entityId") String entityId) {
         requireEntityId(entityId);
-        return proxy.forwardEntityReport(
+        return proxy.forwardEntityReportPdf(
                 "/v1/marketing/entity-report/{entityId}",
-                "/api/marketing/entity-report/" + encodeSegment(entityId),
+                "/api/marketing/entity-report/" + encodeSegment(entityId) + "/pdf",
                 entityId
         );
     }
@@ -226,7 +230,7 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/potential-fans", "/api/marketing/celebrity/{celebrity}/potential-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/super-fans", "/api/marketing/celebrity/{celebrity}/super-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/channel-strategy", "/api/marketing/celebrity/{celebrity}/channel-strategy"));
-        routes.add(route("GET", "/v1/marketing/entity-report/{entityId}", "/api/marketing/entity-report/{entityId}"));
+        routes.add(route("GET", "/v1/marketing/entity-report/{entityId}", "/api/marketing/entity-report/{entityId}/pdf"));
         routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
 
         Map<String, Object> payload = new LinkedHashMap<>();
