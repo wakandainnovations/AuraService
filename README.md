@@ -430,6 +430,141 @@ DELETE /api/entities/movie/1
 
 ---
 
+### 8a. Generate Entity Marketing Report
+
+**Endpoint:** `GET /api/entities/{entityType}/{id}/marketing-report`
+
+**Description:** Generate a single, complete, **prospect-facing** marketing intelligence report for a managed entity. It is designed to be shown at a high level to a production house's potential customers, so the most flattering, headline numbers are surfaced first and a deterministic `highlights` narrative summarizes them.
+
+The report aggregates this service's own analytics with the upstream **AuraMath** entity report:
+
+- **Headline metrics** — total mentions, overall sentiment, positivity ratio, positive/negative/neutral split, net sentiment score, and the number of platforms covered (from the same data behind `GET /api/dashboard/{entityId}/stats` and `/stats/avg`).
+- **Competitive positioning** — the entity plus every tracked competitor (the competitor snapshot), ranked by net sentiment, with the entity's `rank`, the current `leaderName`, and a `leadsCategory` flag.
+- **Sentiment trend** — the sentiment-over-time series with checkpoint markers for the selected `period`.
+- **Platform reach** — per-platform mention counts broken down by sentiment.
+- **Defining moments** — before/after checkpoint impact (same shape as `GET /api/dashboard/{entityId}/checkpoint-impact`).
+- **AuraMath intelligence** — the upstream `GET /api/marketing/entity-report/{entityId}` payload, embedded verbatim. The internal numeric entity `id` is reused as the AuraMath `entityId` (an opaque `managed_entities` id).
+- **Highlights** — deterministic, human-readable bullets derived from the metrics above, ready to render directly in a deck or one-pager.
+
+**Graceful degradation:** every section except the entity profile and headline metrics is optional. If a downstream source (notably AuraMath) is unavailable, that section is omitted (`null`) rather than failing the whole report — `auraMathStatus` reports `"ok"` or `"unavailable"`. Only a genuinely missing entity fails the request.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
+- `id` - Entity ID (e.g., 1)
+
+**Query Parameters:**
+- `period` (optional, default: `DAY30`) — Window for the sentiment trend / momentum sections. One of `DAY`, `DAY15`, `DAY30`, `DAY90`, `WEEK`, `MONTH`, `MONTH6`.
+- `windowDays` (optional, default: `7`) — Days before/after each checkpoint for the defining-moments impact. Must be 1–30.
+
+**Example Request:**
+```
+GET /api/entities/movie/1/marketing-report?period=DAY30&windowDays=7
+```
+
+**Response (sections abbreviated for readability):**
+```json
+{
+  "generatedAt": "2026-06-11T08:30:00Z",
+  "period": "DAY30",
+  "entity": {
+    "id": 1,
+    "name": "The Quantum Paradox",
+    "type": "MOVIE",
+    "director": "Christopher Nolan",
+    "actors": ["Leonardo DiCaprio", "Emma Stone", "Tom Hardy"],
+    "keywords": ["sci-fi", "thriller", "mind-bending"],
+    "competitors": [
+      { "id": 3, "name": "Inception 2", "type": "MOVIE" }
+    ],
+    "releaseDate": "2026-07-01"
+  },
+  "headlineMetrics": {
+    "totalMentions": 8000,
+    "overallSentiment": 0.62,
+    "positivityRatio": 0.70,
+    "positiveSentiment": 0.70,
+    "negativeSentiment": 0.14,
+    "neutralSentiment": 0.16,
+    "netSentimentScore": 5.0,
+    "platformsCovered": 4
+  },
+  "competitivePositioning": {
+    "snapshot": [
+      { "entityName": "The Quantum Paradox", "totalMentions": 8000, "overallSentiment": 0.62, "positiveRatio": 0.70, "netSentimentScore": 5.0 },
+      { "entityName": "Inception 2", "totalMentions": 5000, "overallSentiment": 0.40, "positiveRatio": 0.50, "netSentimentScore": 2.0 }
+    ],
+    "totalTracked": 2,
+    "rank": 1,
+    "leadsCategory": true,
+    "leaderName": "The Quantum Paradox"
+  },
+  "sentimentTrend": {
+    "entities": [
+      {
+        "name": "The Quantum Paradox",
+        "sentiments": [
+          { "date": "2026-05-13", "positive": 220, "negative": 40, "neutral": 30 }
+        ],
+        "checkpoints": [
+          { "date": "2026-05-20", "description": "Trailer Launch" }
+        ]
+      }
+    ]
+  },
+  "platformReach": {
+    "YOUTUBE": { "POSITIVE": 212, "NEGATIVE": 53, "NEUTRAL": 13 },
+    "INSTAGRAM": { "POSITIVE": 37, "NEGATIVE": 1, "NEUTRAL": 3 }
+  },
+  "definingMoments": {
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "windowDays": 7,
+    "impacts": [
+      {
+        "checkpointId": 10,
+        "checkpointDate": "2026-05-20",
+        "description": "Trailer Launch",
+        "positiveRatioChange": 0.12,
+        "netSentimentChange": 1.95,
+        "impactDirection": "IMPROVED"
+      }
+    ]
+  },
+  "auraMathIntelligence": {
+    "score": 91,
+    "verdict": "blockbuster"
+  },
+  "auraMathStatus": "ok",
+  "highlights": [
+    "8.0K mentions analysed across 4 platforms of audience conversation",
+    "70% of all mentions are positive",
+    "5.0 positive mentions for every negative one",
+    "Leads its category — #1 of 2 tracked titles on net sentiment",
+    "Strongest reach on YOUTUBE",
+    "Tracking sentiment around the 2026-07-01 release"
+  ]
+}
+```
+
+**Response fields:**
+- `auraMathStatus` — `"ok"` when the upstream AuraMath report was embedded in `auraMathIntelligence`, otherwise `"unavailable"` (and `auraMathIntelligence` is omitted).
+- `competitivePositioning.snapshot` — the entity plus its tracked competitors, each with its own reach/sentiment metrics; `rank` is the entity's 1-based standing by net sentiment, and `leadsCategory` is `true` when it tops that ranking.
+- `highlights` — deterministic strings derived from the metrics; the set returned depends on which sections were available and which thresholds were crossed.
+- Any optional section that could not be computed (e.g. `sentimentTrend`, `competitivePositioning`, `platformReach`, `definingMoments`, `auraMathIntelligence`) is omitted from the payload rather than returned as `null`.
+
+The embedded AuraMath payload is the same one exposed by the proxy wrapper `GET /v1/marketing/entity-report/{entityId}` — see [AuraMath Marketing Proxy](#auramath-marketing-proxy-v1marketing).
+
+**Status Codes:**
+- `200 OK` — Report generated (possibly with some optional sections omitted).
+- `400 Bad Request` — Entity not found, the entity is not of the given `entityType`, or `windowDays` is outside 1–30.
+
+---
+
 ## Checkpoint Management APIs
 
 Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.
