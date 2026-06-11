@@ -186,7 +186,7 @@ class EntityMarketingReportServiceTest {
         boolean throwOnPlatform;
 
         StubDashboardService() {
-            super(null, null, null, null, null);
+            super(null, null, null, null, null, null);
         }
 
         @Override

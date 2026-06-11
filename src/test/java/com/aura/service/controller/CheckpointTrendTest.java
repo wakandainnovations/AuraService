@@ -10,6 +10,7 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.service.DashboardService;
+import com.aura.service.service.ImpressionsResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -53,7 +54,8 @@ class CheckpointTrendTest {
 
         DashboardService dashboardService = new DashboardService(
                 mentionRepository, entityRepository, replyDraftRepository,
-                crisisPlanRepository, checkpointRepository);
+                crisisPlanRepository, checkpointRepository,
+                new ImpressionsResolver(mentionRepository));
 
         DashboardController controller = new DashboardController(
                 dashboardService, null, null, null);

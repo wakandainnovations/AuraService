@@ -20,6 +20,7 @@ import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.ImpressionsResolver;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.MobilizeAlliesService;
 import com.aura.service.service.ReplyTemplateService;
@@ -54,6 +55,7 @@ public class MentionActionController {
     private final UserRepository userRepository;
     private final MobilizeAlliesService mobilizeAlliesService;
     private final ReplyTemplateService replyTemplateService;
+    private final ImpressionsResolver impressionsResolver;
 
     @Value("${llm.prompt.generate.reply}")
     private String generateReplyPrompt;
@@ -296,7 +298,8 @@ public class MentionActionController {
                 mention.getPostDate(),
                 mention.getSentiment(),
                 mention.getPermalink(),
-                mention.getSentimentScore()
+                mention.getSentimentScore(),
+                impressionsResolver.resolveForMention(mention)
         );
     }
 }

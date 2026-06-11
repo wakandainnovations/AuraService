@@ -8,6 +8,7 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.service.ImpressionsResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -41,7 +42,8 @@ class DashboardServiceHourlyActivityTest {
                 entityRepository,
                 mock(ReplyDraftRepository.class),
                 mock(CrisisPlanRepository.class),
-                mock(CheckpointRepository.class)
+                mock(CheckpointRepository.class),
+                new ImpressionsResolver(mentionRepository)
         );
     }
 

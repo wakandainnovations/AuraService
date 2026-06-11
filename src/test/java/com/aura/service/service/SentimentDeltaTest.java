@@ -10,6 +10,7 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.service.ImpressionsResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -45,7 +46,8 @@ class SentimentDeltaTest {
                 mock(ManagedEntityRepository.class),
                 mock(ReplyDraftRepository.class),
                 mock(CrisisPlanRepository.class),
-                checkpointRepository
+                checkpointRepository,
+                new ImpressionsResolver(mentionRepository)
         );
 
         DashboardController controller = new DashboardController(service, null, null, null);

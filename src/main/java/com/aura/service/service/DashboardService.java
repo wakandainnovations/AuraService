@@ -41,6 +41,7 @@ public class DashboardService {
     private final ReplyDraftRepository replyDraftRepository;
     private final CrisisPlanRepository crisisPlanRepository;
     private final CheckpointRepository checkpointRepository;
+    private final ImpressionsResolver impressionsResolver;
     
     public EntityStatsResponse getEntityStats(Long entityId) {
         long totalMentions = mentionRepository.countByManagedEntityId(entityId);
@@ -495,7 +496,8 @@ public class DashboardService {
         );
 
         Map<Long, ActionHistorySummary> summaries = loadActionSummaries(mentions.getContent());
-        return mentions.map(m -> mapToMentionResponseWithActions(m, summaries));
+        Map<Long, String> impressions = impressionsResolver.resolveForMentions(mentions.getContent());
+        return mentions.map(m -> mapToMentionResponseWithActions(m, summaries, impressions));
     }
     
     public Page<MentionResponse> getClusterMentions(
@@ -531,7 +533,8 @@ public class DashboardService {
         Page<Mention> mentionPage = new PageImpl<>(pageContent, pageable, filteredMentions.size());
 
         Map<Long, ActionHistorySummary> summaries = loadActionSummaries(pageContent);
-        return mentionPage.map(m -> mapToMentionResponseWithActions(m, summaries));
+        Map<Long, String> impressions = impressionsResolver.resolveForMentions(pageContent);
+        return mentionPage.map(m -> mapToMentionResponseWithActions(m, summaries, impressions));
     }
     
     public HourlyActivityResponse getHourlyActivity(
@@ -606,7 +609,8 @@ public class DashboardService {
 
     private MentionResponse mapToMentionResponseWithActions(
             Mention mention,
-            Map<Long, ActionHistorySummary> summaries
+            Map<Long, ActionHistorySummary> summaries,
+            Map<Long, String> impressions
     ) {
         ActionHistorySummary summary = summaries.getOrDefault(
                 mention.getId(), new ActionHistorySummary(0, 0, false));
@@ -621,6 +625,7 @@ public class DashboardService {
                 mention.getSentiment(),
                 mention.getPermalink(),
                 mention.getSentimentScore(),
+                impressions.getOrDefault(mention.getId(), ImpressionsResolver.NOT_AVAILABLE),
                 AVAILABLE_ACTIONS,
                 summary
         );

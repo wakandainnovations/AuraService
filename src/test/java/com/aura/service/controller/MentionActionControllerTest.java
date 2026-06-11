@@ -20,6 +20,7 @@ import com.aura.service.service.MobilizeAlliesService;
 import com.aura.service.service.ReplyTemplateService;
 import com.aura.service.service.SocialMediaService;
 import com.aura.service.service.TopSpreaderLookupService;
+import com.aura.service.service.ImpressionsResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -122,7 +123,8 @@ class MentionActionControllerTest {
         spreaderLookup = new StubSpreaderLookup();
 
         MobilizeAlliesService mobilizeAlliesService =
-                new MobilizeAlliesService(mentionRepository, spreaderLookup, llmService);
+                new MobilizeAlliesService(mentionRepository, spreaderLookup, llmService,
+                        new ImpressionsResolver(mentionRepository));
         ReflectionTestUtils.setField(mobilizeAlliesService, "allyDmPromptTemplate", ALLY_DM_PROMPT_TEMPLATE);
 
         MentionActionController controller = new MentionActionController(
@@ -134,7 +136,8 @@ class MentionActionControllerTest {
                 mobilizeActionRepository,
                 userRepository,
                 mobilizeAlliesService,
-                new ReplyTemplateService(mock(ReplyTemplateRepository.class))
+                new ReplyTemplateService(mock(ReplyTemplateRepository.class)),
+                new ImpressionsResolver(mentionRepository)
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);

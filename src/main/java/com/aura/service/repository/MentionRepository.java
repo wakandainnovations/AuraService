@@ -79,6 +79,12 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     @Query("SELECT m.platform, m.sentiment, COUNT(m) FROM Mention m WHERE m.managedEntity.id = :entityId GROUP BY m.platform, m.sentiment")
     List<Object[]> countByPlatformForEntity(@Param("entityId") Long entityId);
 
+    // x_posts is populated by the ingestion pipeline and has no JPA entity in this service;
+    // views_count is X's impression metric. The other platform tables carry no impression data.
+    @Query(value = "SELECT x.id, x.views_count FROM x_posts x WHERE x.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findXPostViewsCounts(@Param("postIds") Collection<String> postIds);
+
     @Query(value = "SELECT * FROM mentions m WHERE " +
            "(:entityIds IS NULL OR m.managed_entity_id IN (:entityIds)) " +
            "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR))",

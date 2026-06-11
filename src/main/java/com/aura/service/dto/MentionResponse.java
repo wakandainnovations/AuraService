@@ -26,6 +26,9 @@ public class MentionResponse {
     private String permalink;
     private Short sentimentScore;
 
+    /** Impression/view count of the post as reported by the source platform, or "NA" when unavailable. */
+    private String impressions;
+
     @JsonProperty("available_actions")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private List<String> availableActions;
@@ -36,8 +39,8 @@ public class MentionResponse {
 
     public MentionResponse(Long id, Long managedEntityId, Platform platform, String postId,
                            String content, String author, Instant postDate, Sentiment sentiment,
-                           String permalink, Short sentimentScore) {
+                           String permalink, Short sentimentScore, String impressions) {
         this(id, managedEntityId, platform, postId, content, author, postDate, sentiment,
-                permalink, sentimentScore, null, null);
+                permalink, sentimentScore, impressions, null, null);
     }
 }

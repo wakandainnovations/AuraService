@@ -46,6 +46,7 @@ public class MobilizeAlliesService {
     private final MentionRepository mentionRepository;
     private final TopSpreaderLookupService spreaderLookup;
     private final LLMService llmService;
+    private final ImpressionsResolver impressionsResolver;
 
     @Value("${llm.prompt.generate.ally.dm}")
     private String allyDmPromptTemplate;
@@ -242,7 +243,8 @@ public class MobilizeAlliesService {
                 mention.getPostDate(),
                 mention.getSentiment(),
                 mention.getPermalink(),
-                mention.getSentimentScore()
+                mention.getSentimentScore(),
+                impressionsResolver.resolveForMention(mention)
         );
     }
 }
