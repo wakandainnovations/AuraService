@@ -8,6 +8,7 @@ A complete Java Spring Boot backend application for managing online reputation f
 - **Framework:** Spring Boot 3.2.0
 - **Database:** H2 (in-memory)
 - **Authentication:** Spring Security 6 with JWT
+- **PDF Generation:** OpenPDF 1.3.30
 - **Build Tool:** Maven
 
 ## Getting Started
@@ -561,6 +562,51 @@ The embedded AuraMath payload is the same one exposed by the proxy wrapper `GET 
 
 **Status Codes:**
 - `200 OK` — Report generated (possibly with some optional sections omitted).
+- `400 Bad Request` — Entity not found, the entity is not of the given `entityType`, or `windowDays` is outside 1–30.
+
+---
+
+### 8b. Generate Entity Marketing Report (PDF)
+
+**Endpoint:** `GET /api/entities/{entityType}/{id}/marketing-report/pdf`
+
+**Description:** The same complete marketing intelligence report as [8a](#8a-generate-entity-marketing-report), rendered as a polished, downloadable **PDF** suitable for sharing directly with a production house's potential customers. It runs the identical aggregation (so the same `period` / `windowDays` parameters apply and the same graceful-degradation rules hold) and lays the result out as a branded document: a header with the entity profile, the highlights, headline-metric cards, and tables for competitive positioning, platform reach, defining moments, the sentiment trend, and the embedded AuraMath intelligence. Sections absent from the underlying report are simply omitted from the PDF.
+
+The PDF is generated server-side with [OpenPDF](https://github.com/LibrePDF/OpenPDF); no upstream PDF call is involved (contrast with the proxy passthrough `GET /v1/marketing/entity-report/{entityId}`, which forwards AuraMath's own PDF).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
+- `id` - Entity ID (e.g., 1)
+
+**Query Parameters:**
+- `period` (optional, default: `DAY30`) — Window for the sentiment trend / momentum sections. One of `DAY`, `DAY15`, `DAY30`, `DAY90`, `WEEK`, `MONTH`, `MONTH6`.
+- `windowDays` (optional, default: `7`) — Days before/after each checkpoint for the defining-moments impact. Must be 1–30.
+
+**Example Request:**
+```
+GET /api/entities/movie/1/marketing-report/pdf?period=DAY30
+```
+
+**cURL example (saves the file):**
+```bash
+curl -X GET "http://localhost:8080/api/entities/movie/1/marketing-report/pdf" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
+  -OJ
+```
+
+**Response:** Binary `application/pdf` body.
+
+**Response Headers:**
+- `Content-Type: application/pdf`
+- `Content-Disposition: attachment; filename="marketing-report-{slug}.pdf"` — the filename is derived from the entity name, lower-cased and slugified (e.g. `The Quantum Paradox` → `marketing-report-the-quantum-paradox.pdf`; falls back to `marketing-report-entity.pdf` when the name is missing).
+
+**Status Codes:**
+- `200 OK` — PDF generated.
 - `400 Bad Request` — Entity not found, the entity is not of the given `entityType`, or `windowDays` is outside 1–30.
 
 ---

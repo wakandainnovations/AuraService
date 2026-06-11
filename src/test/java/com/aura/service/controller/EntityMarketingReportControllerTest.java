@@ -4,20 +4,26 @@ import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.EntityMarketingReportResponse;
 import com.aura.service.dto.EntityMarketingReportResponse.HeadlineMetrics;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.service.EntityMarketingReportPdfService;
 import com.aura.service.service.EntityMarketingReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.ByteArrayHttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -26,18 +32,23 @@ class EntityMarketingReportControllerTest {
     private static final Long ENTITY_ID = 42L;
 
     private StubReportService reportService;
+    private StubPdfService pdfService;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         reportService = new StubReportService();
-        EntityMarketingReportController controller = new EntityMarketingReportController(reportService);
+        pdfService = new StubPdfService();
+        EntityMarketingReportController controller =
+                new EntityMarketingReportController(reportService, pdfService);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
+                .setMessageConverters(
+                        new MappingJackson2HttpMessageConverter(mapper),
+                        new ByteArrayHttpMessageConverter())
                 .build();
     }
 
@@ -79,6 +90,44 @@ class EntityMarketingReportControllerTest {
 
         org.assertj.core.api.Assertions.assertThat(reportService.lastPeriod).isEqualTo(TimePeriod.DAY90);
         org.assertj.core.api.Assertions.assertThat(reportService.lastWindowDays).isEqualTo(14);
+    }
+
+    @Test
+    void returnsPdf_withAttachmentHeaders() throws Exception {
+        EntityDetailResponse entity = new EntityDetailResponse();
+        entity.setName("Vikram");
+        reportService.response = EntityMarketingReportResponse.builder().entity(entity).build();
+        pdfService.bytes = "%PDF-1.4 stub".getBytes(StandardCharsets.ISO_8859_1);
+        pdfService.fileName = "marketing-report-vikram.pdf";
+
+        mvc.perform(get("/api/entities/{entityType}/{id}/marketing-report/pdf", "movie", ENTITY_ID))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+                .andExpect(header().string("Content-Disposition",
+                        "attachment; filename=\"marketing-report-vikram.pdf\""))
+                .andExpect(content().bytes(pdfService.bytes));
+
+        // The PDF route flows through the same generation path with the same defaults.
+        org.assertj.core.api.Assertions.assertThat(reportService.lastType).isEqualTo("MOVIE");
+        org.assertj.core.api.Assertions.assertThat(reportService.lastPeriod).isEqualTo(TimePeriod.DAY30);
+        org.assertj.core.api.Assertions.assertThat(pdfService.rendered).isSameAs(reportService.response);
+    }
+
+    static class StubPdfService extends EntityMarketingReportPdfService {
+        byte[] bytes = new byte[0];
+        String fileName = "marketing-report-entity.pdf";
+        EntityMarketingReportResponse rendered;
+
+        @Override
+        public byte[] render(EntityMarketingReportResponse report) {
+            this.rendered = report;
+            return bytes;
+        }
+
+        @Override
+        public String fileName(EntityMarketingReportResponse report) {
+            return fileName;
+        }
     }
 
     static class StubReportService extends EntityMarketingReportService {

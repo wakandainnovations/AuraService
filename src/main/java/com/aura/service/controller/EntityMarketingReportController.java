@@ -2,6 +2,7 @@ package com.aura.service.controller;
 
 import com.aura.service.dto.EntityMarketingReportResponse;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.service.EntityMarketingReportPdfService;
 import com.aura.service.service.EntityMarketingReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -9,6 +10,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class EntityMarketingReportController {
 
     private final EntityMarketingReportService reportService;
+    private final EntityMarketingReportPdfService pdfService;
 
     @Operation(summary = "Generate a complete marketing intelligence report for an entity")
     @GetMapping("/marketing-report")
@@ -46,5 +51,27 @@ public class EntityMarketingReportController {
         EntityMarketingReportResponse report = reportService.generateReport(
                 entityType.toUpperCase(), id, period, windowDays);
         return ResponseEntity.ok(report);
+    }
+
+    @Operation(summary = "Generate the complete marketing intelligence report as a downloadable PDF")
+    @GetMapping(value = "/marketing-report/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> getMarketingReportPdf(
+            @PathVariable String entityType,
+            @PathVariable Long id,
+            @Parameter(description = "Window for the sentiment trend / momentum sections")
+            @RequestParam(defaultValue = "DAY30") TimePeriod period,
+            @Parameter(description = "Days before/after each checkpoint for the defining-moments impact")
+            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays
+    ) {
+        EntityMarketingReportResponse report = reportService.generateReport(
+                entityType.toUpperCase(), id, period, windowDays);
+        byte[] pdf = pdfService.render(report);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(pdfService.fileName(report)).build());
+        headers.setContentLength(pdf.length);
+        return new ResponseEntity<>(pdf, headers, org.springframework.http.HttpStatus.OK);
     }
 }
