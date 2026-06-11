@@ -28,10 +28,12 @@ import java.io.ByteArrayOutputStream;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Renders an {@link EntityMarketingReportResponse} into a polished, prospect-facing PDF using
@@ -46,9 +48,17 @@ public class EntityMarketingReportPdfService {
 
     private static final Color BRAND = new Color(0x1F, 0x2D, 0x5A);     // deep navy
     private static final Color ACCENT = new Color(0x2E, 0x86, 0xDE);    // blue
+    private static final Color ACCENT_SOFT = new Color(0xEA, 0xF2, 0xFC);
     private static final Color HEADER_BG = new Color(0x1F, 0x2D, 0x5A);
     private static final Color ROW_ALT = new Color(0xF2, 0xF5, 0xFA);
     private static final Color MUTED = new Color(0x6B, 0x72, 0x80);
+    private static final Color POSITIVE = new Color(0x16, 0xA3, 0x6E);
+    private static final Color NEUTRAL = new Color(0x94, 0x9C, 0xB0);
+    private static final Color NEGATIVE = new Color(0xE1, 0x46, 0x46);
+    private static final Color AMBER = new Color(0xD6, 0x9E, 0x2E);
+    private static final Color GREEN_SOFT = new Color(0xE8, 0xF7, 0xF0);
+    private static final Color AMBER_SOFT = new Color(0xFC, 0xF6, 0xE8);
+    private static final Color RED_SOFT = new Color(0xFC, 0xEB, 0xEB);
 
     private static final Font TITLE = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, Color.WHITE);
     private static final Font SUBTITLE = FontFactory.getFont(FontFactory.HELVETICA, 11, new Color(0xD5, 0xDD, 0xEE));
@@ -58,6 +68,12 @@ public class EntityMarketingReportPdfService {
     private static final Font BODY_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.BLACK);
     private static final Font TH = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, Color.WHITE);
     private static final Font HIGHLIGHT = FontFactory.getFont(FontFactory.HELVETICA, 11, Color.BLACK);
+    private static final Font SUBSECTION = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11.5f, ACCENT);
+    private static final Font CALLOUT = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 9.5f, Color.BLACK);
+    private static final Font CARD_TITLE = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10.5f, Color.BLACK);
+    private static final Font BAR_LABEL = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8.5f, Color.WHITE);
+    private static final Font PLAN_TITLE = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, new Color(0xC4, 0xC7, 0xF0));
+    private static final Font PLAN_BODY = FontFactory.getFont(FontFactory.HELVETICA, 10, Color.WHITE);
 
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm 'UTC'", Locale.US).withZone(ZoneOffset.UTC);
@@ -284,28 +300,274 @@ public class EntityMarketingReportPdfService {
         document.add(table);
     }
 
+    /**
+     * Renders the embedded AuraMath entity-report with the same prospect-facing treatment the
+     * upstream {@code GET /api/marketing/entity-report/{id}/pdf} endpoint uses — structured
+     * subsections, tables, and callout cards — instead of dumping raw JSON. Sections the upstream
+     * did not include are skipped; fields this renderer does not recognise fall back to a
+     * humanized key/value table so new upstream sections still surface.
+     */
     private void addAuraMath(Document document, String status, JsonNode intelligence) throws DocumentException {
         sectionHeader(document, "AuraMath Intelligence");
         if (intelligence == null || !"ok".equals(status)) {
-            Paragraph p = new Paragraph("AuraMath intelligence was unavailable when this report was generated.",
-                    BODY_MUTED);
-            document.add(p);
+            document.add(new Paragraph("AuraMath intelligence was unavailable when this report was generated.",
+                    BODY_MUTED));
             return;
         }
-        if (intelligence.isObject()) {
-            PdfPTable table = fullWidthTable(new float[]{1.4f, 3});
-            int i = 0;
-            for (Iterator<String> it = intelligence.fieldNames(); it.hasNext(); ) {
-                String field = it.next();
-                JsonNode value = intelligence.get(field);
-                Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
-                bodyCell(table, prettyKey(field), bg, Element.ALIGN_LEFT, true);
-                bodyCell(table, value != null && value.isValueNode() ? value.asText() : String.valueOf(value),
-                        bg, Element.ALIGN_LEFT, false);
+        if (!intelligence.isObject()) {
+            document.add(new Paragraph(summarize(intelligence), BODY));
+            return;
+        }
+        // Degraded upstream shapes (entity not found / no history) carry a plain message
+        // instead of the section payload.
+        if (intelligence.has("message") && !intelligence.has("entityProfile")) {
+            document.add(new Paragraph(intelligence.get("message").asText(), BODY_MUTED));
+            return;
+        }
+
+        addAuraMathEntityProfile(document, intelligence.get("entityProfile"));
+        addAuraMathConversation(document, intelligence.get("conversationProfile"));
+        addAuraMathTopics(document, intelligence.get("topicIntelligence"));
+        addAuraMathSentiment(document, intelligence.get("audienceSentiment"));
+        addAuraMathChannels(document, intelligence.get("channelStrategy"));
+        addAuraMathAdvocates(document, intelligence.get("topAdvocates"));
+        addAuraMathOpportunities(document, intelligence.get("opportunityFlags"));
+        addAuraMathRecommendations(document, intelligence.get("marketingRecommendations"));
+        addAuraMathRedFlags(document, intelligence.get("redFlags"));
+        addAuraMathOtherFields(document, intelligence);
+    }
+
+    /** Top-level entity-report fields rendered by a dedicated subsection (or intentionally skipped). */
+    private static final Set<String> AURAMATH_KNOWN_FIELDS = Set.of(
+            "entityProfile", "conversationProfile", "topicIntelligence", "audienceSentiment",
+            "channelStrategy", "topAdvocates", "marketingRecommendations", "redFlags",
+            "opportunityFlags", "generatedAt", "entityId", "message");
+
+    private void addAuraMathEntityProfile(Document document, JsonNode p) throws DocumentException {
+        if (p == null || !p.isObject()) {
+            return;
+        }
+        subsectionHeader(document, "Entity Profile");
+        List<String[]> rows = new ArrayList<>();
+        kv(rows, "Type", capitalize(text(p, "type")));
+        kv(rows, "Tracked keywords", joinArray(p.get("trackedKeywords")));
+        kv(rows, "Active platforms", joinArray(p.get("activePlatforms")));
+        kv(rows, "Posts analysed", text(p, "totalPosts"));
+        String audience = text(p, "audienceSize");
+        kv(rows, "Audience size", audience != null ? audience + " distinct authors" : null);
+        String first = text(p, "firstSeen");
+        String last = text(p, "lastSeen");
+        kv(rows, "Observation window", first != null && last != null ? first + "  —  " + last : null);
+        String span = text(p, "observationSpanDays");
+        String perDay = text(p, "averagePostsPerDay");
+        kv(rows, "Span", span != null
+                ? span + " days" + (perDay != null ? "  (" + perDay + " posts/day)" : "") : null);
+        kv(rows, "Virality tier", text(p, "viralityTier"));
+        addKvTable(document, rows);
+        callout(document, text(p, "viralityTierExplained"));
+    }
+
+    private void addAuraMathConversation(Document document, JsonNode c) throws DocumentException {
+        if (c == null || !c.isObject()) {
+            return;
+        }
+        subsectionHeader(document, "Virality & Conversation Dynamics");
+        String explained = text(c, "amplificationExplained");
+        if (explained != null) {
+            Paragraph p = new Paragraph(explained, BODY);
+            p.setSpacingAfter(6f);
+            document.add(p);
+        }
+        List<String[]> rows = new ArrayList<>();
+        kv(rows, "Branching ratio", text(c, "branchingRatio"));
+        kv(rows, "Distinct burst events", text(c, "distinctBurstEvents"));
+        kv(rows, "Most active day", text(c, "mostActiveDayOfWeek"));
+        kv(rows, "Peak activity windows", joinArray(c.get("peakActivityWindows")));
+        addKvTable(document, rows);
+        JsonNode burst = c.get("longestBurst");
+        if (burst != null && burst.isObject()) {
+            String desc = text(burst, "readableDescription");
+            callout(document, desc != null ? "Largest burst observed: " + desc : null);
+        }
+    }
+
+    private void addAuraMathTopics(Document document, JsonNode topics) throws DocumentException {
+        if (topics == null || !topics.isArray() || topics.isEmpty()) {
+            return;
+        }
+        subsectionHeader(document, "Topic Intelligence");
+        PdfPTable table = fullWidthTable(new float[]{1.8f, 1, 0.9f, 1.2f, 2.6f});
+        headerRow(table, "Keyword", "Mentions", "Bursts", "Tone", "Excitation profile");
+        int i = 0;
+        for (JsonNode topic : topics) {
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, orDash(text(topic, "keyword")), bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, orDash(text(topic, "totalMentions")), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, orDash(text(topic, "burstsTriggered")), bg, Element.ALIGN_RIGHT, false);
+            toneCell(table, text(topic, "dominantTone"), bg);
+            bodyCell(table, orDash(text(topic, "excitationProfile")), bg, Element.ALIGN_LEFT, false);
+        }
+        document.add(table);
+    }
+
+    private void addAuraMathSentiment(Document document, JsonNode s) throws DocumentException {
+        if (s == null || !s.isObject()) {
+            return;
+        }
+        subsectionHeader(document, "Audience Sentiment");
+        String label = text(s, "sentimentLabel");
+        String net = text(s, "netSentiment");
+        if (label != null) {
+            double netValue = s.path("netSentiment").asDouble(0);
+            Paragraph head = new Paragraph();
+            head.add(new Phrase(label, FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, sentimentColor(netValue))));
+            if (net != null) {
+                head.add(new Phrase("    (net sentiment " + net + ")", BODY_MUTED));
             }
-            document.add(table);
-        } else {
-            document.add(new Paragraph(intelligence.toString(), BODY));
+            head.setSpacingAfter(6f);
+            document.add(head);
+        }
+        JsonNode tones = s.get("toneBreakdown");
+        if (tones != null && tones.isObject()) {
+            long pos = tones.path("positive").asLong(0);
+            long neu = tones.path("neutral").asLong(0);
+            long neg = tones.path("negative").asLong(0);
+            if (pos + neu + neg > 0) {
+                document.add(toneBar(pos, neu, neg));
+            }
+        }
+    }
+
+    private void addAuraMathChannels(Document document, JsonNode ch) throws DocumentException {
+        if (ch == null || !ch.isObject()) {
+            return;
+        }
+        subsectionHeader(document, "Channel Strategy");
+        String headline = text(ch, "headline");
+        if (headline != null) {
+            Paragraph p = new Paragraph(headline, BODY_BOLD);
+            p.setSpacingAfter(6f);
+            document.add(p);
+        }
+        JsonNode channels = ch.get("channels");
+        if (channels == null || !channels.isArray() || channels.isEmpty()) {
+            return;
+        }
+        PdfPTable table = fullWidthTable(new float[]{2, 1, 1.4f});
+        headerRow(table, "Platform", "Posts", "Share of conversation");
+        int i = 0;
+        for (JsonNode c : channels) {
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, orDash(text(c, "platform")), bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, orDash(text(c, "postCount")), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, percent(c.path("share").asDouble(0)), bg, Element.ALIGN_RIGHT, false);
+        }
+        document.add(table);
+    }
+
+    private void addAuraMathAdvocates(Document document, JsonNode advocates) throws DocumentException {
+        if (advocates == null || !advocates.isArray() || advocates.isEmpty()) {
+            return;
+        }
+        subsectionHeader(document, "Top Advocates");
+        Paragraph note = new Paragraph(
+                "The highest-amplification voices already driving this conversation — natural seeding targets.",
+                BODY_MUTED);
+        note.setSpacingAfter(5f);
+        document.add(note);
+
+        PdfPTable table = fullWidthTable(new float[]{2.2f, 1.6f, 0.9f, 1.2f, 1});
+        headerRow(table, "Author", "Segment", "Posts", "Engagement", "Influence");
+        int i = 0;
+        for (JsonNode a : advocates) {
+            if (i >= 8) {
+                break;
+            }
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, advocateHandle(a), bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, orDash(text(a, "tribe_label")), bg, Element.ALIGN_LEFT, false);
+            bodyCell(table, orDash(text(a, "post_count")), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, orDash(text(a, "total_engagement")), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, a.hasNonNull("hawkes_alpha")
+                            ? String.format(Locale.US, "%.2f", a.get("hawkes_alpha").asDouble())
+                            : "—",
+                    bg, Element.ALIGN_RIGHT, false);
+        }
+        document.add(table);
+    }
+
+    private void addAuraMathOpportunities(Document document, JsonNode opps) throws DocumentException {
+        if (opps == null || !opps.isArray() || opps.isEmpty()) {
+            return;
+        }
+        subsectionHeader(document, "Why Now — Opportunities");
+        for (JsonNode op : opps) {
+            highlightCard(document, orDash(text(op, "opportunity")), text(op, "detail"), GREEN_SOFT, POSITIVE);
+        }
+    }
+
+    private void addAuraMathRecommendations(Document document, JsonNode r) throws DocumentException {
+        if (r == null || !r.isObject()) {
+            return;
+        }
+        subsectionHeader(document, "Recommended Play");
+        List<String[]> rows = new ArrayList<>();
+        kv(rows, "Primary channel", text(r, "primaryChannel"));
+        kv(rows, "Best time to engage", text(r, "bestTimeToEngage"));
+        kv(rows, "Campaign type", text(r, "campaignType"));
+        kv(rows, "Amplification potential", text(r, "amplificationPotential"));
+        kv(rows, "Estimated reach", text(r, "estimatedReachMultiplier"));
+        kv(rows, "Addressable audience", text(r, "addressableAudience"));
+        kv(rows, "Content triggers", joinArray(r.get("contentTriggers")));
+        kv(rows, "Content strategy", text(r, "contentStrategy"));
+        addKvTable(document, rows);
+
+        String advice = text(r, "actionableAdvice");
+        if (advice != null) {
+            PdfPTable box = fullWidthTable(1);
+            box.setSpacingBefore(8f);
+            PdfPCell cell = new PdfPCell();
+            cell.setBackgroundColor(BRAND);
+            cell.setBorder(0);
+            cell.setPadding(12f);
+            Paragraph title = new Paragraph("YOUR ACTION PLAN", PLAN_TITLE);
+            title.setSpacingAfter(4f);
+            cell.addElement(title);
+            Paragraph body = new Paragraph(advice, PLAN_BODY);
+            body.setLeading(14f);
+            cell.addElement(body);
+            box.addCell(cell);
+            document.add(box);
+        }
+    }
+
+    private void addAuraMathRedFlags(Document document, JsonNode flags) throws DocumentException {
+        if (flags == null || !flags.isArray() || flags.isEmpty()) {
+            return;
+        }
+        subsectionHeader(document, "Considerations");
+        for (JsonNode fl : flags) {
+            String severity = text(fl, "severity");
+            String sev = severity != null ? severity.toUpperCase(Locale.US) : "LOW";
+            Color soft = "HIGH".equals(sev) ? RED_SOFT : "MEDIUM".equals(sev) ? AMBER_SOFT : ROW_ALT;
+            Color stripe = "HIGH".equals(sev) ? NEGATIVE : "MEDIUM".equals(sev) ? AMBER : NEUTRAL;
+            highlightCard(document, orDash(text(fl, "flag")) + "   [" + sev + "]", text(fl, "detail"), soft, stripe);
+        }
+    }
+
+    /** Forward-compatibility: surface upstream fields this renderer doesn't know as readable key/values. */
+    private void addAuraMathOtherFields(Document document, JsonNode intelligence) throws DocumentException {
+        List<String[]> rows = new ArrayList<>();
+        for (Iterator<String> it = intelligence.fieldNames(); it.hasNext(); ) {
+            String field = it.next();
+            if (AURAMATH_KNOWN_FIELDS.contains(field)) {
+                continue;
+            }
+            kv(rows, prettyKey(field), summarize(intelligence.get(field)));
+        }
+        if (!rows.isEmpty()) {
+            subsectionHeader(document, "Additional Intelligence");
+            addKvTable(document, rows);
         }
     }
 
@@ -318,6 +580,128 @@ public class EntityMarketingReportPdfService {
         p.setSpacingBefore(14f);
         p.setSpacingAfter(6f);
         document.add(p);
+    }
+
+    private void subsectionHeader(Document document, String title) throws DocumentException {
+        Paragraph p = new Paragraph(title, SUBSECTION);
+        p.setSpacingBefore(10f);
+        p.setSpacingAfter(4f);
+        document.add(p);
+    }
+
+    /** Accent-striped italic note used for upstream explanations (virality tier, largest burst). */
+    private void callout(Document document, String textValue) throws DocumentException {
+        if (textValue == null || textValue.isBlank()) {
+            return;
+        }
+        PdfPTable table = fullWidthTable(new float[]{1.2f, 98.8f});
+        table.setSpacingBefore(6f);
+        PdfPCell stripe = new PdfPCell();
+        stripe.setBackgroundColor(ACCENT);
+        stripe.setBorder(0);
+        table.addCell(stripe);
+        PdfPCell cell = new PdfPCell(new Phrase(textValue, CALLOUT));
+        cell.setBackgroundColor(ACCENT_SOFT);
+        cell.setBorder(0);
+        cell.setPadding(9f);
+        table.addCell(cell);
+        document.add(table);
+    }
+
+    /** Colour-striped title + detail card used for opportunities and red flags. */
+    private void highlightCard(Document document, String title, String detail, Color bg, Color stripeColor)
+            throws DocumentException {
+        PdfPTable table = fullWidthTable(new float[]{1.4f, 98.6f});
+        table.setSpacingBefore(6f);
+        PdfPCell stripe = new PdfPCell();
+        stripe.setBackgroundColor(stripeColor);
+        stripe.setBorder(0);
+        table.addCell(stripe);
+
+        PdfPCell cell = new PdfPCell();
+        cell.setBackgroundColor(bg);
+        cell.setBorder(0);
+        cell.setPadding(10f);
+        Paragraph head = new Paragraph(title, CARD_TITLE);
+        head.setSpacingAfter(3f);
+        cell.addElement(head);
+        if (detail != null && !detail.isBlank()) {
+            Paragraph body = new Paragraph(detail, BODY);
+            body.setLeading(13f);
+            cell.addElement(body);
+        }
+        table.addCell(cell);
+        document.add(table);
+    }
+
+    /** Horizontal stacked proportion bar for the positive/neutral/negative tone split. */
+    private PdfPTable toneBar(long pos, long neu, long neg) {
+        long total = pos + neu + neg;
+        long[] counts = {pos, neu, neg};
+        Color[] colors = {POSITIVE, NEUTRAL, NEGATIVE};
+        String[] labels = {"Positive", "Neutral", "Negative"};
+        int segments = 0;
+        for (long c : counts) {
+            if (c > 0) {
+                segments++;
+            }
+        }
+        float[] widths = new float[segments];
+        int idx = 0;
+        for (long c : counts) {
+            if (c > 0) {
+                widths[idx++] = c;
+            }
+        }
+        PdfPTable bar = fullWidthTable(widths);
+        for (int i = 0; i < counts.length; i++) {
+            if (counts[i] <= 0) {
+                continue;
+            }
+            int pct = (int) Math.round(100.0 * counts[i] / total);
+            PdfPCell cell = new PdfPCell(new Phrase(labels[i] + "  " + pct + "%", BAR_LABEL));
+            cell.setBackgroundColor(colors[i]);
+            cell.setBorder(0);
+            cell.setPadding(6f);
+            cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            cell.setMinimumHeight(20f);
+            bar.addCell(cell);
+        }
+        return bar;
+    }
+
+    /** Renders the accumulated label/value pairs as a zebra-striped two-column table. */
+    private void addKvTable(Document document, List<String[]> rows) throws DocumentException {
+        if (rows.isEmpty()) {
+            return;
+        }
+        PdfPTable table = fullWidthTable(new float[]{1.4f, 3});
+        int i = 0;
+        for (String[] row : rows) {
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, row[0], bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, row[1], bg, Element.ALIGN_LEFT, false);
+        }
+        document.add(table);
+    }
+
+    private static void kv(List<String[]> rows, String label, String value) {
+        if (value != null && !value.isBlank()) {
+            rows.add(new String[]{label, value});
+        }
+    }
+
+    private void toneCell(PdfPTable table, String tone, Color bg) {
+        Color color = tone == null ? Color.BLACK
+                : "positive".equalsIgnoreCase(tone) ? POSITIVE
+                : "negative".equalsIgnoreCase(tone) ? NEGATIVE
+                : NEUTRAL;
+        PdfPCell cell = new PdfPCell(new Phrase(capitalize(orDash(tone)),
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, color)));
+        cell.setBackgroundColor(bg);
+        cell.setPadding(5f);
+        cell.setBorderColor(new Color(0xE6, 0xE9, 0xF0));
+        table.addCell(cell);
     }
 
     private Paragraph labelled(String label, String value) {
@@ -421,6 +805,133 @@ public class EntityMarketingReportPdfService {
             sb.append(k.getKeyword());
         }
         return sb.length() > 0 ? sb.toString() : null;
+    }
+
+    /** The text of a value-node field, or {@code null} when missing, null, or not a value node. */
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node != null ? node.get(field) : null;
+        if (value == null || value.isNull() || !value.isValueNode()) {
+            return null;
+        }
+        String s = value.asText();
+        return s.isBlank() ? null : s;
+    }
+
+    private static String orDash(String s) {
+        return s != null && !s.isBlank() ? s : "—";
+    }
+
+    /** Comma-joins an array of value nodes, or {@code null} when absent/empty. */
+    private static String joinArray(JsonNode array) {
+        if (array == null || !array.isArray() || array.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode item : array) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(item.isValueNode() ? item.asText() : summarize(item));
+        }
+        return sb.toString();
+    }
+
+    /** A readable plain-text rendering of an arbitrary node — never raw JSON syntax. */
+    private static String summarize(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return "";
+        }
+        if (node.isValueNode()) {
+            return node.asText();
+        }
+        StringBuilder sb = new StringBuilder();
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                if (sb.length() > 0) {
+                    sb.append("; ");
+                }
+                sb.append(summarize(item));
+            }
+            return sb.toString();
+        }
+        for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+            String field = it.next();
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+            sb.append(prettyKey(field)).append(": ").append(summarize(node.get(field)));
+        }
+        return sb.toString();
+    }
+
+    private static Color sentimentColor(double net) {
+        if (net >= 0.05) {
+            return POSITIVE;
+        }
+        if (net <= -0.05) {
+            return NEGATIVE;
+        }
+        return NEUTRAL;
+    }
+
+    /**
+     * A readable author handle from an advocate entry — primary-platform profile URL reduced to
+     * {@code @handle}, falling back to the raw URL, then the global user id.
+     */
+    private static String advocateHandle(JsonNode advocate) {
+        JsonNode handles = advocate.get("platform_handles");
+        if (handles != null && handles.isObject()) {
+            JsonNode byPlatform = handles.get("by_platform");
+            if (byPlatform == null || !byPlatform.isObject()) {
+                byPlatform = handles;
+            }
+            String primary = text(handles, "primary_platform");
+            JsonNode selected = primary != null ? byPlatform.get(primary) : null;
+            if (selected == null && byPlatform.fieldNames().hasNext()) {
+                selected = byPlatform.get(byPlatform.fieldNames().next());
+            }
+            if (selected != null && selected.isObject()) {
+                String url = text(selected, "profile_url");
+                String handle = handleFromProfileUrl(url);
+                if (handle != null) {
+                    return handle;
+                }
+                if (url != null) {
+                    return url;
+                }
+            } else if (selected != null && selected.isValueNode() && !selected.asText().isBlank()) {
+                // Legacy flat shape: values are plain handle strings.
+                return selected.asText();
+            }
+        }
+        return orDash(text(advocate, "global_user_id"));
+    }
+
+    /** Derive "@handle" from a profile URL, e.g. https://twitter.com/mmcLondon → @mmcLondon. */
+    private static String handleFromProfileUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        String u = url.trim();
+        int cut = u.indexOf('?');
+        if (cut >= 0) {
+            u = u.substring(0, cut);
+        }
+        cut = u.indexOf('#');
+        if (cut >= 0) {
+            u = u.substring(0, cut);
+        }
+        while (u.endsWith("/")) {
+            u = u.substring(0, u.length() - 1);
+        }
+        String last = u.substring(u.lastIndexOf('/') + 1);
+        if (last.startsWith("@")) {
+            last = last.substring(1);
+        }
+        if (last.isEmpty() || last.contains(".")) {
+            return null;
+        }
+        return "@" + last;
     }
 
     private static String prettyKey(String field) {
