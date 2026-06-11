@@ -1306,6 +1306,7 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
       "author": "movie_fan_123",
       "postDate": "2025-11-05T10:30:00Z",
       "sentiment": "POSITIVE",
+      "impressions": "15230",
       "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
       "action_history_summary": {
         "drafts": 1,
@@ -1322,6 +1323,7 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
       "author": "critic_sarah",
       "postDate": "2025-11-03T14:20:00Z",
       "sentiment": "POSITIVE",
+      "impressions": "8741",
       "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
       "action_history_summary": {
         "drafts": 0,
@@ -1339,6 +1341,9 @@ GET /api/dashboard/1/mentions?platform=X&page=0&size=5
   "last": false
 }
 ```
+
+**Per-mention `impressions` field:**
+- `impressions` — number of times the post was displayed on its source platform, returned as a string (e.g. `"15230"`). Only X currently exposes an impression metric (sourced from the ingestion pipeline's `x_posts.views_count`, batch-fetched per page); mentions on `REDDIT`, `INSTAGRAM` and `YOUTUBE` return `"NA"`, as do X mentions with no matching `x_posts` row. The same field is present on every `MentionResponse` returned by the mention-action endpoints (sections 23–26).
 
 **Per-mention action fields:**
 - `available_actions` — the full set of inline actions the UI can offer for any mention. Always `["draft-reply", "escalate", "mobilize", "report-abuse"]`; emitted on every mention so the frontend doesn't need a separate config call.
@@ -1388,6 +1393,7 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
       "author": "movie_fan_123",
       "postDate": "2025-11-05T10:30:00Z",
       "sentiment": "POSITIVE",
+      "impressions": "15230",
       "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
       "action_history_summary": {
         "drafts": 1,
@@ -1404,6 +1410,7 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
       "author": "critic_sarah",
       "postDate": "2025-11-03T14:20:00Z",
       "sentiment": "POSITIVE",
+      "impressions": "8741",
       "available_actions": ["draft-reply", "escalate", "mobilize", "report-abuse"],
       "action_history_summary": {
         "drafts": 0,
@@ -1422,7 +1429,7 @@ GET /api/dashboard/cluster/mentions?entityIds=1,2&platform=X&page=0&size=5
 }
 ```
 
-Each mention carries the same `available_actions` / `action_history_summary` fields as the single-entity endpoint above — see section 15 for the field semantics.
+Each mention carries the same `impressions`, `available_actions` and `action_history_summary` fields as the single-entity endpoint above — see section 16 for the field semantics.
 
 **Status Code:** `200 OK`
 
@@ -2215,7 +2222,8 @@ POST /api/mentions/9123/actions/draft-reply
     "postDate": "2026-05-21T11:50:00Z",
     "sentiment": "NEGATIVE",
     "permalink": "https://x.com/alice/status/9123",
-    "sentimentScore": 12
+    "sentimentScore": 12,
+    "impressions": "4821"
   },
   "draftId": 501,
   "generatedText": "We hear you, and we're sorry the film didn't land for you. If you have a moment, we'd love to know which scene fell flat — your feedback genuinely shapes what we make next."
@@ -2267,7 +2275,8 @@ Content-Type: application/json
     "postDate": "2026-05-21T11:50:00Z",
     "sentiment": "NEGATIVE",
     "permalink": "https://x.com/alice/status/9123",
-    "sentimentScore": 12
+    "sentimentScore": 12,
+    "impressions": "4821"
   },
   "draftId": 501,
   "text": "We hear you, and we're sorry the film didn't land for you...",
@@ -2317,7 +2326,8 @@ POST /api/mentions/9123/actions/escalate-to-crisis
     "postDate": "2026-05-21T11:50:00Z",
     "sentiment": "NEGATIVE",
     "permalink": "https://x.com/alice/status/9123",
-    "sentimentScore": 12
+    "sentimentScore": 12,
+    "impressions": "4821"
   },
   "planId": 88,
   "plan": "Immediate Response (0 to 4 Hours): ...\nAssessment & Intelligence: ...\nStakeholder Communication Strategy: ...\nAction & Remediation: ...\nMonitoring & Post-Mortem: ..."
@@ -2371,7 +2381,8 @@ POST /api/mentions/9123/actions/mobilize-allies
     "postDate": "2026-05-21T11:50:00Z",
     "sentiment": "POSITIVE",
     "permalink": "https://x.com/fan42/status/9123",
-    "sentimentScore": 88
+    "sentimentScore": 88,
+    "impressions": "12904"
   },
   "allies": [
     {
