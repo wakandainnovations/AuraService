@@ -9,6 +9,7 @@ import com.aura.service.dto.UpdateEntityRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.MovieIndustry;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
@@ -37,8 +38,8 @@ public class EntityService {
         entity.setActors(request.getActors());
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
-            entity.setLanguage(request.getLanguage());
             entity.setIndustry(request.getIndustry());
+            entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
@@ -65,8 +66,8 @@ public class EntityService {
         entity.setActors(request.getActors());
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
-            entity.setLanguage(request.getLanguage());
             entity.setIndustry(request.getIndustry());
+            entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
@@ -204,6 +205,17 @@ public class EntityService {
                         k.getIndustry(),
                         k.getGenre()))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Keeps a movie's language consistent with its industry: a recognized regional
+     * industry (Sandalwood, Bollywood, Tollywood, Kollywood, Mollywood) dictates the
+     * language, overriding whatever the client supplied. For any other industry
+     * (e.g. Hollywood) the client-supplied language is kept.
+     */
+    private String resolveLanguage(String industry, String requestedLanguage) {
+        String derived = MovieIndustry.languageFor(industry);
+        return derived != null ? derived : requestedLanguage;
     }
 
     private String joinGenres(List<String> genres) {
