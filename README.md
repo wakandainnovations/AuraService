@@ -72,7 +72,11 @@ CREATE TABLE managed_entities (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     type VARCHAR(255) NOT NULL,
-    director VARCHAR(255)
+    director VARCHAR(255),
+    release_date DATE,
+    language VARCHAR(255),
+    industry VARCHAR(255),
+    genre VARCHAR(255)
 );
 
 CREATE TABLE entity_actors (
