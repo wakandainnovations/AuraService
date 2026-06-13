@@ -19,14 +19,16 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
            "(:language IS NULL OR ek.language = :language) AND " +
            "(:industry IS NULL OR ek.industry = :industry) AND " +
            "(:state IS NULL OR ek.state = :state) AND " +
-           // genre is stored as a comma-separated list, so match :genre as a whole
-           // token within it (the surrounding commas avoid partial-word matches).
-           "(:genre IS NULL OR CONCAT(',', ek.genre, ',') LIKE CONCAT('%,', :genre, ',%')) AND " +
+           // genre is stored as a comma-separated list. The caller passes a pre-built
+           // ',value,'-style pattern (see EntityKeyword genre handling) so we match a
+           // whole token within the list; the pattern is only ever the right-hand side
+           // of LIKE so the column's text type is inferred even when the value is null.
+           "(:genrePattern IS NULL OR CONCAT(',', ek.genre, ',') LIKE :genrePattern) AND " +
            "(:entityId IS NULL OR e.id = :entityId)")
     List<EntityKeyword> findKeywordsByFilters(
             @Param("language") String language,
             @Param("industry") String industry,
             @Param("state") String state,
-            @Param("genre") String genre,
+            @Param("genrePattern") String genrePattern,
             @Param("entityId") Long entityId);
 }

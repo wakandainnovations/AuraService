@@ -123,7 +123,10 @@ public class MarketingAggregationService {
 
     List<EntityKeyword> findKeywords(String language, String industry,
                                      String state, String genre, Long entityId) {
-        return entityRepository.findKeywordsByFilters(language, industry, state, genre, entityId);
+        // genre is stored comma-separated on each keyword row; match it as a whole
+        // token by wrapping the requested value in commas to form the LIKE pattern.
+        String genrePattern = (genre == null || genre.isBlank()) ? null : "%," + genre + ",%";
+        return entityRepository.findKeywordsByFilters(language, industry, state, genrePattern, entityId);
     }
 
     private Object aggregateByKeyword(String category, String language, String industry,
