@@ -125,7 +125,9 @@ public class MarketingAggregationService {
                                      String state, String genre, Long entityId) {
         // genre is stored comma-separated on each keyword row; match it as a whole
         // token by wrapping the requested value in commas to form the LIKE pattern.
-        String genrePattern = (genre == null || genre.isBlank()) ? null : "%," + genre + ",%";
+        // Genres are stored in whatever case the entity was created with, so lower-case
+        // the pattern and compare against LOWER(genre) in the query for a case-insensitive match.
+        String genrePattern = (genre == null || genre.isBlank()) ? null : "%," + genre.toLowerCase() + ",%";
         return entityRepository.findKeywordsByFilters(language, industry, state, genrePattern, entityId);
     }
 

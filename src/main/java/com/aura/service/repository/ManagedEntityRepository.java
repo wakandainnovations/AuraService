@@ -23,7 +23,9 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
            // ',value,'-style pattern (see EntityKeyword genre handling) so we match a
            // whole token within the list; the pattern is only ever the right-hand side
            // of LIKE so the column's text type is inferred even when the value is null.
-           "(:genrePattern IS NULL OR CONCAT(',', ek.genre, ',') LIKE :genrePattern) AND " +
+           // Genres are stored verbatim (e.g. "Drama") but callers filter in any case,
+           // so compare case-insensitively — the caller lower-cases the pattern to match.
+           "(:genrePattern IS NULL OR LOWER(CONCAT(',', ek.genre, ',')) LIKE :genrePattern) AND " +
            "(:entityId IS NULL OR e.id = :entityId)")
     List<EntityKeyword> findKeywordsByFilters(
             @Param("language") String language,

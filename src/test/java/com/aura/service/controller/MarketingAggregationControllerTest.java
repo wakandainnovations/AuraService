@@ -15,6 +15,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -145,6 +146,34 @@ class MarketingAggregationControllerTest {
         assertThat(json.has("baahubali")).isTrue();
         assertThat(json.get("baahubali").isArray()).isTrue();
         assertThat(json.get("baahubali").get(0).get("author").asText()).isEqualTo("spread1");
+    }
+
+    // ------------------------------------------------------------------
+    // Genre filter — case-insensitive matching (regression)
+    // ------------------------------------------------------------------
+    @Test
+    void topSpreaders_genreFilter_isCaseInsensitive() throws Exception {
+        // Entities store genres verbatim (e.g. "Drama"), but callers filter using any
+        // case. The genre LIKE pattern must therefore be lower-cased so it matches the
+        // LOWER(genre) comparison in the query; otherwise genre=drama returns empty.
+        ArgumentCaptor<String> genrePattern = ArgumentCaptor.forClass(String.class);
+        when(entityRepository.findKeywordsByFilters(any(), any(), any(), genrePattern.capture(), any()))
+                .thenReturn(List.of(
+                        new EntityKeyword("surya-movie", "media.movie", "Tamil", null, null, "Drama")
+                ));
+
+        enqueueJson("[{\"author\":\"fan1\",\"primaryPlatform\":\"twitter\"}]");
+
+        mvc.perform(get("/api/marketing/aggregate/top-spreaders")
+                        .param("genre", "Drama"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].author").value("fan1"));
+
+        assertThat(genrePattern.getValue()).isEqualTo("%,drama,%");
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).contains("top-50-spreaders/surya-movie");
     }
 
     // ------------------------------------------------------------------
