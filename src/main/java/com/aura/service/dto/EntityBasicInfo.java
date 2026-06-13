@@ -6,6 +6,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -17,6 +19,8 @@ public class EntityBasicInfo {
     private String type;
     private String director;
     private LocalDate releaseDate;
+    private String industry;
+    private List<String> genre = new ArrayList<>();
 
     public EntityBasicInfo(Long id, String name, String type) {
         this.id = id;

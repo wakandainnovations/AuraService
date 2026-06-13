@@ -34,6 +34,8 @@ public class EntityService {
         entity.setKeywords(toKeywordEntities(request.getKeywords()));
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
+            entity.setIndustry(request.getIndustry());
+            entity.setGenre(joinGenres(request.getGenre()));
         }
         
         entity = entityRepository.save(entity);
@@ -168,11 +170,33 @@ public class EntityService {
                 .collect(Collectors.toList());
     }
 
+    private String joinGenres(List<String> genres) {
+        if (genres == null || genres.isEmpty()) {
+            return null;
+        }
+        return genres.stream()
+                .filter(g -> g != null && !g.isBlank())
+                .map(String::trim)
+                .collect(Collectors.joining(","));
+    }
+
+    private List<String> splitGenres(String genre) {
+        if (genre == null || genre.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(genre.split(","))
+                .map(String::trim)
+                .filter(g -> !g.isBlank())
+                .collect(Collectors.toList());
+    }
+
     private EntityBasicInfo mapToBasicInfo(ManagedEntity entity) {
         EntityBasicInfo basicInfo = new EntityBasicInfo(entity.getId(), entity.getName(), entity.getType());
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
             basicInfo.setDirector(entity.getDirector());
             basicInfo.setReleaseDate(entity.getReleaseDate());
+            basicInfo.setIndustry(entity.getIndustry());
+            basicInfo.setGenre(splitGenres(entity.getGenre()));
         }
         return basicInfo;
     }
@@ -192,6 +216,8 @@ public class EntityService {
         );
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
             response.setReleaseDate(entity.getReleaseDate());
+            response.setIndustry(entity.getIndustry());
+            response.setGenre(splitGenres(entity.getGenre()));
         }
         return response;
     }

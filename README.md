@@ -199,9 +199,13 @@ Authorization: Bearer {jwt_token}
   "type": "MOVIE",
   "director": "Lana Wachowski",
   "actors": ["Keanu Reeves", "Carrie-Anne Moss", "Yahya Abdul-Mateen II"],
-  "keywords": ["keanureeves", "matrix", "sequel"]
+  "keywords": ["keanureeves", "matrix", "sequel"],
+  "industry": "Hollywood",
+  "genre": ["Science Fiction", "Action"]
 }
 ```
+
+> `industry` and `genre` are optional and only applied when `entityType` is `movie`.
 
 **Response:**
 ```json
@@ -212,6 +216,8 @@ Authorization: Bearer {jwt_token}
   "director": "Lana Wachowski",
   "actors": ["Keanu Reeves", "Carrie-Anne Moss", "Yahya Abdul-Mateen II"],
   "keywords": ["keanureeves", "matrix", "sequel"],
+  "industry": "Hollywood",
+  "genre": ["Science Fiction", "Action"],
   "competitors": []
 }
 ```

@@ -24,4 +24,8 @@ public class CreateEntityRequest {
     private List<KeywordDto> keywords = new ArrayList<>();
 
     private LocalDate releaseDate;
+
+    private String industry;
+
+    private List<String> genre = new ArrayList<>();
 }
