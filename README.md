@@ -226,7 +226,43 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 4. Get All Entities
+### 4. Update Managed Entity
+
+**Endpoint:** `PUT /api/entities/{entityType}/{id}`
+
+**Description:** Update an existing managed entity's editable details. This is a full replace of the editable fields, so send the complete set of values the entity should have after the edit (any field omitted is cleared). Intended for the UI's "edit entity" flow.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
+- `id` - Entity ID (e.g., 5)
+
+**Request Body:**
+```json
+{
+  "name": "Dune: Part Two",
+  "director": "Denis Villeneuve",
+  "actors": ["Timothee Chalamet", "Zendaya", "Rebecca Ferguson"],
+  "keywords": [{"keyword": "dune", "category": "media.movie", "language": "English"}],
+  "releaseDate": "2024-03-01",
+  "industry": "Hollywood",
+  "genre": ["Science Fiction", "Adventure"]
+}
+```
+
+> `name` is required. `releaseDate`, `industry`, and `genre` are only applied when `entityType` is `movie`. `genre` accepts multiple comma-separated values as a JSON list. Competitors are managed via the separate competitors endpoint and are not affected by this call.
+
+**Response:** The updated entity, in the same shape as [Get Entity by ID](#6-get-entity-by-id).
+
+**Status Code:** `200 OK`
+
+---
+
+### 5. Get All Entities
 
 **Endpoint:** `GET /api/entities/{entityType}`
 
@@ -260,7 +296,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 5. Get Entity by ID
+### 6. Get Entity by ID
 
 **Endpoint:** `GET /api/entities/{entityType}/{id}`
 
@@ -303,7 +339,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 6. Update Competitors
+### 7. Update Competitors
 
 **Endpoint:** `PUT /api/entities/{entityType}/{id}/competitors`
 
@@ -358,7 +394,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 7. Update Keywords
+### 8. Update Keywords
 
 **Endpoint:** `PUT /api/entities/{entityType}/{id}/keywords`
 
@@ -408,7 +444,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 8. Delete Entity
+### 9. Delete Entity
 
 **Endpoint:** `DELETE /api/entities/{entityType}/{id}`
 

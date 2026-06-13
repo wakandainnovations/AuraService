@@ -5,6 +5,7 @@ import com.aura.service.dto.EntityBasicInfo;
 import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateCompetitorsRequest;
+import com.aura.service.dto.UpdateEntityRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
@@ -43,6 +44,29 @@ public class EntityService {
         return mapToDetailResponse(entity);
     }
     
+    @Transactional
+    public EntityDetailResponse updateEntity(String entityType, Long id, UpdateEntityRequest request) {
+        ManagedEntity entity = entityRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        if (!entity.getType().equalsIgnoreCase(entityType)) {
+            throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
+        }
+
+        entity.setName(request.getName());
+        entity.setDirector(request.getDirector());
+        entity.setActors(request.getActors());
+        entity.setKeywords(toKeywordEntities(request.getKeywords()));
+        if ("MOVIE".equalsIgnoreCase(entityType)) {
+            entity.setReleaseDate(request.getReleaseDate());
+            entity.setIndustry(request.getIndustry());
+            entity.setGenre(joinGenres(request.getGenre()));
+        }
+
+        entity = entityRepository.save(entity);
+
+        return mapToDetailResponse(entity);
+    }
+
     public List<EntityBasicInfo> getAllEntities(String entityType) {
         return entityRepository.findByType(entityType).stream()
                 .map(this::mapToBasicInfo)
