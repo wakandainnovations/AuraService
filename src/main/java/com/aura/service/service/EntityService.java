@@ -151,10 +151,10 @@ public class EntityService {
      * from the request, but the classification columns are derived from the entity
      * itself so they stay consistent and the marketing/aggregation filters (which
      * match on these columns) work: {@code category} from the entity type
-     * ({@code media.movie}/{@code media.celebrity}), and {@code language}/{@code industry}
-     * from the entity's own fields. Because {@code genre} is multi-valued on the entity
-     * but a single-valued, exact-match column on each keyword row, a keyword is expanded
-     * into one row per genre (and a single row with a null genre when the entity has none).
+     * ({@code media.movie}/{@code media.celebrity}), and {@code language}/{@code industry}/
+     * {@code genre} from the entity's own fields. A movie's multiple genres are stored on
+     * a single row as the entity's comma-separated {@code genre} value; readers of the
+     * column split it back into individual genres.
      */
     private List<EntityKeyword> buildKeywordEntities(ManagedEntity entity, List<KeywordDto> dtos) {
         if (dtos == null) {
@@ -163,21 +163,14 @@ public class EntityService {
         String category = categoryForType(entity.getType());
         String language = entity.getLanguage();
         String industry = entity.getIndustry();
-        List<String> genres = splitGenres(entity.getGenre());
+        String genre = entity.getGenre();
 
         List<EntityKeyword> keywords = new ArrayList<>();
         for (KeywordDto dto : dtos) {
             if (dto == null || dto.getKeyword() == null || dto.getKeyword().isBlank()) {
                 continue;
             }
-            String keyword = dto.getKeyword().trim();
-            if (genres.isEmpty()) {
-                keywords.add(new EntityKeyword(keyword, category, language, null, industry, null));
-            } else {
-                for (String genre : genres) {
-                    keywords.add(new EntityKeyword(keyword, category, language, null, industry, genre));
-                }
-            }
+            keywords.add(new EntityKeyword(dto.getKeyword().trim(), category, language, null, industry, genre));
         }
         return keywords;
     }

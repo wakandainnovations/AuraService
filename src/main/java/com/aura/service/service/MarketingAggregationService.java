@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -67,9 +68,14 @@ public class MarketingAggregationService {
             return groupByGenre ? Map.of() : List.of();
         }
 
+        // genre is stored as a comma-separated list on each keyword row, so split
+        // it back into the individual genres before collecting the distinct set.
         Set<String> genres = keywords.stream()
                 .map(EntityKeyword::getGenre)
                 .filter(g -> g != null && !g.isBlank())
+                .flatMap(g -> Arrays.stream(g.split(",")))
+                .map(String::trim)
+                .filter(g -> !g.isBlank())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         if (genres.isEmpty()) {

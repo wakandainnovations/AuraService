@@ -208,7 +208,7 @@ Authorization: Bearer {jwt_token}
 
 > `language` and `genre` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`.
 >
-> Keywords carry only their text in the request; each stored `entity_keywords` row is stamped from the entity's own classification — `category` from the type (`media.movie` / `media.celebrity`), plus the entity's `language` and `industry`. Because a movie can have multiple genres but a keyword row holds a single genre (the marketing filters match it exactly), each keyword is expanded into one row per genre.
+> Keywords carry only their text in the request; each stored `entity_keywords` row is stamped from the entity's own classification — `category` from the type (`media.movie` / `media.celebrity`), plus the entity's `language`, `industry`, and `genre`. A movie's multiple genres are stored on the single keyword row as a comma-separated `genre` value; readers of the column (marketing filters and genre aggregation) split it back into individual genres.
 
 **Response:**
 ```json

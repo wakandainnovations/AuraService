@@ -19,7 +19,9 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
            "(:language IS NULL OR ek.language = :language) AND " +
            "(:industry IS NULL OR ek.industry = :industry) AND " +
            "(:state IS NULL OR ek.state = :state) AND " +
-           "(:genre IS NULL OR ek.genre = :genre) AND " +
+           // genre is stored as a comma-separated list, so match :genre as a whole
+           // token within it (the surrounding commas avoid partial-word matches).
+           "(:genre IS NULL OR CONCAT(',', ek.genre, ',') LIKE CONCAT('%,', :genre, ',%')) AND " +
            "(:entityId IS NULL OR e.id = :entityId)")
     List<EntityKeyword> findKeywordsByFilters(
             @Param("language") String language,
