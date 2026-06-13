@@ -49,6 +49,9 @@ public class ManagedEntity {
     @Column(name = "release_date")
     private LocalDate releaseDate;
 
+    @Column(name = "language")
+    private String language;
+
     @Column(name = "industry")
     private String industry;
 

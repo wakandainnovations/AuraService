@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,18 +33,23 @@ public class EntityService {
         entity.setType(entityType);
         entity.setDirector(request.getDirector());
         entity.setActors(request.getActors());
-        entity.setKeywords(toKeywordEntities(request.getKeywords()));
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
+            entity.setLanguage(request.getLanguage());
             entity.setIndustry(request.getIndustry());
             entity.setGenre(joinGenres(request.getGenre()));
+        } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
+            entity.setIndustry(request.getIndustry());
         }
-        
+        // Stamp the keyword rows from the entity's own classification, so build
+        // the keywords only after the fields above have been populated.
+        entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
+
         entity = entityRepository.save(entity);
-        
+
         return mapToDetailResponse(entity);
     }
-    
+
     @Transactional
     public EntityDetailResponse updateEntity(String entityType, Long id, UpdateEntityRequest request) {
         ManagedEntity entity = entityRepository.findById(id)
@@ -55,12 +61,17 @@ public class EntityService {
         entity.setName(request.getName());
         entity.setDirector(request.getDirector());
         entity.setActors(request.getActors());
-        entity.setKeywords(toKeywordEntities(request.getKeywords()));
         if ("MOVIE".equalsIgnoreCase(entityType)) {
             entity.setReleaseDate(request.getReleaseDate());
+            entity.setLanguage(request.getLanguage());
             entity.setIndustry(request.getIndustry());
             entity.setGenre(joinGenres(request.getGenre()));
+        } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
+            entity.setIndustry(request.getIndustry());
         }
+        // Stamp the keyword rows from the entity's own classification, so build
+        // the keywords only after the fields above have been populated.
+        entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
 
         entity = entityRepository.save(entity);
 
@@ -106,13 +117,13 @@ public class EntityService {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
         
-        entity.setKeywords(toKeywordEntities(request.getKeywords()));
-        
+        entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
+
         entity = entityRepository.save(entity);
-        
+
         return mapToDetailResponse(entity);
     }
-    
+
     @Transactional
     public void deleteEntity(String entityType, Long id) {
         ManagedEntity entity = entityRepository.findById(id)
@@ -135,48 +146,51 @@ public class EntityService {
         entityRepository.delete(entity);
     }
 
-    private List<EntityKeyword> toKeywordEntities(List<KeywordDto> dtos) {
+    /**
+     * Builds the {@code entity_keywords} rows for an entity. The keyword text comes
+     * from the request, but the classification columns are derived from the entity
+     * itself so they stay consistent and the marketing/aggregation filters (which
+     * match on these columns) work: {@code category} from the entity type
+     * ({@code media.movie}/{@code media.celebrity}), and {@code language}/{@code industry}
+     * from the entity's own fields. Because {@code genre} is multi-valued on the entity
+     * but a single-valued, exact-match column on each keyword row, a keyword is expanded
+     * into one row per genre (and a single row with a null genre when the entity has none).
+     */
+    private List<EntityKeyword> buildKeywordEntities(ManagedEntity entity, List<KeywordDto> dtos) {
         if (dtos == null) {
-            return List.of();
+            return new ArrayList<>();
         }
-        return dtos.stream()
-                .map(this::toKeywordEntity)
-                .collect(Collectors.toList());
-    }
+        String category = categoryForType(entity.getType());
+        String language = entity.getLanguage();
+        String industry = entity.getIndustry();
+        List<String> genres = splitGenres(entity.getGenre());
 
-    private EntityKeyword toKeywordEntity(KeywordDto dto) {
-        validateKeyword(dto);
-        return new EntityKeyword(
-                dto.getKeyword(),
-                dto.getCategory(),
-                dto.getLanguage(),
-                dto.getState(),
-                dto.getIndustry(),
-                dto.getGenre()
-        );
-    }
-
-    private void validateKeyword(KeywordDto dto) {
-        String category = dto.getCategory();
-        if (category == null) {
-            return;
-        }
-        switch (category) {
-            case "media.movie" -> requireNonBlank(dto.getLanguage(),
-                    "language is required when category is 'media.movie'");
-            case "media.celebrity" -> requireNonBlank(dto.getIndustry(),
-                    "industry is required when category is 'media.celebrity'");
-            case "politics.party" -> requireNonBlank(dto.getState(),
-                    "state is required when category is 'politics.party'");
-            default -> {
+        List<EntityKeyword> keywords = new ArrayList<>();
+        for (KeywordDto dto : dtos) {
+            if (dto == null || dto.getKeyword() == null || dto.getKeyword().isBlank()) {
+                continue;
+            }
+            String keyword = dto.getKeyword().trim();
+            if (genres.isEmpty()) {
+                keywords.add(new EntityKeyword(keyword, category, language, null, industry, null));
+            } else {
+                for (String genre : genres) {
+                    keywords.add(new EntityKeyword(keyword, category, language, null, industry, genre));
+                }
             }
         }
+        return keywords;
     }
 
-    private void requireNonBlank(String value, String message) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(message);
+    private String categoryForType(String type) {
+        if (type == null) {
+            return null;
         }
+        return switch (type.toUpperCase()) {
+            case "MOVIE" -> "media.movie";
+            case "CELEBRITY" -> "media.celebrity";
+            default -> null;
+        };
     }
 
     private List<KeywordDto> toKeywordDtos(List<EntityKeyword> keywords) {
@@ -219,8 +233,11 @@ public class EntityService {
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
             basicInfo.setDirector(entity.getDirector());
             basicInfo.setReleaseDate(entity.getReleaseDate());
+            basicInfo.setLanguage(entity.getLanguage());
             basicInfo.setIndustry(entity.getIndustry());
             basicInfo.setGenre(splitGenres(entity.getGenre()));
+        } else if ("CELEBRITY".equalsIgnoreCase(entity.getType())) {
+            basicInfo.setIndustry(entity.getIndustry());
         }
         return basicInfo;
     }
@@ -240,8 +257,11 @@ public class EntityService {
         );
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
             response.setReleaseDate(entity.getReleaseDate());
+            response.setLanguage(entity.getLanguage());
             response.setIndustry(entity.getIndustry());
             response.setGenre(splitGenres(entity.getGenre()));
+        } else if ("CELEBRITY".equalsIgnoreCase(entity.getType())) {
+            response.setIndustry(entity.getIndustry());
         }
         return response;
     }

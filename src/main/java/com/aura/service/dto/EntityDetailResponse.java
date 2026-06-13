@@ -20,6 +20,7 @@ public class EntityDetailResponse {
     private List<KeywordDto> keywords = new ArrayList<>();
     private List<EntityBasicInfo> competitors = new ArrayList<>();
     private LocalDate releaseDate;
+    private String language;
     private String industry;
     private List<String> genre = new ArrayList<>();
 }

@@ -19,6 +19,7 @@ public class EntityBasicInfo {
     private String type;
     private String director;
     private LocalDate releaseDate;
+    private String language;
     private String industry;
     private List<String> genre = new ArrayList<>();
 

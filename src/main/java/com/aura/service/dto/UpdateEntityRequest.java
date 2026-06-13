@@ -25,6 +25,8 @@ public class UpdateEntityRequest {
 
     private LocalDate releaseDate;
 
+    private String language;
+
     private String industry;
 
     private List<String> genre = new ArrayList<>();

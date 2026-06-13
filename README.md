@@ -200,12 +200,15 @@ Authorization: Bearer {jwt_token}
   "director": "Lana Wachowski",
   "actors": ["Keanu Reeves", "Carrie-Anne Moss", "Yahya Abdul-Mateen II"],
   "keywords": ["keanureeves", "matrix", "sequel"],
+  "language": "English",
   "industry": "Hollywood",
   "genre": ["Science Fiction", "Action"]
 }
 ```
 
-> `industry` and `genre` are optional and only applied when `entityType` is `movie`.
+> `language` and `genre` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`.
+>
+> Keywords carry only their text in the request; each stored `entity_keywords` row is stamped from the entity's own classification — `category` from the type (`media.movie` / `media.celebrity`), plus the entity's `language` and `industry`. Because a movie can have multiple genres but a keyword row holds a single genre (the marketing filters match it exactly), each keyword is expanded into one row per genre.
 
 **Response:**
 ```json
@@ -247,14 +250,15 @@ Authorization: Bearer {jwt_token}
   "name": "Dune: Part Two",
   "director": "Denis Villeneuve",
   "actors": ["Timothee Chalamet", "Zendaya", "Rebecca Ferguson"],
-  "keywords": [{"keyword": "dune", "category": "media.movie", "language": "English"}],
+  "keywords": [{"keyword": "dune"}],
   "releaseDate": "2024-03-01",
+  "language": "English",
   "industry": "Hollywood",
   "genre": ["Science Fiction", "Adventure"]
 }
 ```
 
-> `name` is required. `releaseDate`, `industry`, and `genre` are only applied when `entityType` is `movie`. `genre` accepts multiple comma-separated values as a JSON list. Competitors are managed via the separate competitors endpoint and are not affected by this call.
+> `name` is required. `releaseDate`, `language`, and `genre` are only applied when `entityType` is `movie`; `industry` is applied when `entityType` is `movie` or `celebrity`. `genre` accepts multiple comma-separated values as a JSON list. Keywords carry only their text — each stored `entity_keywords` row is stamped from the entity's `category` (from the type), `language`, `industry`, and one row per `genre` (see [Create Managed Entity](#3-create-managed-entity)). Competitors are managed via the separate competitors endpoint and are not affected by this call.
 
 **Response:** The updated entity, in the same shape as [Get Entity by ID](#6-get-entity-by-id).
 
