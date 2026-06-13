@@ -4,6 +4,7 @@ import com.aura.service.entity.ManagedEntity;
 import com.aura.service.exception.GlobalExceptionHandler;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.repository.MentionRepository;
 import com.aura.service.service.EntityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,14 +25,16 @@ class EntityControllerDeleteTest {
 
     private ManagedEntityRepository entityRepository;
     private CheckpointRepository checkpointRepository;
+    private MentionRepository mentionRepository;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         entityRepository = mock(ManagedEntityRepository.class);
         checkpointRepository = mock(CheckpointRepository.class);
+        mentionRepository = mock(MentionRepository.class);
 
-        EntityService service = new EntityService(entityRepository, checkpointRepository);
+        EntityService service = new EntityService(entityRepository, checkpointRepository, mentionRepository);
         EntityController controller = new EntityController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
@@ -56,6 +59,7 @@ class EntityControllerDeleteTest {
         mvc.perform(delete("/api/entities/{entityType}/{id}", "movie", 1L))
                 .andExpect(status().isNoContent());
 
+        verify(mentionRepository).deleteByManagedEntityId(1L);
         verify(checkpointRepository).deleteByManagedEntityId(1L);
         verify(entityRepository).delete(movie);
     }
@@ -88,6 +92,7 @@ class EntityControllerDeleteTest {
 
         verify(entityRepository, never()).delete(any(ManagedEntity.class));
         verify(checkpointRepository, never()).deleteByManagedEntityId(anyLong());
+        verify(mentionRepository, never()).deleteByManagedEntityId(anyLong());
     }
 
     @Test
@@ -100,5 +105,6 @@ class EntityControllerDeleteTest {
 
         verify(entityRepository, never()).delete(any(ManagedEntity.class));
         verify(checkpointRepository, never()).deleteByManagedEntityId(anyLong());
+        verify(mentionRepository, never()).deleteByManagedEntityId(anyLong());
     }
 }

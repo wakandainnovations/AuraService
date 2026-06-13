@@ -165,7 +165,7 @@ class EntityMarketingReportServiceTest {
         boolean throwNotFound;
 
         StubEntityService() {
-            super(null, null);
+            super(null, null, null);
         }
 
         @Override

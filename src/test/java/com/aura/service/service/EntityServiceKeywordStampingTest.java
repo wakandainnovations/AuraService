@@ -7,6 +7,7 @@ import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.repository.MentionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +33,8 @@ class EntityServiceKeywordStampingTest {
     void setUp() {
         entityRepository = mock(ManagedEntityRepository.class);
         CheckpointRepository checkpointRepository = mock(CheckpointRepository.class);
-        service = new EntityService(entityRepository, checkpointRepository);
+        MentionRepository mentionRepository = mock(MentionRepository.class);
+        service = new EntityService(entityRepository, checkpointRepository, mentionRepository);
         // save() returns the entity it was given so the response reflects the stamped keywords.
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

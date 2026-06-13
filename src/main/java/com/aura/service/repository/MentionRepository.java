@@ -7,6 +7,7 @@ import com.aura.service.enums.Sentiment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -20,6 +21,10 @@ import java.util.Optional;
 public interface MentionRepository extends JpaRepository<Mention, Long> {
 
     List<Mention> findByManagedEntityId(Long entityId);
+
+    @Modifying
+    @Query("DELETE FROM Mention m WHERE m.managedEntity.id = :entityId")
+    int deleteByManagedEntityId(@Param("entityId") Long entityId);
 
     long countByManagedEntityId(Long entityId);
 

@@ -11,6 +11,7 @@ import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.repository.MentionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,7 @@ public class EntityService {
     
     private final ManagedEntityRepository entityRepository;
     private final CheckpointRepository checkpointRepository;
+    private final MentionRepository mentionRepository;
 
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
@@ -142,6 +144,9 @@ public class EntityService {
 
         // Remove dependent checkpoints (managed_entity_id is a non-null foreign key).
         checkpointRepository.deleteByManagedEntityId(id);
+
+        // Remove dependent mentions, otherwise fk_mentions_managed_entities blocks the delete.
+        mentionRepository.deleteByManagedEntityId(id);
 
         entityRepository.delete(entity);
     }
