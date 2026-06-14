@@ -836,27 +836,10 @@ To render all features up-front with lock badges, the UI can read the full catal
 
 ### License Feature Catalog
 
-`GET /api/license/features` returns the full catalog of premium features with the current user's
-entitlement for each, so the UI can render every feature up-front and lock-badge the ones the user's
-tier hasn't unlocked. JWT-protected; **price-free** (names the required tier, never its cost).
-
-**Response:** `200 OK`
-
-```json
-[
-  { "key": "checkpoints",         "name": "Checkpoints",         "requiredTier": "SILVER",  "entitled": true },
-  { "key": "crisis",              "name": "Crisis Management",   "requiredTier": "GOLD",    "entitled": false },
-  { "key": "audience-content",    "name": "Audience & Content",  "requiredTier": "DIAMOND", "entitled": false },
-  { "key": "intelligence-report", "name": "Intelligence Report", "requiredTier": "DIAMOND", "entitled": false },
-  { "key": "aggregated-intel",    "name": "Aggregated Intel",    "requiredTier": "DIAMOND", "entitled": false }
-]
-```
-
-- `key` — stable machine key the UI can switch on.
-- `name` — human-readable feature name.
-- `requiredTier` — the minimum tier that unlocks it.
-- `entitled` — whether the current user may use it (admins are entitled to everything; otherwise the
-  effective tier must be at least `requiredTier`).
+To render all features up-front with lock badges, the UI reads the whole catalog with per-user
+entitlement from `GET /api/license/features` — see [L4. List Premium Features](#l4-list-premium-features)
+for the full contract. It returns `{ key, name, requiredTier, entitled }` per feature and is
+deliberately **price-free** (names the required tier, never its cost).
 
 ### Offer-key overrides (effective tier)
 
@@ -1020,6 +1003,47 @@ curl -X POST http://localhost:8080/api/license/redeem-offer \
   ```
 - `403 Forbidden` — no JWT supplied (or invalid token).
 - `404 Not Found` — the user has no active license to apply the override to.
+
+---
+
+### L4. List Premium Features
+
+**Endpoint:** `GET /api/license/features`
+
+**Description:** The full catalog of premium features with the **current user's entitlement** for each,
+so the UI can render every feature up-front and lock-badge the ones the user's tier hasn't unlocked.
+Entitlement uses the same rule as the feature gates: an admin is entitled to everything, otherwise the
+[effective tier](#offer-key-overrides-effective-tier) must be at least the feature's `requiredTier`.
+User-facing, so it carries **no price** (names the required tier, never its cost). See
+[Premium Feature Tier Gating](#premium-feature-tier-gating) for how entitlement shapes each feature's
+own response.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:** `200 OK`
+```json
+[
+  { "key": "checkpoints",         "name": "Checkpoints",         "requiredTier": "SILVER",  "entitled": true },
+  { "key": "crisis",              "name": "Crisis Management",   "requiredTier": "GOLD",    "entitled": false },
+  { "key": "audience-content",    "name": "Audience & Content",  "requiredTier": "DIAMOND", "entitled": false },
+  { "key": "intelligence-report", "name": "Intelligence Report", "requiredTier": "DIAMOND", "entitled": false },
+  { "key": "aggregated-intel",    "name": "Aggregated Intel",    "requiredTier": "DIAMOND", "entitled": false }
+]
+```
+
+**Response fields:**
+- `key` — stable machine key the UI can switch on.
+- `name` — human-readable feature name.
+- `requiredTier` — the minimum tier that unlocks the feature.
+- `entitled` — whether the current user may use it.
+
+**Status Codes:**
+- `200 OK`
+- `403 Forbidden` — no JWT supplied (or invalid token).
+- `404 Not Found` — the user has no active license (non-admin callers only; an admin is always entitled).
 
 ---
 
