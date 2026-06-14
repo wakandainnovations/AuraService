@@ -4189,6 +4189,191 @@ GET /api/admin/users
 
 ---
 
+### Issue / Assign License
+
+**Endpoint:** `POST /api/admin/licenses`
+
+**Description:** Issue a new active license to a user at a given tier, generating a unique license
+key. The user operates under a **single** active license, so any license they already held is
+deactivated first. The response carries only the generated key — **no price**.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "userId": 1,
+  "tier": "GOLD",
+  "expiresAt": "2027-01-01T00:00:00Z"
+}
+```
+
+- `userId` — required; the user to assign the license to.
+- `tier` — required; one of `BRONZE`, `SILVER`, `GOLD`, `DIAMOND`.
+- `expiresAt` — optional ISO-8601 instant; omit for a license that never expires.
+
+**Response:**
+```json
+{
+  "licenseKey": "AURA-3f8c2b1a-9d44-4e1f-8a7c-1b2c3d4e5f60"
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no user exists with the given `userId`.
+- `400 Bad Request` / `Validation Failed` — `userId` or `tier` missing.
+
+---
+
+### List Licenses
+
+**Endpoint:** `GET /api/admin/licenses`
+
+**Description:** Return every license in the system as an admin summary. Carries the tier but
+**never any price**.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 5,
+    "licenseKey": "AURA-3f8c2b1a-9d44-4e1f-8a7c-1b2c3d4e5f60",
+    "tier": "GOLD",
+    "userId": 1,
+    "username": "user",
+    "active": true,
+    "issuedAt": "2026-06-14T04:53:00Z",
+    "expiresAt": null
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
+### Update License
+
+**Endpoint:** `PATCH /api/admin/licenses/{id}`
+
+**Description:** Partially update a license: change its `tier`, its `active` flag, or both. A field
+omitted (or `null`) is left unchanged. Returns the updated summary (**no price**).
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — License ID (e.g., 5)
+
+**Request Body:**
+```json
+{
+  "tier": "DIAMOND",
+  "active": true
+}
+```
+
+**Response:** The updated license, in the same shape as a [List Licenses](#list-licenses) entry.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no license exists with the given `id`.
+
+---
+
+### List License Prices
+
+**Endpoint:** `GET /api/admin/license-prices`
+
+**Description:** The price catalog for every license tier. **This is the only endpoint in the API
+that returns price data** — it is admin-only and price information never appears on any user-facing
+license, usage, or limit response. The catalog is seeded at startup with a row (price `0`) for every
+tier.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "tier": "BRONZE",
+    "price": 0.00,
+    "currency": "USD",
+    "updatedAt": "2026-06-14T04:53:00Z"
+  },
+  {
+    "tier": "DIAMOND",
+    "price": 499.00,
+    "currency": "USD",
+    "updatedAt": "2026-06-14T04:53:00Z"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
+### Update License Prices
+
+**Endpoint:** `PUT /api/admin/license-prices`
+
+**Description:** Upsert one or more tier prices and return the full catalog. Admin-only.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:** a list of price updates.
+```json
+[
+  { "tier": "GOLD", "price": 199.00, "currency": "USD" },
+  { "tier": "DIAMOND", "price": 499.00 }
+]
+```
+
+- `tier` — required; the tier to price.
+- `price` — required; the new price.
+- `currency` — optional; when omitted the existing currency on the row is preserved.
+
+**Response:** The full price catalog, in the same shape as [List License Prices](#list-license-prices).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `400 Bad Request` / `Validation Failed` — a list entry is missing `tier` or `price`.
+
+---
+
 ## Error Responses
 
 All endpoints may return the following error responses:
