@@ -8,6 +8,7 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.EntityService;
+import com.aura.service.service.LicenseService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -37,9 +38,10 @@ class EntityControllerDeleteTest {
         checkpointRepository = mock(CheckpointRepository.class);
         mentionRepository = mock(MentionRepository.class);
         entityAccess = mock(EntityAccessService.class);
+        LicenseService licenseService = mock(LicenseService.class);
 
         EntityService service = new EntityService(
-                entityRepository, checkpointRepository, mentionRepository, entityAccess);
+                entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService);
         EntityController controller = new EntityController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)

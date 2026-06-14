@@ -137,6 +137,31 @@ CREATE TABLE user_entity_views (
     last_seen_at TIMESTAMP NOT NULL,
     CONSTRAINT uk_user_entity_views_user_entity UNIQUE (user_id, entity_id)
 );
+
+-- A license key issued to a user. Each user operates under one active license; the tier fixes the
+-- per-tier limits (max keywords/entities/mentions-per-month and collection frequency), which live
+-- in code as the LicenseTier enum (the single source of truth). Prices are NOT stored here.
+CREATE TABLE licenses (
+    id BIGSERIAL PRIMARY KEY,
+    license_key VARCHAR(255) UNIQUE NOT NULL,
+    tier VARCHAR(255) NOT NULL,
+    user_id BIGINT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    issued_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP,
+    CONSTRAINT fk_licenses_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- The price catalog for each license tier. SENSITIVE, ADMIN-ONLY data: it is exposed exclusively
+-- through GET/PUT /api/admin/license-prices (ROLE_ADMIN) and must never be returned by any
+-- user-facing endpoint. The tier is the natural primary key, so there is one price row per tier.
+-- Seeded at startup with price 0 for every tier if missing.
+CREATE TABLE license_tier_prices (
+    tier VARCHAR(255) PRIMARY KEY,
+    price NUMERIC(12, 2) NOT NULL,
+    currency VARCHAR(255) NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
 ```
 
 ## API Documentation

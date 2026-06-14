@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestControllerAdvice
@@ -37,6 +38,17 @@ public class GlobalExceptionHandler {
                 ex.getMessage()
         );
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
+    @ExceptionHandler(LimitException.class)
+    public ResponseEntity<Map<String, Object>> handleLimit(LimitException ex) {
+        // Structured 409 body the UI can act on. Deliberately price-free: only the limit type and
+        // the counts, never any cost information. Keys are exactly { limitType, limit, current }.
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("limitType", ex.getLimitType().name());
+        body.put("limit", ex.getLimit());
+        body.put("current", ex.getCurrent());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(RuntimeException.class)

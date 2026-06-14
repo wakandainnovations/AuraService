@@ -38,12 +38,17 @@ class EntityServiceLanguageMappingTest {
         CheckpointRepository checkpointRepository = mock(CheckpointRepository.class);
         MentionRepository mentionRepository = mock(MentionRepository.class);
         entityAccess = mock(EntityAccessService.class);
-        service = new EntityService(entityRepository, checkpointRepository, mentionRepository, entityAccess);
+        LicenseService licenseService = mock(LicenseService.class);
+        service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
+                entityAccess, licenseService);
         // save() returns the entity it was given so the response reflects the resolved language.
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         // Every create stamps the current user as owner.
         when(entityAccess.currentUser()).thenReturn(new User());
+        // Caps are not under test here — keep them comfortably high so create/update never trips them.
+        when(licenseService.currentMaxEntities()).thenReturn(1000);
+        when(licenseService.currentMaxKeywords()).thenReturn(1000);
     }
 
     @ParameterizedTest

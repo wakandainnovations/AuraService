@@ -18,6 +18,25 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
 
     List<ManagedEntity> findByCompetitorsId(Long competitorId);
 
+    // ---- Per-tier usage counts (entity & keyword caps; see LicenseTier) ----
+
+    /** How many entities the user owns — drives the entity cap and the usage meter. */
+    long countByOwnerId(Long ownerId);
+
+    /** Total keywords across all of the user's entities — drives the keyword cap and usage meter. */
+    @Query("SELECT COUNT(ek) FROM ManagedEntity e JOIN e.keywords ek WHERE e.owner.id = :ownerId")
+    long countKeywordsByOwnerId(@Param("ownerId") Long ownerId);
+
+    /**
+     * Keywords across all of the user's entities <em>except</em> {@code excludeEntityId}. Used by the
+     * update-keywords cap check, where the edited entity's existing keywords are about to be replaced
+     * and so must be excluded before adding the incoming count.
+     */
+    @Query("SELECT COUNT(ek) FROM ManagedEntity e JOIN e.keywords ek " +
+           "WHERE e.owner.id = :ownerId AND e.id <> :excludeEntityId")
+    long countKeywordsByOwnerIdExcludingEntity(@Param("ownerId") Long ownerId,
+                                               @Param("excludeEntityId") Long excludeEntityId);
+
     // Legacy rows from before ownership existed; assigned to the seeded admin by the startup backfill.
     List<ManagedEntity> findByOwnerIsNull();
 

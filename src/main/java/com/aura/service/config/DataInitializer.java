@@ -7,10 +7,14 @@ import com.aura.service.entity.UserEntityView;
 import com.aura.service.enums.EntityType;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.enums.LicenseTier;
+import com.aura.service.repository.LicenseRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserEntityViewRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.LicensePriceService;
+import com.aura.service.service.LicenseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -30,6 +34,9 @@ public class DataInitializer implements CommandLineRunner {
     private final ManagedEntityRepository entityRepository;
     private final MentionRepository mentionRepository;
     private final UserEntityViewRepository viewRepository;
+    private final LicenseRepository licenseRepository;
+    private final LicenseService licenseService;
+    private final LicensePriceService licensePriceService;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -38,6 +45,8 @@ public class DataInitializer implements CommandLineRunner {
         initializeEntities();
         initializeMentions();
         initializeUserEntityViews();
+        initializeLicensePrices();
+        initializeLicenses();
     }
     
     private void initializeUsers() {
@@ -174,6 +183,23 @@ public class DataInitializer implements CommandLineRunner {
             int daysAgo = minDaysAgo + random.nextInt(maxDaysAgo - minDaysAgo + 1);
             mention.setPostDate(Instant.now().minus(daysAgo, ChronoUnit.DAYS));
             mentionRepository.save(mention);
+        }
+    }
+
+    private void initializeLicensePrices() {
+        // Seed the four tier price rows (price 0) if missing. Prices are admin-only data and are
+        // never exposed to regular users.
+        licensePriceService.seedDefaults();
+    }
+
+    private void initializeLicenses() {
+        // Give the seeded accounts a license so the licensing flow is usable out of the box.
+        if (licenseRepository.count() == 0) {
+            userRepository.findByUsername("user")
+                    .ifPresent(u -> licenseService.issueLicense(u.getId(), LicenseTier.GOLD, null));
+            userRepository.findByUsername("admin")
+                    .ifPresent(u -> licenseService.issueLicense(u.getId(), LicenseTier.DIAMOND, null));
+            System.out.println("Licenses issued: user=GOLD, admin=DIAMOND");
         }
     }
 

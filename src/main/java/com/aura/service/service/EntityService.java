@@ -7,9 +7,13 @@ import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateCompetitorsRequest;
 import com.aura.service.dto.UpdateEntityRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
+import com.aura.service.dto.LicenseUsageResponse;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.User;
+import com.aura.service.enums.LicenseTier;
 import com.aura.service.enums.MovieIndustry;
+import com.aura.service.exception.LimitException;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
@@ -29,14 +33,20 @@ public class EntityService {
     private final CheckpointRepository checkpointRepository;
     private final MentionRepository mentionRepository;
     private final EntityAccessService entityAccessService;
+    private final LicenseService licenseService;
 
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
+        // The creator owns the entity; everything below is scoped to this owner.
+        User owner = entityAccessService.currentUser();
+
+        // Reject before creating anything if the owner is already at their tier's entity cap.
+        enforceEntityCap(owner.getId());
+
         ManagedEntity entity = new ManagedEntity();
         entity.setName(request.getName());
         entity.setType(entityType);
-        // The creator owns the entity; everything below is scoped to this owner.
-        entity.setOwner(entityAccessService.currentUser());
+        entity.setOwner(owner);
         entity.setDirector(request.getDirector());
         entity.setActors(request.getActors());
         if ("MOVIE".equalsIgnoreCase(entityType)) {
@@ -49,7 +59,11 @@ public class EntityService {
         }
         // Stamp the keyword rows from the entity's own classification, so build
         // the keywords only after the fields above have been populated.
-        entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
+        List<EntityKeyword> keywords = buildKeywordEntities(entity, request.getKeywords());
+        // A new entity has no existing keywords of its own, so the resulting total is every other
+        // owned entity's keywords plus the incoming ones (exclude nothing — this entity isn't saved yet).
+        enforceKeywordCap(owner.getId(), null, keywords.size());
+        entity.setKeywords(keywords);
 
         entity = entityRepository.save(entity);
 
@@ -129,8 +143,12 @@ public class EntityService {
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
-        
-        entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
+
+        List<EntityKeyword> keywords = buildKeywordEntities(entity, request.getKeywords());
+        // Keywords are capped across ALL the owner's entities. This entity's existing keywords are
+        // about to be replaced, so exclude them and add the incoming count for the resulting total.
+        enforceKeywordCap(ownerIdOf(entity), entity.getId(), keywords.size());
+        entity.setKeywords(keywords);
 
         entity = entityRepository.save(entity);
 
@@ -159,6 +177,51 @@ public class EntityService {
         mentionRepository.deleteByManagedEntityId(id);
 
         entityRepository.delete(entity);
+    }
+
+    /**
+     * The authenticated user's current usage against their tier's caps — entity and keyword counts vs
+     * their maxima. Read-only and <strong>price-free</strong>: built from {@link LicenseTier} limits
+     * (never pricing), so it is safe to surface to regular users for usage meters.
+     */
+    public LicenseUsageResponse currentUsage() {
+        User user = entityAccessService.currentUser();
+        LicenseTier tier = licenseService.currentTier();
+        long entitiesUsed = entityRepository.countByOwnerId(user.getId());
+        long keywordsUsed = entityRepository.countKeywordsByOwnerId(user.getId());
+        return new LicenseUsageResponse(
+                entitiesUsed, tier.getMaxEntities(),
+                keywordsUsed, tier.getMaxKeywords());
+    }
+
+    /** Rejects (409 ENTITIES) when the owner already holds the maximum entities their tier allows. */
+    private void enforceEntityCap(Long ownerId) {
+        int limit = licenseService.currentMaxEntities();
+        long current = entityRepository.countByOwnerId(ownerId);
+        if (current >= limit) {
+            throw new LimitException(LimitException.LimitType.ENTITIES, limit, (int) current);
+        }
+    }
+
+    /**
+     * Rejects (409 KEYWORDS) when an operation would push the owner's total keyword count — summed
+     * across every entity they own — past their tier's cap. {@code excludeEntityId} is the entity
+     * whose keywords are being replaced (so its current keywords don't double-count); pass null on
+     * create. {@code incomingKeywordCount} is the number of keywords the operation will add for it.
+     */
+    private void enforceKeywordCap(Long ownerId, Long excludeEntityId, int incomingKeywordCount) {
+        int limit = licenseService.currentMaxKeywords();
+        long others = excludeEntityId == null
+                ? entityRepository.countKeywordsByOwnerId(ownerId)
+                : entityRepository.countKeywordsByOwnerIdExcludingEntity(ownerId, excludeEntityId);
+        long resulting = others + incomingKeywordCount;
+        if (resulting > limit) {
+            throw new LimitException(LimitException.LimitType.KEYWORDS, limit, (int) resulting);
+        }
+    }
+
+    private Long ownerIdOf(ManagedEntity entity) {
+        return entity.getOwner() == null ? null : entity.getOwner().getId();
     }
 
     /**
