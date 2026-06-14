@@ -210,9 +210,12 @@ public class DashboardController {
             @RequestParam(required = false) Platform platform,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size,
+            @RequestParam(required = false) Long ownerId,
             @AuthenticationPrincipal UserDetails principal
     ) {
-        assertOwned(entityId);
+        // Admins may scope to a specific user via ownerId (the entity must belong to them); a
+        // non-admin passing ownerId is rejected (403). Otherwise this is the normal ownership check.
+        entityAccessService.assertAccessible(entityId, ownerId);
         Page<MentionResponse> response = dashboardService.getMentions(
                 entityId, platform, page, size
         );
@@ -227,9 +230,15 @@ public class DashboardController {
             @RequestParam List<Long> entityIds,
             @RequestParam(required = false) Platform platform,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size
+            @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size,
+            @RequestParam(required = false) Long ownerId
     ) {
-        assertOwned(entityIds);
+        // Gate once up front so a non-admin passing ownerId gets 403 regardless of the ids, then
+        // require every entity in the cluster to be accessible under the (optional) owner scope.
+        entityAccessService.requireAdminToScopeByOwner(ownerId);
+        if (entityIds != null) {
+            entityIds.forEach(id -> entityAccessService.assertAccessible(id, ownerId));
+        }
         Page<MentionResponse> response = dashboardService.getClusterMentions(
                 entityIds, platform, page, size
         );

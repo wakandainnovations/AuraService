@@ -16,10 +16,47 @@ public interface EntityAccessService {
     /** The authenticated user resolved from the security context, or throws if none can be resolved. */
     User currentUser();
 
+    /** True if the current user holds {@code ROLE_ADMIN}. Admins may read every user's entities. */
+    boolean currentUserIsAdmin();
+
     /**
-     * Returns the entity if it exists and is owned by the current user; otherwise throws
-     * {@link com.aura.service.exception.ResourceNotFoundException} (→ 404). Missing and not-owned are
+     * The 403 gate for the optional admin {@code ownerId} view-scoping param: scoping a listing to a
+     * specific user is an admin-only capability, so a non-admin who supplies any {@code ownerId} is
+     * rejected with {@link org.springframework.security.access.AccessDeniedException} (→ 403). A null
+     * {@code requestedOwnerId} (the regular case) is always allowed.
+     */
+    void requireAdminToScopeByOwner(Long requestedOwnerId);
+
+    /**
+     * Resolves the owner-id a <em>listing</em> should be filtered by, applying the admin rules
+     * (calls {@link #requireAdminToScopeByOwner} first):
+     * <ul>
+     *   <li>non-admin → the caller's own id (a user only ever lists their own entities);</li>
+     *   <li>admin + {@code ownerId} → that {@code ownerId} (scope the view to one user);</li>
+     *   <li>admin + {@code null} → {@code null}, meaning "no owner filter" / all entities.</li>
+     * </ul>
+     */
+    Long resolveOwnerScope(Long requestedOwnerId);
+
+    /**
+     * Returns the entity if the current user may access it, otherwise throws
+     * {@link com.aura.service.exception.ResourceNotFoundException} (→ 404). Applies the admin rules
+     * (calls {@link #requireAdminToScopeByOwner} first):
+     * <ul>
+     *   <li>non-admin → the entity must be owned by the caller (else 404);</li>
+     *   <li>admin + {@code ownerId} → the entity must be owned by {@code ownerId} (else 404), so an
+     *       admin scoped to one user can't reach another user's entity;</li>
+     *   <li>admin + {@code null} → any existing entity is accessible (bypass).</li>
+     * </ul>
+     * A missing entity is always a 404 (checked even for admins), and missing/not-owned stay
      * intentionally indistinguishable so the API never leaks the existence of other users' entities.
+     */
+    ManagedEntity assertAccessible(Long entityId, Long requestedOwnerId);
+
+    /**
+     * Convenience for the many entity-keyed call sites that don't take an {@code ownerId}: equivalent
+     * to {@link #assertAccessible(Long, Long) assertAccessible(entityId, null)}. Admins bypass the
+     * ownership check here too, so every guard routed through this method honors admin access.
      */
     ManagedEntity assertOwnedByCurrentUser(Long entityId);
 }

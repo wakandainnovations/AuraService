@@ -28,8 +28,11 @@ public class EntityController {
     }
     
     @GetMapping
-    public ResponseEntity<List<EntityBasicInfo>> getAllEntities(@PathVariable String entityType) {
-        List<EntityBasicInfo> entities = entityService.getAllEntities(entityType.toUpperCase());
+    public ResponseEntity<List<EntityBasicInfo>> getAllEntities(
+            @PathVariable String entityType,
+            @RequestParam(required = false) Long ownerId
+    ) {
+        List<EntityBasicInfo> entities = entityService.getAllEntities(entityType.toUpperCase(), ownerId);
         return ResponseEntity.ok(entities);
     }
     

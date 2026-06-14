@@ -70,13 +70,17 @@ public class MentionActionController {
 
     @GetMapping
     public ResponseEntity<List<MentionActionLogEntry>> listActions(
-            @PathVariable("mentionId") Long mentionId
+            @PathVariable("mentionId") Long mentionId,
+            @RequestParam(required = false) Long ownerId
     ) {
+        // Gate first: a non-admin passing ownerId is rejected (403) before the mention is even looked up.
+        entityAccessService.requireAdminToScopeByOwner(ownerId);
         Mention mention = mentionRepository.findById(mentionId).orElse(null);
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
-        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
+        // Admins scoped to a user (ownerId) only reach that user's mentions; otherwise normal ownership.
+        entityAccessService.assertAccessible(mention.getManagedEntity().getId(), ownerId);
 
         // Viewing a mention's action panel is a strong signal the user may mobilize allies
         // next. Warm the (expensive) ally cache in the background so that click is a cache hit.

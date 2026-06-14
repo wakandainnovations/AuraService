@@ -80,12 +80,24 @@ class EntityOwnershipTest {
     }
 
     private User user(Long id, String username) {
+        return user(id, username, "ROLE_USER");
+    }
+
+    private User user(Long id, String username, String role) {
         User u = new User();
         u.setId(id);
         u.setUsername(username);
         u.setPassword("x");
-        u.setRole("ROLE_USER");
+        u.setRole(role);
         return u;
+    }
+
+    /** Re-authenticate the security context as an admin ("root") for the admin-path tests. */
+    private void authenticateAsAdmin() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("root", "x", List.of()));
+        when(userRepository.findByUsername("root"))
+                .thenReturn(Optional.of(user(99L, "root", "ROLE_ADMIN")));
     }
 
     private ManagedEntity ownedBy(Long id, Long ownerId) {
@@ -170,5 +182,50 @@ class EntityOwnershipTest {
         // The owner-scoped query is used; the global by-type query must never be touched.
         verify(entityRepository).findByTypeAndOwnerId("MOVIE", CALLER_ID);
         verify(entityRepository, never()).findByType(anyString());
+    }
+
+    // ------------------------------------------------------------------
+    // Admin access: all entities by default, scoped by ownerId, and non-admins rejected.
+    // ------------------------------------------------------------------
+
+    @Test
+    void list_adminWithoutOwnerId_seesAllEntitiesGlobally() throws Exception {
+        authenticateAsAdmin();
+        when(entityRepository.findByType("MOVIE"))
+                .thenReturn(List.of(ownedBy(7L, CALLER_ID), ownedBy(8L, OTHER_ID)));
+
+        mvc.perform(get("/api/entities/{type}", "movie"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        // An unscoped admin lists across all owners — the global query is used, not the owner-scoped one.
+        verify(entityRepository).findByType("MOVIE");
+        verify(entityRepository, never()).findByTypeAndOwnerId(anyString(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void list_adminWithOwnerId_scopesToThatUser() throws Exception {
+        authenticateAsAdmin();
+        when(entityRepository.findByTypeAndOwnerId("MOVIE", OTHER_ID))
+                .thenReturn(List.of(ownedBy(8L, OTHER_ID)));
+
+        mvc.perform(get("/api/entities/{type}", "movie").param("ownerId", OTHER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(8));
+
+        verify(entityRepository).findByTypeAndOwnerId("MOVIE", OTHER_ID);
+        verify(entityRepository, never()).findByType(anyString());
+    }
+
+    @Test
+    void list_nonAdminPassingOwnerId_isForbidden() throws Exception {
+        // Caller "alice" is a ROLE_USER (set up in @BeforeEach).
+        mvc.perform(get("/api/entities/{type}", "movie").param("ownerId", OTHER_ID.toString()))
+                .andExpect(status().isForbidden());
+
+        // Rejected before any listing query runs.
+        verify(entityRepository, never()).findByType(anyString());
+        verify(entityRepository, never()).findByTypeAndOwnerId(anyString(), org.mockito.ArgumentMatchers.anyLong());
     }
 }

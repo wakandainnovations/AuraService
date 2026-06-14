@@ -50,6 +50,15 @@ The application will start on `http://localhost:8080`.
 - **Password:** `password`
 - **Timezone:** `America/New_York`
 
+A seeded administrator (`ROLE_ADMIN`) account is also created:
+
+- **Username:** `admin`
+- **Password:** `admin`
+
+Admins can read **every** user's entities and scope any list to a specific user via the `ownerId`
+query parameter (see **Entity ownership** below), and have access to the admin-only endpoints under
+`/api/admin/**` and `/api/audit-logs/**`.
+
 ### PostGres
 
 - db.url=jdbc:postgresql://localhost:5432/aura
@@ -135,6 +144,14 @@ CREATE TABLE user_entity_views (
 All endpoints except `/api/auth/*` require JWT authentication. Include the JWT token in the `Authorization` header as `Bearer {token}`.
 
 **Entity ownership:** Managed entities are owned by the user who creates them. A user only sees and acts on their own entities — listing is owner-scoped, and any read/update/delete (or any other endpoint that operates on an entity by id, including the dashboard, checkpoint, crisis, mention-action, analytics, and marketing endpoints) returns `404 Not Found` when the referenced entity does not exist **or** belongs to another user. The two cases are deliberately indistinguishable so the API never reveals the existence of another user's entities.
+
+**Admin access (`ROLE_ADMIN`):** Administrators bypass the ownership restriction — they can read **every** user's entities through all of the same endpoints. List and entity-keyed endpoints additionally accept an optional `ownerId` query parameter to scope the view to a single user:
+
+- **Admin, no `ownerId`** — sees all entities across every user (listing returns everyone's entities).
+- **Admin, `ownerId={userId}`** — scopes the result to that user's entities; an entity-keyed request (e.g. a dashboard or mention-action call) whose target does **not** belong to `ownerId` returns `404 Not Found`.
+- **Non-admin passing `ownerId`** — rejected with `403 Forbidden`. Regular users may never scope by `ownerId`; omitting it preserves the normal owner-scoped behavior described above.
+
+The list of users to populate an admin user-selector is available from `GET /api/admin/users` (see **Admin APIs**).
 
 ---
 
@@ -288,6 +305,8 @@ Authorization: Bearer {jwt_token}
 
 **Description:** Retrieve a list of the managed entities of a specific type **owned by the authenticated user**. The list is owner-scoped — entities created by other users are never returned.
 
+**Admin behavior:** An admin (`ROLE_ADMIN`) sees **all** entities of the type by default. Supplying `ownerId` scopes the list to that user's entities. A non-admin who supplies `ownerId` is rejected with `403 Forbidden`.
+
 **Headers:**
 ```
 Authorization: Bearer {jwt_token}
@@ -295,6 +314,15 @@ Authorization: Bearer {jwt_token}
 
 **Path Parameters:**
 - `entityType` - The type of the entity (e.g., `movie`, `celebrity`)
+
+**Query Parameters:**
+- `ownerId` — (admin only) scope the list to the entities owned by this user id. Omit to list all entities (admin) or your own entities (regular user). Optional.
+
+**Example Requests:**
+```
+GET /api/entities/movie                 # your own movies (regular user) / all movies (admin)
+GET /api/entities/movie?ownerId=3        # admin only: movies owned by user 3
+```
 
 **Response:**
 ```json
@@ -843,6 +871,8 @@ Authorization: Bearer {jwt_token}
 ## Dashboard APIs
 
 > **Ownership:** Every dashboard endpoint is owner-scoped. Any `{entityId}` (or each id in an `entityIds` cluster list) must belong to the authenticated user; otherwise the request returns `404 Not Found` — the same response as for a non-existent entity, so existence is never leaked.
+>
+> **Admin:** An admin (`ROLE_ADMIN`) may access any user's entities here. The mention-list endpoints (`GET /api/dashboard/{entityId}/mentions` and `GET /api/dashboard/cluster/mentions`) additionally accept an optional `ownerId` query parameter: for an admin it requires the referenced entity(ies) to belong to that user (else `404`); a non-admin who supplies `ownerId` gets `403 Forbidden`.
 
 ### 8. Get Entity Statistics
 
@@ -1370,6 +1400,7 @@ Authorization: Bearer {jwt_token}
 - `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
 - `page` - Page number (default: 0)
 - `size` - Page size (default: all mentions are returned if not specified)
+- `ownerId` — (admin only) require `entityId` to belong to this user; a non-admin who supplies it gets `403 Forbidden`. Optional.
 
 **Example Request:**
 ```
@@ -1457,6 +1488,7 @@ Authorization: Bearer {jwt_token}
 - `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
 - `page` - Page number (default: 0)
 - `size` - Page size (default: all mentions are returned if not specified)
+- `ownerId` — (admin only) require every id in `entityIds` to belong to this user; a non-admin who supplies it gets `403 Forbidden`. Optional.
 
 **Example Request:**
 ```
@@ -2213,6 +2245,9 @@ Authorization: Bearer {jwt_token}
 
 **Path Parameters:**
 - `mentionId` — Mention ID to fetch the action log for
+
+**Query Parameters:**
+- `ownerId` — (admin only) require the mention's entity to belong to this user; a non-admin who supplies it gets `403 Forbidden`. Optional.
 
 **Example Request:**
 ```
@@ -3966,6 +4001,51 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+## Admin APIs
+
+Admin-only endpoints, mounted under `/api/admin/**`. Access requires the caller to hold
+`ROLE_ADMIN` — enforced both by Spring Security (`/api/admin/**` request matcher) and by
+`@PreAuthorize` on the handler. A non-admin (or unauthenticated) caller receives `403 Forbidden`.
+
+### List Users
+
+**Endpoint:** `GET /api/admin/users`
+
+**Description:** Return all users as a minimal `id` + `username` projection, sorted by username
+(case-insensitive). Intended to populate the admin user-selector dropdown that drives the `ownerId`
+view-scoping parameter. The password hash, role, and other account fields are never included.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Example Request:**
+```
+GET /api/admin/users
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 2,
+    "username": "admin"
+  },
+  {
+    "id": 1,
+    "username": "user"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
 ## Error Responses
 
 All endpoints may return the following error responses:
@@ -3991,6 +4071,22 @@ All endpoints may return the following error responses:
   "status": 401,
   "error": "Unauthorized",
   "message": "Invalid username or password"
+}
+```
+
+### 403 Forbidden
+
+Returned when an authenticated user attempts an action reserved for administrators — e.g. a
+non-admin passing the `ownerId` query parameter, or any caller hitting an `/api/admin/**` endpoint
+without `ROLE_ADMIN`.
+
+**Example:**
+```json
+{
+  "timestamp": "2025-11-08T11:30:00.000+00:00",
+  "status": 403,
+  "error": "Forbidden",
+  "message": "Only administrators may scope by ownerId"
 }
 ```
 

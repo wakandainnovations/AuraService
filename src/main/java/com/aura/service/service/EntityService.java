@@ -83,9 +83,14 @@ public class EntityService {
         return mapToDetailResponse(entity);
     }
 
-    public List<EntityBasicInfo> getAllEntities(String entityType) {
-        Long ownerId = entityAccessService.currentUser().getId();
-        return entityRepository.findByTypeAndOwnerId(entityType, ownerId).stream()
+    public List<EntityBasicInfo> getAllEntities(String entityType, Long ownerId) {
+        // resolveOwnerScope enforces the admin rules: non-admins are pinned to their own id (and
+        // rejected if they pass ownerId); an admin gets the requested owner, or null for "all".
+        Long scope = entityAccessService.resolveOwnerScope(ownerId);
+        List<ManagedEntity> entities = scope == null
+                ? entityRepository.findByType(entityType)
+                : entityRepository.findByTypeAndOwnerId(entityType, scope);
+        return entities.stream()
                 .map(this::mapToBasicInfo)
                 .collect(Collectors.toList());
     }
