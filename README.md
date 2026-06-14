@@ -571,6 +571,8 @@ DELETE /api/entities/movie/1
 
 **Description:** Generate a single, complete, **prospect-facing** marketing intelligence report for a managed entity. It is designed to be shown at a high level to a production house's potential customers, so the most flattering, headline numbers are surfaced first and a deterministic `highlights` narrative summarizes them.
 
+> **Tier-gated (DIAMOND).** The Intelligence Report (`/marketing-report` and `/marketing-report/pdf`) requires the **DIAMOND** tier; a lower-tier caller receives a structured `403 Forbidden` (admins bypass). See [Premium Feature Tier Gating](#premium-feature-tier-gating).
+
 The report aggregates this service's own analytics with the upstream **AuraMath** entity report:
 
 - **Headline metrics** — total mentions, overall sentiment, positivity ratio, positive/negative/neutral split, net sentiment score, and the number of platforms covered (from the same data behind `GET /api/dashboard/{entityId}/stats` and `/stats/avg`).
@@ -782,13 +784,66 @@ Both rejections return **`409 Conflict`** with a structured, **price-free** body
 > Limits are user-facing, but **prices are not** — they are admin-only (`/api/admin/license-prices`,
 > `ROLE_ADMIN`) and never appear in any license, usage, or limit response.
 
+### Premium Feature Tier Gating
+
+Beyond the numeric caps above, whole **premium features** are gated by a minimum tier. A feature is
+allowed only when the caller's tier is **at least** the feature's minimum, using the fixed ordering:
+
+```
+BRONZE  <  SILVER  <  GOLD  <  DIAMOND
+```
+
+The gate is declarative: a `@RequiresTier(tier)` annotation on the controller (resolved by a
+`HandlerInterceptor`) reads the caller's tier and either lets the request through or rejects it.
+Holders of `ROLE_ADMIN` **bypass** the gate entirely and reach every feature regardless of tier.
+
+| Feature | Endpoint(s) | Minimum tier |
+|---------|-------------|:---:|
+| Checkpoints | `/api/checkpoints/**` | SILVER |
+| Crisis Management | `/api/crisis/**` | GOLD |
+| Aggregated Intel | `/api/marketing/aggregate/**` | DIAMOND |
+| Intelligence Report | `/api/entities/{entityType}/{id}/marketing-report[/pdf]` | DIAMOND |
+| Audience & Content | `/api/audience-content` *(stub — module not yet implemented)* | DIAMOND |
+
+Gated endpoints are **not hidden from routing** — they stay callable so the UI can present them, and a
+caller below the required tier receives a structured, **price-free** `403 Forbidden` (see
+[403 Forbidden](#403-forbidden)):
+
+```json
+{ "feature": "Crisis Management", "requiredTier": "GOLD" }
+```
+
+- `feature` — the human-readable name of the gated feature.
+- `requiredTier` — the minimum tier that unlocks it (never the price of that tier).
+
+### Offer-key overrides (effective tier)
+
+A user's **effective tier** is normally their purchased license tier — but it can be temporarily
+raised by **redeeming an offer key** (see [Redeem Offer Key](#l3-redeem-offer-key)). While an override
+is active, the effective tier replaces the base tier **everywhere it matters**: both the numeric caps
+(F4/F5) and the premium-feature gates (F6) are evaluated against the effective tier, so a Bronze user
+who redeems a Diamond offer key gets Diamond limits **and** Diamond features until the override
+expires.
+
+The override lives on the license as `overrideTier` + `overrideExpiresAt`:
+
+- It applies only while `overrideTier` is set **and** `overrideExpiresAt` is still in the future (a
+  `null` expiry never lapses).
+- Once it expires, the effective tier silently falls back to the base purchased tier.
+
+Both `GET /api/license/usage` and `GET /api/licenses/me` report the **effective** tier and its caps, so
+the limits a user sees always match the ones enforcement applies. Offer keys grant *access*, never a
+purchase — they carry **no price**. Offer keys are created and managed admin-only under
+`/api/admin/offer-keys` (see [Admin APIs](#admin-apis)).
+
 ### L1. Get License Usage
 
 **Endpoint:** `GET /api/license/usage`
 
 **Description:** Read-only usage meter for the authenticated user: how many entities and keywords they
-are currently using against their tier's caps. Designed to back the UI's usage meters. Carries **no
-price** — only counts and limits.
+are currently using against their **effective** tier's caps (an active
+[offer-key override](#offer-key-overrides-effective-tier) raises these). Designed to back the UI's
+usage meters. Carries **no price** — only counts and limits.
 
 **Headers:**
 ```
@@ -833,7 +888,9 @@ curl -X GET http://localhost:8080/api/license/usage \
 **Endpoint:** `GET /api/licenses/me`
 
 **Description:** The authenticated user's own license: their tier and the per-tier limits it grants.
-User-facing, so it returns **no price**.
+Reports the **effective** tier — if an [offer-key override](#offer-key-overrides-effective-tier) is
+active, the returned `tier` and limits are the overridden tier's. User-facing, so it returns **no
+price**.
 
 **Headers:**
 ```
@@ -861,11 +918,78 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+### L3. Redeem Offer Key
+
+**Endpoint:** `POST /api/license/redeem-offer`
+
+**Description:** Redeem an **offer key** to unlock a temporary tier override on top of the
+authenticated user's existing license. A valid key sets the override (Diamond by default) on the
+user's active license and increments the key's redemption count; from then on the user's
+[effective tier](#offer-key-overrides-effective-tier) is the granted tier — raising both their limits
+(F4/F5) and feature gates (F6) — until the override expires. The override inherits the key's own
+expiry, so the elevated access ends when the key would have lapsed. Carries **no price**.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "code": "DIAMOND-LAUNCH-2026"
+}
+```
+
+- `code` — required; the offer-key code to redeem.
+
+**Response:**
+```json
+{
+  "baseTier": "BRONZE",
+  "overrideTier": "DIAMOND",
+  "effectiveTier": "DIAMOND",
+  "overrideExpiresAt": "2026-12-31T23:59:59Z"
+}
+```
+
+**Response fields:**
+- `baseTier` — the user's purchased (base) license tier, unchanged by the redemption.
+- `overrideTier` — the tier the override now grants.
+- `effectiveTier` — the tier now in force (the override while active).
+- `overrideExpiresAt` — when the override lapses; `null` means it never expires on its own.
+
+**cURL example:**
+```bash
+curl -X POST http://localhost:8080/api/license/redeem-offer \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "DIAMOND-LAUNCH-2026"}'
+```
+
+**Status Codes:**
+- `200 OK` — redeemed; the override is now active.
+- `400 Bad Request` — the key was rejected, with a structured, **price-free** body
+  `{ reason, message }` where `reason` is one of `INVALID` (no such code), `INACTIVE` (deactivated),
+  `EXPIRED` (past its expiry), or `EXHAUSTED` (redemption limit reached):
+  ```json
+  { "reason": "EXPIRED", "message": "This offer key has expired" }
+  ```
+- `403 Forbidden` — no JWT supplied (or invalid token).
+- `404 Not Found` — the user has no active license to apply the override to.
+
+---
+
 ## Checkpoint Management APIs
 
 Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.
 
 > **Ownership:** Every checkpoint operation is scoped to the entity's owner. Creating or listing checkpoints for an entity, or updating/deleting a checkpoint, returns `404 Not Found` when the referenced entity does not exist **or** is owned by another user.
+
+> **Tier-gated (SILVER).** Checkpoints (`/api/checkpoints/**`) require at least the **SILVER** tier; a
+> BRONZE caller receives a structured `403 Forbidden` (admins bypass). See
+> [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
 ### 7a. Create Checkpoint
 
@@ -2198,6 +2322,10 @@ POST /api/templates/6/use
 
 ## Crisis Management APIs
 
+> **Tier-gated (GOLD).** Crisis Management (`/api/crisis/**`) requires at least the **GOLD** tier; a
+> lower-tier caller receives a structured `403 Forbidden` (admins bypass). See
+> [Premium Feature Tier Gating](#premium-feature-tier-gating).
+
 ### 21. Generate Crisis Plan
 
 **Endpoint:** `POST /api/crisis/generate-plan`
@@ -3463,6 +3591,10 @@ The marketing aggregation APIs aggregate data from the upstream AuraMath service
 
 All endpoints are JWT-protected and mounted under `/api/marketing/aggregate/`.
 
+> **Tier-gated (DIAMOND).** Aggregated Intel (`/api/marketing/aggregate/**`) requires the **DIAMOND**
+> tier; a lower-tier caller receives a structured `403 Forbidden` (admins bypass). See
+> [Premium Feature Tier Gating](#premium-feature-tier-gating).
+
 **Common Query Parameters (at least one required):**
 
 | Parameter | Type | Description |
@@ -4374,6 +4506,166 @@ Content-Type: application/json
 
 ---
 
+### Create Offer Key
+
+**Endpoint:** `POST /api/admin/offer-keys`
+
+**Description:** Create an **offer key** — a redeemable code that grants a temporary tier
+[override](#offer-key-overrides-effective-tier) when a user redeems it via
+[`POST /api/license/redeem-offer`](#l3-redeem-offer-key). Carries **no price** — an offer key grants
+access, not a purchase.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "code": "DIAMOND-LAUNCH-2026",
+  "grantsTier": "DIAMOND",
+  "active": true,
+  "expiresAt": "2026-12-31T23:59:59Z",
+  "maxRedemptions": 100
+}
+```
+
+- `code` — required; the code users type to redeem. Must be unique.
+- `grantsTier` — optional; the tier the key grants. Defaults to `DIAMOND` when omitted.
+- `active` — optional; whether the key is redeemable. Defaults to `true` when omitted.
+- `expiresAt` — optional ISO-8601 instant; omit for a key that never expires. A redeemed override
+  inherits this expiry.
+- `maxRedemptions` — optional positive integer; omit for unlimited redemptions.
+
+**Response:**
+```json
+{
+  "id": 3,
+  "code": "DIAMOND-LAUNCH-2026",
+  "grantsTier": "DIAMOND",
+  "active": true,
+  "expiresAt": "2026-12-31T23:59:59Z",
+  "maxRedemptions": 100,
+  "redemptionCount": 0
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `400 Bad Request` — `code` is missing/blank, `maxRedemptions` is not positive, or a key with that
+  `code` already exists.
+
+---
+
+### List Offer Keys
+
+**Endpoint:** `GET /api/admin/offer-keys`
+
+**Description:** Return every offer key, including its accumulated `redemptionCount`. **No price**.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Response:** a list of offer keys, each in the same shape as a [Create Offer Key](#create-offer-key)
+response.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
+### Get Offer Key
+
+**Endpoint:** `GET /api/admin/offer-keys/{id}`
+
+**Description:** Return a single offer key by id. **No price**.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Offer key ID (e.g., 3)
+
+**Response:** The offer key, in the same shape as a [Create Offer Key](#create-offer-key) response.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no offer key exists with the given `id`.
+
+---
+
+### Update Offer Key
+
+**Endpoint:** `PATCH /api/admin/offer-keys/{id}`
+
+**Description:** Partially update an offer key: change its `grantsTier`, `active` flag, `expiresAt`,
+and/or `maxRedemptions`. A field omitted (or `null`) is left unchanged. The `code` and the
+accumulated `redemptionCount` are immutable here. Returns the updated key (**no price**).
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `id` — Offer key ID (e.g., 3)
+
+**Request Body:**
+```json
+{
+  "active": false,
+  "maxRedemptions": 50
+}
+```
+
+**Response:** The updated offer key, in the same shape as a [Create Offer Key](#create-offer-key)
+response.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no offer key exists with the given `id`.
+- `400 Bad Request` — `maxRedemptions` is not positive.
+
+---
+
+### Delete Offer Key
+
+**Endpoint:** `DELETE /api/admin/offer-keys/{id}`
+
+**Description:** Permanently delete an offer key. Overrides already applied to users' licenses are
+unaffected.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Path Parameters:**
+- `id` — Offer key ID (e.g., 3)
+
+**Status Code:** `204 No Content`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no offer key exists with the given `id`.
+
+---
+
 ## Error Responses
 
 All endpoints may return the following error responses:
@@ -4416,6 +4708,14 @@ without `ROLE_ADMIN`.
   "error": "Forbidden",
   "message": "Only administrators may scope by ownerId"
 }
+```
+
+A `403 Forbidden` is **also** returned when a caller below the required tier hits a tier-gated premium
+feature (see [Premium Feature Tier Gating](#premium-feature-tier-gating)). That response carries a
+distinct, structured, **price-free** body instead of the message envelope above:
+
+```json
+{ "feature": "Crisis Management", "requiredTier": "GOLD" }
 ```
 
 ### 409 Conflict

@@ -1,7 +1,9 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.EntityMarketingReportResponse;
+import com.aura.service.enums.LicenseTier;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.licensing.RequiresTier;
 import com.aura.service.service.EntityMarketingReportPdfService;
 import com.aura.service.service.EntityMarketingReportService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/entities/{entityType}/{id}")
 @RequiredArgsConstructor
+@RequiresTier(value = LicenseTier.DIAMOND, feature = "Intelligence Report")
 @Tag(name = "Entity Marketing Report",
         description = "Complete, prospect-facing marketing intelligence report for a managed entity")
 public class EntityMarketingReportController {

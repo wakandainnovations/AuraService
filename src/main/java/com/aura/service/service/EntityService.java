@@ -186,7 +186,9 @@ public class EntityService {
      */
     public LicenseUsageResponse currentUsage() {
         User user = entityAccessService.currentUser();
-        LicenseTier tier = licenseService.currentTier();
+        // Use the effective tier so the caps shown in the meter match what enforcement actually
+        // allows when an offer-key override is in effect.
+        LicenseTier tier = licenseService.effectiveTier();
         long entitiesUsed = entityRepository.countByOwnerId(user.getId());
         long keywordsUsed = entityRepository.countKeywordsByOwnerId(user.getId());
         return new LicenseUsageResponse(

@@ -44,4 +44,21 @@ public class License {
     // Null means the license never expires.
     @Column(name = "expires_at")
     private Instant expiresAt;
+
+    /**
+     * Temporary tier override granted by redeeming an offer key (see {@code OfferKey}). When set and
+     * not past {@link #overrideExpiresAt}, the user's <em>effective</em> tier is this value instead of
+     * {@link #tier} — raising both the feature gates and the numeric limits to the granted tier. Null
+     * means no override is in effect and the base {@link #tier} governs.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "override_tier")
+    private LicenseTier overrideTier;
+
+    /**
+     * When the {@link #overrideTier} stops applying; null means it never expires on its own. Once this
+     * instant has passed, the effective tier falls back to the base {@link #tier}.
+     */
+    @Column(name = "override_expires_at")
+    private Instant overrideExpiresAt;
 }

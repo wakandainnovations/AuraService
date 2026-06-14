@@ -43,4 +43,36 @@ class LicenseTierTest {
         assertThat(LicenseTier.DIAMOND.getMaxMentionsPerMonth()).isEqualTo(100_000);
         assertThat(LicenseTier.DIAMOND.getCollectionFrequency()).isEqualTo(Duration.ofMinutes(10));
     }
+
+    // ------------------------------------------------------------------
+    // Tier ordering — BRONZE < SILVER < GOLD < DIAMOND
+    // ------------------------------------------------------------------
+
+    @Test
+    void isAtLeast_isTrueForEqualTier() {
+        assertThat(LicenseTier.SILVER.isAtLeast(LicenseTier.SILVER)).isTrue();
+        assertThat(LicenseTier.DIAMOND.isAtLeast(LicenseTier.DIAMOND)).isTrue();
+    }
+
+    @Test
+    void isAtLeast_isTrueForHigherTier() {
+        assertThat(LicenseTier.SILVER.isAtLeast(LicenseTier.BRONZE)).isTrue();
+        assertThat(LicenseTier.GOLD.isAtLeast(LicenseTier.SILVER)).isTrue();
+        assertThat(LicenseTier.DIAMOND.isAtLeast(LicenseTier.GOLD)).isTrue();
+    }
+
+    @Test
+    void isAtLeast_isFalseForLowerTier() {
+        assertThat(LicenseTier.BRONZE.isAtLeast(LicenseTier.SILVER)).isFalse();
+        assertThat(LicenseTier.SILVER.isAtLeast(LicenseTier.GOLD)).isFalse();
+        assertThat(LicenseTier.GOLD.isAtLeast(LicenseTier.DIAMOND)).isFalse();
+    }
+
+    @Test
+    void declarationOrderIsAscending() {
+        // isAtLeast relies on ordinal ordering, so guard the declared order against accidental reshuffles.
+        assertThat(LicenseTier.BRONZE.ordinal()).isLessThan(LicenseTier.SILVER.ordinal());
+        assertThat(LicenseTier.SILVER.ordinal()).isLessThan(LicenseTier.GOLD.ordinal());
+        assertThat(LicenseTier.GOLD.ordinal()).isLessThan(LicenseTier.DIAMOND.ordinal());
+    }
 }

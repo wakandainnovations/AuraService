@@ -1,5 +1,7 @@
 package com.aura.service.controller;
 
+import com.aura.service.enums.LicenseTier;
+import com.aura.service.licensing.RequiresTier;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MarketingAggregationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/marketing/aggregate")
 @RequiredArgsConstructor
+@RequiresTier(value = LicenseTier.DIAMOND, feature = "Aggregated Intel")
 @Tag(name = "Marketing Aggregation",
         description = "Aggregate marketing data across keywords by language, industry, entity, etc.")
 public class MarketingAggregationController {

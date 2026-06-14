@@ -51,6 +51,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
+    @ExceptionHandler(InsufficientTierException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientTier(InsufficientTierException ex) {
+        // Structured 403 body the UI can act on (F8 will turn this into a blurred preview). Keys are
+        // exactly { feature, requiredTier }. Deliberately price-free: names the tier, never its cost.
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("feature", ex.getFeature());
+        body.put("requiredTier", ex.getRequiredTier().name());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
+    }
+
+    @ExceptionHandler(OfferKeyRedemptionException.class)
+    public ResponseEntity<Map<String, Object>> handleOfferKeyRedemption(OfferKeyRedemptionException ex) {
+        // Structured 400 body the UI can act on. Keys are exactly { reason, message }. Price-free: an
+        // offer key grants access, never anything about cost.
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("reason", ex.getReason().name());
+        body.put("message", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ErrorResponse> handleRuntimeException(RuntimeException ex) {
         ErrorResponse error = new ErrorResponse(

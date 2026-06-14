@@ -3,6 +3,8 @@ package com.aura.service.controller;
 import com.aura.service.dto.GenerateCrisisPlanRequest;
 import com.aura.service.dto.GenerateCrisisPlanResponse;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.LicenseTier;
+import com.aura.service.licensing.RequiresTier;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
 import jakarta.validation.Valid;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/crisis")
 @RequiredArgsConstructor
+@RequiresTier(value = LicenseTier.GOLD, feature = "Crisis Management")
 public class CrisisController {
 
     private final LLMService llmService;

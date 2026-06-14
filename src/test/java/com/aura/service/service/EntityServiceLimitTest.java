@@ -171,7 +171,7 @@ class EntityServiceLimitTest {
 
     @Test
     void currentUsageReportsCountsAgainstTierMaxima() {
-        when(licenseService.currentTier()).thenReturn(LicenseTier.GOLD);
+        when(licenseService.effectiveTier()).thenReturn(LicenseTier.GOLD);
         when(entityRepository.countByOwnerId(USER_ID)).thenReturn(3L);
         when(entityRepository.countKeywordsByOwnerId(USER_ID)).thenReturn(12L);
 

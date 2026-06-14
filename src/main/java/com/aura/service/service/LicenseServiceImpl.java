@@ -39,23 +39,44 @@ public class LicenseServiceImpl implements LicenseService {
     }
 
     @Override
+    public LicenseTier effectiveTier() {
+        return effectiveTierOf(resolveCurrentLicense(), Instant.now());
+    }
+
+    /**
+     * The tier that actually governs {@code license}: its {@code overrideTier} when one is set and not
+     * past {@code overrideExpiresAt} at {@code now}, otherwise the base {@code tier}. A null override
+     * expiry means the override never lapses on its own.
+     */
+    static LicenseTier effectiveTierOf(License license, Instant now) {
+        LicenseTier override = license.getOverrideTier();
+        if (override != null) {
+            Instant expiry = license.getOverrideExpiresAt();
+            if (expiry == null || expiry.isAfter(now)) {
+                return override;
+            }
+        }
+        return license.getTier();
+    }
+
+    @Override
     public int currentMaxKeywords() {
-        return currentTier().getMaxKeywords();
+        return effectiveTier().getMaxKeywords();
     }
 
     @Override
     public int currentMaxEntities() {
-        return currentTier().getMaxEntities();
+        return effectiveTier().getMaxEntities();
     }
 
     @Override
     public int currentMaxMentionsPerMonth() {
-        return currentTier().getMaxMentionsPerMonth();
+        return effectiveTier().getMaxMentionsPerMonth();
     }
 
     @Override
     public Duration currentCollectionFrequency() {
-        return currentTier().getCollectionFrequency();
+        return effectiveTier().getCollectionFrequency();
     }
 
     @Override

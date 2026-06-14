@@ -198,25 +198,25 @@ Enforce the per-license keyword and entity caps from LicenseTier in AuraService.
 
 ### Prompt
 ```
-Enforce two license-driven limits on mention collection in AuraService: a monthly mention quota
-and a per-tier collection frequency.
-
-First, investigate how mentions currently get into the `mentions` table (controller? proxy?
-upstream batch?) and tell me what you find before changing ingestion — there is no scheduler today.
-
-Then:
-1. Monthly quota: add a MentionUsage entity/table (user_id, periodYyyyMm, count, unique on
-   user+period). On each mention ingested for a user's entity, increment the counter. When the
-   count reaches tier.maxMentionsPerMonth, stop accepting new mentions for that user for the rest
-   of the calendar month (log + skip). Counts reset naturally at month rollover by keying on period.
-2. Expose GET /api/license/usage (extend the F4 usage endpoint) to also report mentions used/max
-   for the current month. No prices.
-3. Collection frequency: drive ingestion cadence from tier.collectionFrequency
-   (Diamond 10m, Gold 1h, Silver 12h, Bronze 24h). Implement a @Scheduled collector that, per user,
-   only triggers collection when their tier's interval has elapsed since their last run (store
-   lastCollectedAt per user/license). Enable @EnableScheduling if not already on.
-4. Tests: quota blocks ingestion at the cap and resets across periods; a Bronze user is not
-   collected more often than every 24h; Diamond every 10m. Mock interfaces, not concrete classes.
+  Enforce two license-driven limits on mention collection in AuraService: a monthly mention quota
+  and a per-tier collection frequency.
+  
+  First, investigate how mentions currently get into the `mentions` table (controller? proxy?
+  upstream batch?) and tell me what you find before changing ingestion — there is no scheduler today.
+  
+  Then:
+  1. Monthly quota: add a MentionUsage entity/table (user_id, periodYyyyMm, count, unique on
+     user+period). On each mention ingested for a user's entity, increment the counter. When the
+     count reaches tier.maxMentionsPerMonth, stop accepting new mentions for that user for the rest
+     of the calendar month (log + skip). Counts reset naturally at month rollover by keying on period.
+  2. Expose GET /api/license/usage (extend the F4 usage endpoint) to also report mentions used/max
+     for the current month. No prices.
+  3. Collection frequency: drive ingestion cadence from tier.collectionFrequency
+     (Diamond 10m, Gold 1h, Silver 12h, Bronze 24h). Implement a @Scheduled collector that, per user,
+     only triggers collection when their tier's interval has elapsed since their last run (store
+     lastCollectedAt per user/license). Enable @EnableScheduling if not already on.
+  4. Tests: quota blocks ingestion at the cap and resets across periods; a Bronze user is not
+     collected more often than every 24h; Diamond every 10m. Mock interfaces, not concrete classes.
 ```
 
 ---

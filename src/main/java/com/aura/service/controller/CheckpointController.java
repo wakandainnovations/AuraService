@@ -3,6 +3,8 @@ package com.aura.service.controller;
 import com.aura.service.dto.CheckpointResponse;
 import com.aura.service.dto.CreateCheckpointRequest;
 import com.aura.service.dto.UpdateCheckpointRequest;
+import com.aura.service.enums.LicenseTier;
+import com.aura.service.licensing.RequiresTier;
 import com.aura.service.service.CheckpointService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/checkpoints")
 @RequiredArgsConstructor
+@RequiresTier(value = LicenseTier.SILVER, feature = "Checkpoints")
 public class CheckpointController {
 
     private final CheckpointService checkpointService;

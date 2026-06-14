@@ -10,6 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -125,6 +127,75 @@ class LicenseServiceImplTest {
 
         assertThatThrownBy(() -> service.resolveCurrentLicense())
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ------------------------------------------------------------------
+    // Effective tier: an offer-key override lifts the tier (and thus the limits) while active, and
+    // falls back to the base tier once it expires or is absent.
+    // ------------------------------------------------------------------
+
+    private void stubCurrentLicense(License license) {
+        User current = user(USER_ID, "alice");
+        license.setUser(current);
+        license.setActive(true);
+        when(entityAccessService.currentUser()).thenReturn(current);
+        when(licenseRepository.findByUserAndActiveTrue(current)).thenReturn(Optional.of(license));
+    }
+
+    @Test
+    void effectiveTier_noOverride_isBaseTier() {
+        License license = new License();
+        license.setTier(LicenseTier.BRONZE);
+        stubCurrentLicense(license);
+
+        assertThat(service.effectiveTier()).isEqualTo(LicenseTier.BRONZE);
+        // currentTier() always reports the base tier regardless of override.
+        assertThat(service.currentTier()).isEqualTo(LicenseTier.BRONZE);
+    }
+
+    @Test
+    void effectiveTier_activeOverride_isOverrideTier_andLimitsFollow() {
+        License license = new License();
+        license.setTier(LicenseTier.BRONZE);
+        license.setOverrideTier(LicenseTier.DIAMOND);
+        license.setOverrideExpiresAt(Instant.now().plus(Duration.ofHours(1)));
+        stubCurrentLicense(license);
+
+        // A Bronze user with an active Diamond override gets Diamond features (effective tier) AND
+        // Diamond limits.
+        assertThat(service.effectiveTier()).isEqualTo(LicenseTier.DIAMOND);
+        assertThat(service.currentTier()).isEqualTo(LicenseTier.BRONZE);
+        assertThat(service.currentMaxKeywords()).isEqualTo(LicenseTier.DIAMOND.getMaxKeywords());
+        assertThat(service.currentMaxEntities()).isEqualTo(LicenseTier.DIAMOND.getMaxEntities());
+        assertThat(service.currentMaxMentionsPerMonth())
+                .isEqualTo(LicenseTier.DIAMOND.getMaxMentionsPerMonth());
+        assertThat(service.currentCollectionFrequency())
+                .isEqualTo(LicenseTier.DIAMOND.getCollectionFrequency());
+    }
+
+    @Test
+    void effectiveTier_overrideWithoutExpiry_neverLapses() {
+        License license = new License();
+        license.setTier(LicenseTier.SILVER);
+        license.setOverrideTier(LicenseTier.DIAMOND);
+        license.setOverrideExpiresAt(null);
+        stubCurrentLicense(license);
+
+        assertThat(service.effectiveTier()).isEqualTo(LicenseTier.DIAMOND);
+    }
+
+    @Test
+    void effectiveTier_expiredOverride_fallsBackToBaseTier() {
+        License license = new License();
+        license.setTier(LicenseTier.BRONZE);
+        license.setOverrideTier(LicenseTier.DIAMOND);
+        // Override expiry already in the past — it no longer applies.
+        license.setOverrideExpiresAt(Instant.now().minus(Duration.ofMinutes(1)));
+        stubCurrentLicense(license);
+
+        assertThat(service.effectiveTier()).isEqualTo(LicenseTier.BRONZE);
+        assertThat(service.currentMaxKeywords()).isEqualTo(LicenseTier.BRONZE.getMaxKeywords());
+        assertThat(service.currentMaxEntities()).isEqualTo(LicenseTier.BRONZE.getMaxEntities());
     }
 
     @Test

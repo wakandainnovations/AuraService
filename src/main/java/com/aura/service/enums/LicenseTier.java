@@ -53,4 +53,16 @@ public enum LicenseTier {
     public Duration getCollectionFrequency() {
         return collectionFrequency;
     }
+
+    /**
+     * Tier-ordering comparison: {@code true} when this tier is at least as high as {@code minimum} in
+     * the fixed ranking BRONZE &lt; SILVER &lt; GOLD &lt; DIAMOND. This relies on the declaration order
+     * of the constants (their {@link #ordinal()}), so the constants above must stay in ascending order.
+     *
+     * <p>This is the single helper every premium-feature gate consults — a feature requiring
+     * {@code minimum} is allowed exactly when {@code userTier.isAtLeast(minimum)}.
+     */
+    public boolean isAtLeast(LicenseTier minimum) {
+        return this.compareTo(minimum) >= 0;
+    }
 }

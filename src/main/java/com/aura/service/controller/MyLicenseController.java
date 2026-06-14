@@ -1,7 +1,6 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.MyLicenseResponse;
-import com.aura.service.entity.License;
 import com.aura.service.enums.LicenseTier;
 import com.aura.service.service.LicenseService;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +23,9 @@ public class MyLicenseController {
 
     @GetMapping
     public ResponseEntity<MyLicenseResponse> myLicense() {
-        License license = licenseService.resolveCurrentLicense();
-        LicenseTier tier = license.getTier();
+        // Report the effective tier (honoring any active offer-key override) so the limits the user
+        // sees here match the ones enforcement applies.
+        LicenseTier tier = licenseService.effectiveTier();
         MyLicenseResponse response = new MyLicenseResponse(
                 tier,
                 tier.getMaxKeywords(),

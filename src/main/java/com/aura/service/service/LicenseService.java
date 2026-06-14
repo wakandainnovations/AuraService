@@ -23,8 +23,16 @@ public interface LicenseService {
     /** The active license of the authenticated user, or throws 404 if they have none. */
     License resolveCurrentLicense();
 
-    /** The authenticated user's current tier. */
+    /** The authenticated user's base (purchased) tier, ignoring any temporary override. */
     LicenseTier currentTier();
+
+    /**
+     * The authenticated user's <em>effective</em> tier: the temporary {@code overrideTier} from a
+     * redeemed offer key when it is present and not past its {@code overrideExpiresAt}, otherwise the
+     * base {@link #currentTier()}. This is the single tier every limit check (F4/F5) and feature gate
+     * (F6) must consult — never the raw {@link #currentTier()}.
+     */
+    LicenseTier effectiveTier();
 
     int currentMaxKeywords();
 
