@@ -1,5 +1,6 @@
 package com.aura.service.controller;
 
+import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.exception.GlobalExceptionHandler;
 import com.aura.service.repository.AbuseReportRepository;
@@ -7,6 +8,7 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MentionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ class MentionControllerDeleteTest {
     private ReplyDraftRepository replyDraftRepository;
     private MobilizeActionRepository mobilizeActionRepository;
     private CrisisPlanRepository crisisPlanRepository;
+    private EntityAccessService entityAccess;
     private MockMvc mvc;
 
     @BeforeEach
@@ -37,13 +40,15 @@ class MentionControllerDeleteTest {
         replyDraftRepository = mock(ReplyDraftRepository.class);
         mobilizeActionRepository = mock(MobilizeActionRepository.class);
         crisisPlanRepository = mock(CrisisPlanRepository.class);
+        entityAccess = mock(EntityAccessService.class);
 
         MentionService service = new MentionService(
                 mentionRepository,
                 abuseReportRepository,
                 replyDraftRepository,
                 mobilizeActionRepository,
-                crisisPlanRepository);
+                crisisPlanRepository,
+                entityAccess);
         MentionController controller = new MentionController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
@@ -55,6 +60,9 @@ class MentionControllerDeleteTest {
         Mention m = new Mention();
         m.setId(id);
         m.setPostId("x-12345");
+        ManagedEntity entity = new ManagedEntity();
+        entity.setId(99L);
+        m.setManagedEntity(entity);
         return m;
     }
 

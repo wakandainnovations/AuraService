@@ -28,12 +28,15 @@ public class EntityService {
     private final ManagedEntityRepository entityRepository;
     private final CheckpointRepository checkpointRepository;
     private final MentionRepository mentionRepository;
+    private final EntityAccessService entityAccessService;
 
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
         ManagedEntity entity = new ManagedEntity();
         entity.setName(request.getName());
         entity.setType(entityType);
+        // The creator owns the entity; everything below is scoped to this owner.
+        entity.setOwner(entityAccessService.currentUser());
         entity.setDirector(request.getDirector());
         entity.setActors(request.getActors());
         if ("MOVIE".equalsIgnoreCase(entityType)) {
@@ -55,8 +58,7 @@ public class EntityService {
 
     @Transactional
     public EntityDetailResponse updateEntity(String entityType, Long id, UpdateEntityRequest request) {
-        ManagedEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
@@ -82,14 +84,14 @@ public class EntityService {
     }
 
     public List<EntityBasicInfo> getAllEntities(String entityType) {
-        return entityRepository.findByType(entityType).stream()
+        Long ownerId = entityAccessService.currentUser().getId();
+        return entityRepository.findByTypeAndOwnerId(entityType, ownerId).stream()
                 .map(this::mapToBasicInfo)
                 .collect(Collectors.toList());
     }
-    
+
     public EntityDetailResponse getEntityById(String entityType, Long id) {
-        ManagedEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
@@ -98,13 +100,17 @@ public class EntityService {
     
     @Transactional
     public EntityDetailResponse updateCompetitors(String entityType, Long id, UpdateCompetitorsRequest request) {
-        ManagedEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
-        
-        List<ManagedEntity> competitors = entityRepository.findAllById(request.getCompetitorIds());
+
+        // Only the caller's own entities may be added as competitors — silently drop any id that
+        // resolves to another user's entity (or doesn't exist), so competitor links can't leak existence.
+        Long ownerId = entity.getOwner() == null ? null : entity.getOwner().getId();
+        List<ManagedEntity> competitors = entityRepository.findAllById(request.getCompetitorIds()).stream()
+                .filter(c -> c.getOwner() != null && c.getOwner().getId().equals(ownerId))
+                .collect(Collectors.toList());
         entity.getCompetitors().addAll(competitors);
         
         entity = entityRepository.save(entity);
@@ -114,8 +120,7 @@ public class EntityService {
 
     @Transactional
     public EntityDetailResponse updateKeywords(String entityType, Long id, UpdateKeywordsRequest request) {
-        ManagedEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }
@@ -129,8 +134,7 @@ public class EntityService {
 
     @Transactional
     public void deleteEntity(String entityType, Long id) {
-        ManagedEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + id));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
         }

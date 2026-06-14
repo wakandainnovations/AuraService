@@ -1,6 +1,7 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.WhatsChangedResponse;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.WhatsChangedService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -18,6 +19,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -60,7 +62,8 @@ class DashboardControllerWhatsChangedTest {
     @BeforeEach
     void setUp() {
         whatsChangedService = new StubWhatsChanged();
-        DashboardController controller = new DashboardController(null, null, whatsChangedService, null);
+        DashboardController controller = new DashboardController(
+                null, null, whatsChangedService, null, mock(EntityAccessService.class));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

@@ -3,7 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.GenerateCrisisPlanRequest;
 import com.aura.service.dto.GenerateCrisisPlanResponse;
 import com.aura.service.entity.ManagedEntity;
-import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class CrisisController {
 
     private final LLMService llmService;
-    private final ManagedEntityRepository entityRepository;
+    private final EntityAccessService entityAccessService;
 
     @Value("${llm.prompt.generate.crisis.plan}")
     private String crisisPlanPromptTemplate;
@@ -26,8 +26,7 @@ public class CrisisController {
     public ResponseEntity<GenerateCrisisPlanResponse> generateCrisisPlan(
             @Valid @RequestBody GenerateCrisisPlanRequest request
     ) {
-        ManagedEntity entity = entityRepository.findById(request.getEntityId())
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + request.getEntityId()));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(request.getEntityId());
 
         String prompt = crisisPlanPromptTemplate
                 .replace("[Managed Entity]", entity.getName())

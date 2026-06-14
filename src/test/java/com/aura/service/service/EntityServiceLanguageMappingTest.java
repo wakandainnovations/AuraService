@@ -4,6 +4,7 @@ import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.UpdateEntityRequest;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.User;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
@@ -28,6 +29,7 @@ import static org.mockito.Mockito.when;
 class EntityServiceLanguageMappingTest {
 
     private ManagedEntityRepository entityRepository;
+    private EntityAccessService entityAccess;
     private EntityService service;
 
     @BeforeEach
@@ -35,10 +37,13 @@ class EntityServiceLanguageMappingTest {
         entityRepository = mock(ManagedEntityRepository.class);
         CheckpointRepository checkpointRepository = mock(CheckpointRepository.class);
         MentionRepository mentionRepository = mock(MentionRepository.class);
-        service = new EntityService(entityRepository, checkpointRepository, mentionRepository);
+        entityAccess = mock(EntityAccessService.class);
+        service = new EntityService(entityRepository, checkpointRepository, mentionRepository, entityAccess);
         // save() returns the entity it was given so the response reflects the resolved language.
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        // Every create stamps the current user as owner.
+        when(entityAccess.currentUser()).thenReturn(new User());
     }
 
     @ParameterizedTest
@@ -95,7 +100,7 @@ class EntityServiceLanguageMappingTest {
         existing.setType("MOVIE");
         existing.setLanguage("Hindi");
         existing.setIndustry("Bollywood");
-        when(entityRepository.findById(7L)).thenReturn(Optional.of(existing));
+        when(entityAccess.assertOwnedByCurrentUser(7L)).thenReturn(existing);
 
         UpdateEntityRequest request = new UpdateEntityRequest();
         request.setName("KGF");
@@ -115,7 +120,7 @@ class EntityServiceLanguageMappingTest {
         existing.setId(8L);
         existing.setName("Oppenheimer");
         existing.setType("MOVIE");
-        when(entityRepository.findById(8L)).thenReturn(Optional.of(existing));
+        when(entityAccess.assertOwnedByCurrentUser(8L)).thenReturn(existing);
 
         UpdateEntityRequest request = new UpdateEntityRequest();
         request.setName("Oppenheimer");

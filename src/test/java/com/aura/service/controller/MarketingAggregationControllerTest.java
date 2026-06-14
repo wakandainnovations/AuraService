@@ -6,6 +6,7 @@ import com.aura.service.proxy.AuraMathClientConfig;
 import com.aura.service.proxy.AuraMathProperties;
 import com.aura.service.proxy.AuraMathProxyService;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MarketingAggregationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,7 +62,8 @@ class MarketingAggregationControllerTest {
         entityRepository = mock(ManagedEntityRepository.class);
         MarketingAggregationService service = new MarketingAggregationService(
                 entityRepository, proxyService, mapper);
-        MarketingAggregationController controller = new MarketingAggregationController(service);
+        MarketingAggregationController controller = new MarketingAggregationController(
+                service, mock(EntityAccessService.class));
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

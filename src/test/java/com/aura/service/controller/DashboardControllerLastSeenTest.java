@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.entity.User;
 import com.aura.service.repository.UserEntityViewRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.UserEntityViewService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -48,7 +49,8 @@ class DashboardControllerLastSeenTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         UserEntityViewService viewService =
                 new UserEntityViewService(viewRepository, userRepository, clock);
-        DashboardController controller = new DashboardController(null, viewService, null, null);
+        DashboardController controller = new DashboardController(
+                null, viewService, null, null, mock(EntityAccessService.class));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

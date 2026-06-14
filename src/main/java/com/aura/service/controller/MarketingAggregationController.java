@@ -1,5 +1,6 @@
 package com.aura.service.controller;
 
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MarketingAggregationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MarketingAggregationController {
 
     private final MarketingAggregationService service;
+    private final EntityAccessService entityAccessService;
 
     @Operation(summary = "Get aggregated top spreaders across matching keywords")
     @GetMapping("/top-spreaders")
@@ -115,6 +117,10 @@ public class MarketingAggregationController {
                 && genre == null && entityId == null) {
             throw new IllegalArgumentException(
                     "At least one filter is required: language, industry, state, genre, or entityId");
+        }
+        // When the aggregation is scoped to a specific entity, that entity must belong to the caller.
+        if (entityId != null) {
+            entityAccessService.assertOwnedByCurrentUser(entityId);
         }
     }
 }

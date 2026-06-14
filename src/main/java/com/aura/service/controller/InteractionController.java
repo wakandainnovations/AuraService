@@ -4,8 +4,8 @@ import com.aura.service.dto.GenerateReplyResponse;
 import com.aura.service.dto.RespondRequest;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
-import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.SocialMediaService;
 import jakarta.validation.Valid;
@@ -24,7 +24,7 @@ public class InteractionController {
     private final LLMService llmService;
     private final SocialMediaService socialMediaService;
     private final MentionRepository mentionRepository;
-    private final ManagedEntityRepository managedEntityRepository;
+    private final EntityAccessService entityAccessService;
 
     @Value("${llm.prompt.generate.reply}")
     private String generateReplyPrompt;
@@ -37,11 +37,9 @@ public class InteractionController {
         }
         Mention mention = mentionOptional.get();
 
-        Optional<ManagedEntity> managedEntityOptional = managedEntityRepository.findById(mention.getManagedEntity().getId());
-        if (managedEntityOptional.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        ManagedEntity managedEntity = managedEntityOptional.get();
+        // Only the owner of the mention's entity may generate a reply for it (404s otherwise).
+        ManagedEntity managedEntity =
+                entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
 
         String prompt = generateReplyPrompt
                 .replace("[Managed Entity]", managedEntity.getName())

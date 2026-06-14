@@ -4,6 +4,7 @@ import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.DashboardService;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.UserEntityViewService;
 import com.aura.service.service.WhatsChangedService;
 import com.aura.service.service.WhatsNewService;
@@ -33,12 +34,25 @@ public class DashboardController {
     private final UserEntityViewService userEntityViewService;
     private final WhatsChangedService whatsChangedService;
     private final WhatsNewService whatsNewService;
+    private final EntityAccessService entityAccessService;
+
+    /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
+    private void assertOwned(Long entityId) {
+        entityAccessService.assertOwnedByCurrentUser(entityId);
+    }
+
+    private void assertOwned(List<Long> entityIds) {
+        if (entityIds != null) {
+            entityIds.forEach(this::assertOwned);
+        }
+    }
 
     @GetMapping("/{entityId}/stats")
     public ResponseEntity<EntityStatsResponse> getStats(
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
+        assertOwned(entityId);
         EntityStatsResponse response = dashboardService.getEntityStats(entityId);
         if (principal != null) {
             userEntityViewService.recordView(principal.getUsername(), entityId);
@@ -51,6 +65,7 @@ public class DashboardController {
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
+        assertOwned(entityId);
         Instant lastSeenAt = userEntityViewService
                 .findLastSeen(principal.getUsername(), entityId)
                 .orElse(null);
@@ -64,6 +79,7 @@ public class DashboardController {
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
+        assertOwned(entityId);
         WhatsChangedResponse response = whatsChangedService.computeDelta(
                 principal.getUsername(), entityId);
         return ResponseEntity.ok(response);
@@ -74,6 +90,7 @@ public class DashboardController {
             @PathVariable Long entityId,
             @AuthenticationPrincipal UserDetails principal
     ) {
+        assertOwned(entityId);
         List<WhatsNewCard> cards = whatsNewService.getCards(
                 principal.getUsername(), entityId);
         return ResponseEntity.ok(cards);
@@ -81,24 +98,28 @@ public class DashboardController {
 
     @GetMapping("/cluster/stats")
     public ResponseEntity<EntityStatsResponse> getClusterStats(@RequestParam List<Long> entityIds) {
+        assertOwned(entityIds);
         EntityStatsResponse response = dashboardService.getClusterStats(entityIds);
         return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{entityId}/stats/avg")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvg(@PathVariable Long entityId) {
+        assertOwned(entityId);
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityId);
         return ResponseEntity.ok(response);
     }
     
     @GetMapping("/cluster/stats/avg")
     public ResponseEntity<EntityStatsAvgResponse> getStatsAvgMultiple(@RequestParam List<Long> entityIds) {
+        assertOwned(entityIds);
         EntityStatsAvgResponse response = dashboardService.getEntityStatsAvg(entityIds);
         return ResponseEntity.ok(response);
     }
     
     @GetMapping("/{entityId}/competitor-snapshot")
     public ResponseEntity<List<CompetitorSnapshot>> getCompetitorSnapshot(@PathVariable Long entityId) {
+        assertOwned(entityId);
         List<CompetitorSnapshot> response = dashboardService.getCompetitorSnapshot(entityId);
         return ResponseEntity.ok(response);
     }
@@ -116,6 +137,7 @@ public class DashboardController {
         if (windowDays < 1 || windowDays > 30) {
             return ResponseEntity.badRequest().build();
         }
+        assertOwned(entityId);
         SentimentDeltaResponse response = dashboardService.getSentimentDelta(
                 entityId, fromDate, toDate, windowDays);
         return ResponseEntity.ok(response);
@@ -129,6 +151,7 @@ public class DashboardController {
         if (windowDays < 1 || windowDays > 30) {
             return ResponseEntity.badRequest().build();
         }
+        assertOwned(entityId);
         CheckpointImpactResponse response = dashboardService.getCheckpointImpact(entityId, windowDays);
         return ResponseEntity.ok(response);
     }
@@ -137,6 +160,7 @@ public class DashboardController {
     public ResponseEntity<CheckpointTrendResponse> getCheckpointTrend(
             @PathVariable Long entityId
     ) {
+        assertOwned(entityId);
         CheckpointTrendResponse response = dashboardService.getCheckpointTrend(entityId);
         return ResponseEntity.ok(response);
     }
@@ -146,18 +170,21 @@ public class DashboardController {
             @RequestParam TimePeriod period,
             @RequestParam List<Long> entityIds
     ) {
+        assertOwned(entityIds);
         SentimentOverTimeResponse response = dashboardService.getSentimentOverTime(period, entityIds);
         return ResponseEntity.ok(response);
     }
     
     @GetMapping("/{entityId}/platform-mentions")
     public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentions(@PathVariable Long entityId) {
+        assertOwned(entityId);
         Map<String, Map<String, Long>> response = dashboardService.getPlatformMentions(entityId);
         return ResponseEntity.ok(response);
     }
 
     @GetMapping("/cluster/platform-mentions")
     public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentionsForCluster(@RequestParam List<Long> entityIds) {
+        assertOwned(entityIds);
         Map<String, Map<String, Long>> response = dashboardService.getPlatformMentionsForCluster(entityIds);
         return ResponseEntity.ok(response);
     }
@@ -170,6 +197,7 @@ public class DashboardController {
             @RequestParam(required = false) String industry,
             @RequestParam(required = false) String state
     ) {
+        assertOwned(entityId);
         HourlyActivityResponse response = dashboardService.getHourlyActivity(
                 entityId, period, language, industry, state
         );
@@ -184,6 +212,7 @@ public class DashboardController {
             @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size,
             @AuthenticationPrincipal UserDetails principal
     ) {
+        assertOwned(entityId);
         Page<MentionResponse> response = dashboardService.getMentions(
                 entityId, platform, page, size
         );
@@ -200,6 +229,7 @@ public class DashboardController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size
     ) {
+        assertOwned(entityIds);
         Page<MentionResponse> response = dashboardService.getClusterMentions(
                 entityIds, platform, page, size
         );

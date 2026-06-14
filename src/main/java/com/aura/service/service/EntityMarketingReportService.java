@@ -30,8 +30,9 @@ import java.util.Map;
  * {@link EntityService}) with the upstream AuraMath entity-report
  * ({@code GET /api/marketing/entity-report/{entityId}}).
  *
- * <p>The entity profile and headline metrics are mandatory — a missing entity propagates as the
- * usual {@link RuntimeException} (→ 400). Every other section is optional and degrades to
+ * <p>The entity profile and headline metrics are mandatory. The entity is loaded via
+ * {@link EntityService#getEntityById}, which is owner-scoped: an entity that is missing <em>or</em>
+ * owned by another user surfaces as {@code 404}. Every other section is optional and degrades to
  * {@code null} on failure so a single flaky downstream never blocks a report being shown to a
  * prospect.
  */
@@ -58,7 +59,8 @@ public class EntityMarketingReportService {
 
     public EntityMarketingReportResponse generateReport(String entityType, Long id,
                                                         TimePeriod period, int windowDays) {
-        // Mandatory: validates the type and 404/400s through the usual handler if the entity is absent.
+        // Mandatory and owner-scoped: 404s if the entity is absent or not owned by the caller,
+        // 400s on a type mismatch — this is what enforces ownership for the whole report.
         EntityDetailResponse entity = entityService.getEntityById(entityType, id);
 
         // Mandatory: the headline numbers the whole report is built around.

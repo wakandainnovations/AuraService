@@ -25,7 +25,16 @@ public class ManagedEntity {
     
     @Column(nullable = false)
     private String type;
-    
+
+    // The user who created (and exclusively owns) this entity. Required at the application layer:
+    // every create stamps the current user, and a startup backfill assigns any legacy null to the
+    // seeded admin. The DB column is left nullable so that, under ddl-auto=update (no Flyway), the
+    // column can be added to an already-populated managed_entities table and then backfilled —
+    // a NOT NULL add would fail on existing rows before the backfill could run.
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "owner_id")
+    private User owner;
+
     @Column
     private String director;
     

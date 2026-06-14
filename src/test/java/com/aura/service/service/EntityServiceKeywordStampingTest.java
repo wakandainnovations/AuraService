@@ -5,6 +5,7 @@ import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.User;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.when;
 class EntityServiceKeywordStampingTest {
 
     private ManagedEntityRepository entityRepository;
+    private EntityAccessService entityAccess;
     private EntityService service;
 
     @BeforeEach
@@ -34,10 +36,13 @@ class EntityServiceKeywordStampingTest {
         entityRepository = mock(ManagedEntityRepository.class);
         CheckpointRepository checkpointRepository = mock(CheckpointRepository.class);
         MentionRepository mentionRepository = mock(MentionRepository.class);
-        service = new EntityService(entityRepository, checkpointRepository, mentionRepository);
+        entityAccess = mock(EntityAccessService.class);
+        service = new EntityService(entityRepository, checkpointRepository, mentionRepository, entityAccess);
         // save() returns the entity it was given so the response reflects the stamped keywords.
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        // Every create stamps the current user as owner.
+        when(entityAccess.currentUser()).thenReturn(new User());
     }
 
     private static KeywordDto keyword(String text) {
@@ -128,7 +133,7 @@ class EntityServiceKeywordStampingTest {
         existing.setLanguage("Tamil");
         existing.setIndustry("Kollywood");
         existing.setGenre("Action");
-        when(entityRepository.findById(5L)).thenReturn(Optional.of(existing));
+        when(entityAccess.assertOwnedByCurrentUser(5L)).thenReturn(existing);
 
         UpdateKeywordsRequest request = new UpdateKeywordsRequest();
         request.setKeywords(List.of(keyword("newterm")));

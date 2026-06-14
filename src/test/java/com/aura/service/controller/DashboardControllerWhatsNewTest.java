@@ -1,6 +1,7 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.WhatsNewCard;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.WhatsNewService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -17,6 +18,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 
+import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -57,7 +59,8 @@ class DashboardControllerWhatsNewTest {
     @BeforeEach
     void setUp() {
         whatsNewService = new StubWhatsNew();
-        DashboardController controller = new DashboardController(null, null, null, whatsNewService);
+        DashboardController controller = new DashboardController(
+                null, null, null, whatsNewService, mock(EntityAccessService.class));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

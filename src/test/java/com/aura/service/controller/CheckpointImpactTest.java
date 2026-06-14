@@ -10,6 +10,7 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.service.DashboardService;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.ImpressionsResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -57,7 +58,7 @@ class CheckpointImpactTest {
                 new ImpressionsResolver(mentionRepository));
 
         DashboardController controller = new DashboardController(
-                dashboardService, null, null, null);
+                dashboardService, null, null, null, mock(EntityAccessService.class));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

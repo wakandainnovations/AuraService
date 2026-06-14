@@ -15,6 +15,7 @@ import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReplyTemplateRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.MobilizeAlliesService;
 import com.aura.service.service.ReplyTemplateService;
@@ -137,7 +138,8 @@ class MentionActionControllerTest {
                 userRepository,
                 mobilizeAlliesService,
                 new ReplyTemplateService(mock(ReplyTemplateRepository.class)),
-                new ImpressionsResolver(mentionRepository)
+                new ImpressionsResolver(mentionRepository),
+                mock(EntityAccessService.class)
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);
@@ -545,7 +547,7 @@ class MentionActionControllerTest {
 
     @Test
     void listActions_returnsMergedEntriesSortedNewestFirstWithActorUsernames() throws Exception {
-        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(buildMention(Sentiment.POSITIVE)));
 
         Long otherUserId = 99L;
         String otherUsername = "second_user";
@@ -608,7 +610,7 @@ class MentionActionControllerTest {
 
     @Test
     void listActions_returnsEmptyListWhenNoActions() throws Exception {
-        when(mentionRepository.existsById(MENTION_ID)).thenReturn(true);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(buildMention(Sentiment.POSITIVE)));
         when(replyDraftRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
         when(crisisPlanRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
         when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());

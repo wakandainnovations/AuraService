@@ -72,11 +72,17 @@ CREATE TABLE managed_entities (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     type VARCHAR(255) NOT NULL,
+    -- The user who owns this entity. Every API write stamps it, and a user only ever sees and acts
+    -- on entities they own. Left nullable so that under ddl-auto=update (no Flyway) the column can be
+    -- added to an already-populated table; a startup backfill (EntityOwnerBackfill) then assigns any
+    -- legacy null owner_id to the seeded admin user. On a fresh database it is always populated.
+    owner_id BIGINT,
     director VARCHAR(255),
     release_date DATE,
     language VARCHAR(255),
     industry VARCHAR(255),
-    genre VARCHAR(255)
+    genre VARCHAR(255),
+    CONSTRAINT fk_managed_entities_owner FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
 CREATE TABLE entity_actors (
@@ -127,6 +133,8 @@ CREATE TABLE user_entity_views (
 ## API Documentation
 
 All endpoints except `/api/auth/*` require JWT authentication. Include the JWT token in the `Authorization` header as `Bearer {token}`.
+
+**Entity ownership:** Managed entities are owned by the user who creates them. A user only sees and acts on their own entities — listing is owner-scoped, and any read/update/delete (or any other endpoint that operates on an entity by id, including the dashboard, checkpoint, crisis, mention-action, analytics, and marketing endpoints) returns `404 Not Found` when the referenced entity does not exist **or** belongs to another user. The two cases are deliberately indistinguishable so the API never reveals the existence of another user's entities.
 
 ---
 
@@ -186,7 +194,7 @@ All endpoints except `/api/auth/*` require JWT authentication. Include the JWT t
 
 **Endpoint:** `POST /api/entities/{entityType}`
 
-**Description:** Create a new managed entity (celebrity or movie)
+**Description:** Create a new managed entity (celebrity or movie). The created entity is **owned by the authenticated user** (resolved from the JWT) — only that user can subsequently see or act on it. Ownership is assigned by the server; there is no `owner` field in the request body.
 
 **Headers:**
 ```
@@ -268,13 +276,17 @@ Authorization: Bearer {jwt_token}
 
 **Status Code:** `200 OK`
 
+**Error Responses:**
+- `404 Not Found` - No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`, or the body fails validation (e.g. missing `name`).
+
 ---
 
 ### 5. Get All Entities
 
 **Endpoint:** `GET /api/entities/{entityType}`
 
-**Description:** Retrieve a list of all managed entities of a specific type
+**Description:** Retrieve a list of the managed entities of a specific type **owned by the authenticated user**. The list is owner-scoped — entities created by other users are never returned.
 
 **Headers:**
 ```
@@ -308,7 +320,7 @@ Authorization: Bearer {jwt_token}
 
 **Endpoint:** `GET /api/entities/{entityType}/{id}`
 
-**Description:** Retrieve detailed information about a specific entity
+**Description:** Retrieve detailed information about a specific entity owned by the authenticated user.
 
 **Headers:**
 ```
@@ -345,6 +357,10 @@ Authorization: Bearer {jwt_token}
 
 **Status Code:** `200 OK`
 
+**Error Responses:**
+- `404 Not Found` - No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`.
+
 ---
 
 ### 7. Update Competitors
@@ -368,6 +384,8 @@ Authorization: Bearer {jwt_token}
   "competitorIds": [3, 4, 5]
 }
 ```
+
+> Only entities **owned by the caller** can be added as competitors. Any `competitorIds` that do not exist or belong to another user are silently ignored (they are not added and do not cause an error).
 
 **Response:**
 ```json
@@ -399,6 +417,10 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` - No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`.
 
 ---
 
@@ -450,6 +472,10 @@ Authorization: Bearer {jwt_token}
 
 **Status Code:** `200 OK`
 
+**Error Responses:**
+- `404 Not Found` - No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`.
+
 ---
 
 ### 9. Delete Entity
@@ -477,7 +503,8 @@ DELETE /api/entities/movie/1
 **Status Code:** `204 No Content`
 
 **Error Responses:**
-- `400 Bad Request` - Entity not found, or the entity is not of the given `entityType`.
+- `404 Not Found` - No such entity, or the entity is owned by another user (the two are indistinguishable by design, so existence is never leaked).
+- `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`.
 
 ---
 
@@ -612,7 +639,8 @@ The embedded AuraMath payload is the same one exposed by the proxy wrapper `GET 
 
 **Status Codes:**
 - `200 OK` — Report generated (possibly with some optional sections omitted).
-- `400 Bad Request` — Entity not found, the entity is not of the given `entityType`, or `windowDays` is outside 1–30.
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` — The entity is owned by the caller but is not of the given `entityType`, or `windowDays` is outside 1–30.
 
 ---
 
@@ -657,13 +685,16 @@ curl -X GET "http://localhost:8080/api/entities/movie/1/marketing-report/pdf" \
 
 **Status Codes:**
 - `200 OK` — PDF generated.
-- `400 Bad Request` — Entity not found, the entity is not of the given `entityType`, or `windowDays` is outside 1–30.
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` — The entity is owned by the caller but is not of the given `entityType`, or `windowDays` is outside 1–30.
 
 ---
 
 ## Checkpoint Management APIs
 
 Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.
+
+> **Ownership:** Every checkpoint operation is scoped to the entity's owner. Creating or listing checkpoints for an entity, or updating/deleting a checkpoint, returns `404 Not Found` when the referenced entity does not exist **or** is owned by another user.
 
 ### 7a. Create Checkpoint
 
@@ -810,6 +841,8 @@ Authorization: Bearer {jwt_token}
 ---
 
 ## Dashboard APIs
+
+> **Ownership:** Every dashboard endpoint is owner-scoped. Any `{entityId}` (or each id in an `entityIds` cluster list) must belong to the authenticated user; otherwise the request returns `404 Not Found` — the same response as for a non-existent entity, so existence is never leaked.
 
 ### 8. Get Entity Statistics
 
@@ -1767,7 +1800,7 @@ GET /api/interact/generate-reply/9123
 
 **Status Codes:**
 - `200 OK`
-- `404 Not Found` — No mention with the given id
+- `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design, so existence is never leaked).
 
 ---
 
@@ -1994,7 +2027,7 @@ POST /api/templates/6/use
 
 **Endpoint:** `POST /api/crisis/generate-plan`
 
-**Description:** Generate a detailed crisis management plan (Mock LLM)
+**Description:** Generate a detailed crisis management plan (Mock LLM) for an entity the caller owns.
 
 **Headers:**
 ```
@@ -2017,6 +2050,9 @@ Authorization: Bearer {jwt_token}
 ```
 
 **Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` - The `entityId` does not exist, or the entity is owned by another user (indistinguishable by design).
 
 ---
 
@@ -2161,6 +2197,8 @@ Per-mention actions that wrap the LLM and social-media services into auditable, 
 - **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The report is then forwarded to a per-platform moderation strategy (`AbuseReportDispatcher`) chosen from the mention's platform (X, Reddit, YouTube, Instagram); the strategy returns an external ticket reference that is stamped onto `externalRef`. Platform strategies are stubs today (they log and return a fake ticket id) — the real platform APIs (Reddit `/api/report`, X media moderation endpoints, etc.) are plugged into those strategies later.
 
 Every action response except **Report abuse** includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch; Report abuse returns the persisted `AbuseReport` directly.
+
+> **Ownership:** Every per-mention route is scoped to the owner of the entity the mention belongs to. If the mention does not exist, the route returns `404 Not Found`; if it exists but its entity is owned by another user, it also returns `404 Not Found` (the two are indistinguishable so existence is never leaked). This applies to list actions, draft/post reply, escalate, mobilize, report abuse, and delete.
 
 ### 22. List Mention Actions
 
@@ -2549,7 +2587,7 @@ DELETE /api/mentions/9123
 
 **Status Codes:**
 - `204 No Content` — Mention (and its dependent records) deleted.
-- `404 Not Found` — No mention with the given id.
+- `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design, so existence is never leaked).
 
 **Frontend integration notes:**
 - The mention's `id` is the same value used by the other per-mention routes (`/api/mentions/{mentionId}/actions`, `report-abuse`); reuse it directly — no separate lookup is needed.
@@ -2579,7 +2617,7 @@ async function deleteMention(mentionId, token) {
 
 **Endpoint:** `GET /api/analytics/{movieId}`
 
-**Description:** Get predicted box office revenue for a movie (Mock analytics)
+**Description:** Get predicted box office revenue for a movie (Mock analytics). The `movieId` must reference a movie entity owned by the caller.
 
 **Headers:**
 ```
@@ -2625,6 +2663,9 @@ GET /api/analytics/11
 ```
 
 **Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` - The `movieId` does not exist, or the entity is owned by another user (indistinguishable by design). Enforced before any cached prediction is served.
 
 **Note:** Mock implementation returns random values between $50M-$150M
 
@@ -3256,6 +3297,8 @@ All endpoints are JWT-protected and mounted under `/api/marketing/aggregate/`.
 | `groupBy` | String | `keyword` (or `genre` for genre endpoints) to group results instead of flat list |
 
 If none of these filters are provided, the endpoint returns `400 Bad Request`.
+
+When `entityId` is supplied, that entity must be **owned by the caller** — otherwise the endpoint returns `404 Not Found` (the same response as for a non-existent entity, so existence is never leaked). The non-`entityId` filters (`language`, `industry`, `state`, `genre`) aggregate across keywords and are not entity-scoped.
 
 **Response format:**
 - **Default (flat):** A deduplicated JSON array merging results from all matching keywords. Duplicates are detected by `globalUserId`, `userId`, `author`, `username`, or `id` fields.

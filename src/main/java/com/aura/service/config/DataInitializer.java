@@ -65,16 +65,22 @@ public class DataInitializer implements CommandLineRunner {
     
     private void initializeEntities() {
         if (entityRepository.count() == 0) {
+            // The demo data belongs to the default "user" account (the same account the seeded
+            // user_entity_views are created for), so the demo dashboards are populated out of the box.
+            User owner = userRepository.findByUsername("user").orElse(null);
+
             ManagedEntity karuppu = new ManagedEntity();
             karuppu.setName("Karuppu");
             karuppu.setType(EntityType.MOVIE.name());
             karuppu.setDirector("RJ Balaji");
             karuppu.setActors(Arrays.asList("Surya", "RJ Balaji", "Trisha"));
+            karuppu.setOwner(owner);
             entityRepository.save(karuppu);
 
             ManagedEntity surya = new ManagedEntity();
             surya.setName("Surya");
             surya.setType(EntityType.CELEBRITY.name());
+            surya.setOwner(owner);
             entityRepository.save(surya);
 
             karuppu.setCompetitors(List.of(surya));

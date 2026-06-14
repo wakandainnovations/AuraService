@@ -13,7 +13,13 @@ import java.util.List;
 public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Long> {
     List<ManagedEntity> findByType(String type);
 
+    // Owner-scoped listing: a user only ever sees the entities they created.
+    List<ManagedEntity> findByTypeAndOwnerId(String type, Long ownerId);
+
     List<ManagedEntity> findByCompetitorsId(Long competitorId);
+
+    // Legacy rows from before ownership existed; assigned to the seeded admin by the startup backfill.
+    List<ManagedEntity> findByOwnerIsNull();
 
     @Query("SELECT ek FROM ManagedEntity e JOIN e.keywords ek WHERE " +
            "(:language IS NULL OR ek.language = :language) AND " +

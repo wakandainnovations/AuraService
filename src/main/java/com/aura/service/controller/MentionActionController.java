@@ -20,6 +20,7 @@ import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.ImpressionsResolver;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.MobilizeAlliesService;
@@ -56,6 +57,7 @@ public class MentionActionController {
     private final MobilizeAlliesService mobilizeAlliesService;
     private final ReplyTemplateService replyTemplateService;
     private final ImpressionsResolver impressionsResolver;
+    private final EntityAccessService entityAccessService;
 
     @Value("${llm.prompt.generate.reply}")
     private String generateReplyPrompt;
@@ -70,9 +72,11 @@ public class MentionActionController {
     public ResponseEntity<List<MentionActionLogEntry>> listActions(
             @PathVariable("mentionId") Long mentionId
     ) {
-        if (!mentionRepository.existsById(mentionId)) {
+        Mention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
             return ResponseEntity.notFound().build();
         }
+        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
 
         // Viewing a mention's action panel is a strong signal the user may mobilize allies
         // next. Warm the (expensive) ally cache in the background so that click is a cache hit.
@@ -142,6 +146,7 @@ public class MentionActionController {
             return ResponseEntity.notFound().build();
         }
         ManagedEntity entity = mention.getManagedEntity();
+        entityAccessService.assertOwnedByCurrentUser(entity.getId());
         User user = requireUser(principal);
 
         String prompt;
@@ -192,6 +197,7 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
+        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
 
         ReplyDraft draft = replyDraftRepository.findById(request.getDraftId()).orElse(null);
         if (draft == null || !draft.getMentionId().equals(mentionId)) {
@@ -227,6 +233,7 @@ public class MentionActionController {
             return ResponseEntity.notFound().build();
         }
         ManagedEntity entity = mention.getManagedEntity();
+        entityAccessService.assertOwnedByCurrentUser(entity.getId());
 
         String prompt = crisisPlanPromptTemplate
                 .replace("[Managed Entity]", entity.getName())
@@ -260,6 +267,7 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
+        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
         User user = requireUser(principal);
 
         MobilizeAlliesResponse response = mobilizeAlliesService.getOrComputeAllies(mention);

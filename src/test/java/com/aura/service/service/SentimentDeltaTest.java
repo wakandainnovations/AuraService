@@ -50,7 +50,8 @@ class SentimentDeltaTest {
                 new ImpressionsResolver(mentionRepository)
         );
 
-        DashboardController controller = new DashboardController(service, null, null, null);
+        DashboardController controller = new DashboardController(
+                service, null, null, null, mock(EntityAccessService.class));
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

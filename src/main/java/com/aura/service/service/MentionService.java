@@ -19,6 +19,7 @@ public class MentionService {
     private final ReplyDraftRepository replyDraftRepository;
     private final MobilizeActionRepository mobilizeActionRepository;
     private final CrisisPlanRepository crisisPlanRepository;
+    private final EntityAccessService entityAccessService;
 
     /**
      * Permanently removes a mention and everything that hangs off it. Intended for cleaning up
@@ -35,6 +36,8 @@ public class MentionService {
         if (mention == null) {
             return false;
         }
+        // A mention may only be purged by the owner of the entity it is attributed to.
+        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
 
         abuseReportRepository.deleteByMentionId(mentionId);
         replyDraftRepository.deleteByMentionId(mentionId);

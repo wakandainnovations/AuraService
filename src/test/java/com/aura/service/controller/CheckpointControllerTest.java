@@ -3,8 +3,8 @@ package com.aura.service.controller;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.CheckpointRepository;
-import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.service.CheckpointService;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.exception.GlobalExceptionHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -33,7 +33,7 @@ class CheckpointControllerTest {
     private static final String ENTITY_NAME = "Galaxy Quest";
 
     private CheckpointRepository checkpointRepository;
-    private ManagedEntityRepository entityRepository;
+    private EntityAccessService entityAccess;
     private MockMvc mvc;
     private final ObjectMapper mapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
@@ -42,9 +42,9 @@ class CheckpointControllerTest {
     @BeforeEach
     void setUp() {
         checkpointRepository = mock(CheckpointRepository.class);
-        entityRepository = mock(ManagedEntityRepository.class);
+        entityAccess = mock(EntityAccessService.class);
 
-        CheckpointService service = new CheckpointService(checkpointRepository, entityRepository);
+        CheckpointService service = new CheckpointService(checkpointRepository, entityAccess);
         CheckpointController controller = new CheckpointController(service);
 
         MappingJackson2HttpMessageConverter jacksonConverter = new MappingJackson2HttpMessageConverter();
@@ -74,7 +74,7 @@ class CheckpointControllerTest {
 
     @Test
     void create_savesCheckpointAndReturns201() throws Exception {
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity()));
+        when(entityAccess.assertOwnedByCurrentUser(ENTITY_ID)).thenReturn(entity());
         when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> {
             Checkpoint c = inv.getArgument(0);
             c.setId(1L);

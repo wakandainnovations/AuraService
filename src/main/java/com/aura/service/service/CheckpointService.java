@@ -6,7 +6,6 @@ import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.CheckpointRepository;
-import com.aura.service.repository.ManagedEntityRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,13 +18,11 @@ import java.util.List;
 public class CheckpointService {
 
     private final CheckpointRepository checkpointRepository;
-    private final ManagedEntityRepository entityRepository;
+    private final EntityAccessService entityAccessService;
 
     @Transactional
     public CheckpointResponse create(CreateCheckpointRequest request) {
-        ManagedEntity entity = entityRepository.findById(request.getEntityId())
-                .orElseThrow(() -> new RuntimeException(
-                        "ManagedEntity not found with id " + request.getEntityId()));
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(request.getEntityId());
 
         Checkpoint checkpoint = Checkpoint.builder()
                 .managedEntity(entity)
@@ -38,6 +35,7 @@ public class CheckpointService {
     }
 
     public List<CheckpointResponse> listByEntity(Long entityId) {
+        entityAccessService.assertOwnedByCurrentUser(entityId);
         return checkpointRepository.findByManagedEntityIdOrderByCheckpointDateAsc(entityId)
                 .stream()
                 .map(this::toResponse)
@@ -49,6 +47,7 @@ public class CheckpointService {
         Checkpoint checkpoint = checkpointRepository.findById(checkpointId)
                 .orElseThrow(() -> new RuntimeException(
                         "Checkpoint not found with id " + checkpointId));
+        entityAccessService.assertOwnedByCurrentUser(checkpoint.getManagedEntity().getId());
 
         if (request.getCheckpointDate() != null) {
             LocalDate newDate = request.getCheckpointDate();
@@ -78,6 +77,7 @@ public class CheckpointService {
         Checkpoint checkpoint = checkpointRepository.findById(checkpointId)
                 .orElseThrow(() -> new RuntimeException(
                         "Checkpoint not found with id " + checkpointId));
+        entityAccessService.assertOwnedByCurrentUser(checkpoint.getManagedEntity().getId());
         checkpointRepository.delete(checkpoint);
     }
 
