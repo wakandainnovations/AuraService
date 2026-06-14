@@ -1,34 +1,40 @@
 package com.aura.service.controller;
 
-import com.aura.service.enums.LicenseTier;
-import com.aura.service.licensing.RequiresTier;
+import com.aura.service.dto.EntitledResponse;
+import com.aura.service.licensing.Feature;
+import com.aura.service.service.EntitlementService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MarketingAggregationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Aggregated Intel — a {@link Feature#AGGREGATED_INTEL DIAMOND}-tier feature. Under-tier users are no
+ * longer rejected with a {@code 403}; each endpoint answers {@code 200} with an {@link EntitledResponse}
+ * carrying either the real aggregation (entitled) or a masked, blurred teaser (not entitled). Request
+ * validation (filters, sub-type, entity ownership) still applies to everyone, before entitlement.
+ */
 @RestController
 @RequestMapping("/api/marketing/aggregate")
 @RequiredArgsConstructor
-@RequiresTier(value = LicenseTier.DIAMOND, feature = "Aggregated Intel")
 @Tag(name = "Marketing Aggregation",
         description = "Aggregate marketing data across keywords by language, industry, entity, etc.")
 public class MarketingAggregationController {
 
     private final MarketingAggregationService service;
     private final EntityAccessService entityAccessService;
+    private final EntitlementService entitlementService;
 
     @Operation(summary = "Get aggregated top spreaders across matching keywords")
     @GetMapping("/top-spreaders")
-    public ResponseEntity<Object> topSpreaders(
+    public EntitledResponse<Object> topSpreaders(
             @Parameter(description = "Filter by language (e.g. Tamil, Telugu)") @RequestParam(required = false) String language,
             @Parameter(description = "Filter by industry (e.g. Tollywood, Kollywood)") @RequestParam(required = false) String industry,
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
@@ -38,13 +44,13 @@ public class MarketingAggregationController {
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
-        return ResponseEntity.ok(service.getAggregatedTopSpreaders(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedTopSpreaders(
                 language, industry, state, genre, entityId, grouped));
     }
 
     @Operation(summary = "Get aggregated viral seeds across matching keywords")
     @GetMapping("/viral-seeds")
-    public ResponseEntity<Object> viralSeeds(
+    public EntitledResponse<Object> viralSeeds(
             @Parameter(description = "Filter by language") @RequestParam(required = false) String language,
             @Parameter(description = "Filter by industry") @RequestParam(required = false) String industry,
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
@@ -54,13 +60,13 @@ public class MarketingAggregationController {
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
-        return ResponseEntity.ok(service.getAggregatedViralSeeds(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedViralSeeds(
                 language, industry, state, genre, entityId, grouped));
     }
 
     @Operation(summary = "Get aggregated aspect drivers across matching keywords")
     @GetMapping("/aspect-drivers")
-    public ResponseEntity<Object> aspectDrivers(
+    public EntitledResponse<Object> aspectDrivers(
             @Parameter(description = "Filter by language") @RequestParam(required = false) String language,
             @Parameter(description = "Filter by industry") @RequestParam(required = false) String industry,
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
@@ -70,13 +76,13 @@ public class MarketingAggregationController {
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
-        return ResponseEntity.ok(service.getAggregatedAspectDrivers(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedAspectDrivers(
                 language, industry, state, genre, entityId, grouped));
     }
 
     @Operation(summary = "Get aggregated brand evangelists across matching keywords")
     @GetMapping("/brand-evangelists")
-    public ResponseEntity<Object> brandEvangelists(
+    public EntitledResponse<Object> brandEvangelists(
             @Parameter(description = "Filter by language") @RequestParam(required = false) String language,
             @Parameter(description = "Filter by industry") @RequestParam(required = false) String industry,
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
@@ -86,13 +92,13 @@ public class MarketingAggregationController {
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
-        return ResponseEntity.ok(service.getAggregatedBrandEvangelists(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedBrandEvangelists(
                 language, industry, state, genre, entityId, grouped));
     }
 
     @Operation(summary = "Get aggregated genre data (potential-viewers, super-spreaders, or channel-strategy)")
     @GetMapping("/genre/{subType}")
-    public ResponseEntity<Object> genreData(
+    public EntitledResponse<Object> genreData(
             @Parameter(description = "Genre sub-type: potential-viewers, super-spreaders, or channel-strategy")
             @PathVariable String subType,
             @Parameter(description = "Filter by language") @RequestParam(required = false) String language,
@@ -106,11 +112,11 @@ public class MarketingAggregationController {
         if (!"potential-viewers".equals(subType)
                 && !"super-spreaders".equals(subType)
                 && !"channel-strategy".equals(subType)) {
-            return ResponseEntity.badRequest().body(
-                    java.util.Map.of("error", "subType must be one of: potential-viewers, super-spreaders, channel-strategy"));
+            throw new IllegalArgumentException(
+                    "subType must be one of: potential-viewers, super-spreaders, channel-strategy");
         }
         boolean grouped = "genre".equalsIgnoreCase(groupBy);
-        return ResponseEntity.ok(service.getAggregatedGenreData(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedGenreData(
                 subType, language, industry, state, genre, entityId, grouped));
     }
 

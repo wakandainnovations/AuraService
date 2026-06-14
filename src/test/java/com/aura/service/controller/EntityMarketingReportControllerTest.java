@@ -4,8 +4,12 @@ import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.EntityMarketingReportResponse;
 import com.aura.service.dto.EntityMarketingReportResponse.HeadlineMetrics;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.service.EntitlementServiceImpl;
+import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.EntityMarketingReportPdfService;
 import com.aura.service.service.EntityMarketingReportService;
+import com.aura.service.service.LicenseService;
+import com.aura.service.service.PreviewMaskingServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -21,6 +25,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -39,8 +45,12 @@ class EntityMarketingReportControllerTest {
     void setUp() {
         reportService = new StubReportService();
         pdfService = new StubPdfService();
+        EntityAccessService entityAccess = mock(EntityAccessService.class);
+        when(entityAccess.currentUserIsAdmin()).thenReturn(true);
         EntityMarketingReportController controller =
-                new EntityMarketingReportController(reportService, pdfService);
+                new EntityMarketingReportController(reportService, pdfService,
+                        new EntitlementServiceImpl(mock(LicenseService.class), entityAccess,
+                                new PreviewMaskingServiceImpl()));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
@@ -68,11 +78,11 @@ class EntityMarketingReportControllerTest {
 
         mvc.perform(get("/api/entities/{entityType}/{id}/marketing-report", "movie", ENTITY_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.entity.name").value("Vikram"))
-                .andExpect(jsonPath("$.period").value("DAY30"))
-                .andExpect(jsonPath("$.headlineMetrics.totalMentions").value(8000))
-                .andExpect(jsonPath("$.highlights[0]").value("70% of all mentions are positive"))
-                .andExpect(jsonPath("$.auraMathStatus").value("ok"));
+                .andExpect(jsonPath("$.data.entity.name").value("Vikram"))
+                .andExpect(jsonPath("$.data.period").value("DAY30"))
+                .andExpect(jsonPath("$.data.headlineMetrics.totalMentions").value(8000))
+                .andExpect(jsonPath("$.data.highlights[0]").value("70% of all mentions are positive"))
+                .andExpect(jsonPath("$.data.auraMathStatus").value("ok"));
 
         // entityType is upper-cased before reaching the service, period defaults to DAY30.
         org.assertj.core.api.Assertions.assertThat(reportService.lastType).isEqualTo("MOVIE");

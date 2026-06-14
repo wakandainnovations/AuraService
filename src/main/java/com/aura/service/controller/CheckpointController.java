@@ -2,47 +2,53 @@ package com.aura.service.controller;
 
 import com.aura.service.dto.CheckpointResponse;
 import com.aura.service.dto.CreateCheckpointRequest;
+import com.aura.service.dto.EntitledResponse;
 import com.aura.service.dto.UpdateCheckpointRequest;
-import com.aura.service.enums.LicenseTier;
-import com.aura.service.licensing.RequiresTier;
+import com.aura.service.licensing.Feature;
 import com.aura.service.service.CheckpointService;
+import com.aura.service.service.EntitlementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * Checkpoints — a {@link Feature#CHECKPOINTS SILVER}-tier feature. Rather than rejecting under-tier
+ * users with a {@code 403}, every endpoint answers {@code 200} with an {@link EntitledResponse}: an
+ * entitled user gets the real data, an unentitled one gets a masked, blurred teaser (reads) or a plain
+ * locked envelope (mutations, which never run for them).
+ */
 @RestController
 @RequestMapping("/api/checkpoints")
 @RequiredArgsConstructor
-@RequiresTier(value = LicenseTier.SILVER, feature = "Checkpoints")
 public class CheckpointController {
 
     private final CheckpointService checkpointService;
+    private final EntitlementService entitlementService;
 
     @PostMapping
-    public ResponseEntity<CheckpointResponse> create(@Valid @RequestBody CreateCheckpointRequest request) {
-        CheckpointResponse response = checkpointService.create(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    public EntitledResponse<CheckpointResponse> create(@Valid @RequestBody CreateCheckpointRequest request) {
+        return entitlementService.gate(Feature.CHECKPOINTS, () -> checkpointService.create(request));
     }
 
     @GetMapping("/entity/{entityId}")
-    public ResponseEntity<List<CheckpointResponse>> listByEntity(@PathVariable("entityId") Long entityId) {
-        return ResponseEntity.ok(checkpointService.listByEntity(entityId));
+    public EntitledResponse<List<CheckpointResponse>> listByEntity(@PathVariable("entityId") Long entityId) {
+        return entitlementService.evaluate(Feature.CHECKPOINTS, () -> checkpointService.listByEntity(entityId));
     }
 
     @PatchMapping("/{checkpointId}")
-    public ResponseEntity<CheckpointResponse> update(
+    public EntitledResponse<CheckpointResponse> update(
             @PathVariable("checkpointId") Long checkpointId,
             @Valid @RequestBody UpdateCheckpointRequest request) {
-        return ResponseEntity.ok(checkpointService.update(checkpointId, request));
+        return entitlementService.gate(Feature.CHECKPOINTS, () -> checkpointService.update(checkpointId, request));
     }
 
     @DeleteMapping("/{checkpointId}")
-    public ResponseEntity<Void> delete(@PathVariable("checkpointId") Long checkpointId) {
-        checkpointService.delete(checkpointId);
-        return ResponseEntity.noContent().build();
+    public EntitledResponse<Void> delete(@PathVariable("checkpointId") Long checkpointId) {
+        return entitlementService.gate(Feature.CHECKPOINTS, () -> {
+            checkpointService.delete(checkpointId);
+            return null;
+        });
     }
 }

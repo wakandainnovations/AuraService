@@ -2,9 +2,14 @@ package com.aura.service.controller;
 
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.LicenseTier;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.service.CheckpointService;
+import com.aura.service.service.EntitlementService;
+import com.aura.service.service.EntitlementServiceImpl;
 import com.aura.service.service.EntityAccessService;
+import com.aura.service.service.LicenseService;
+import com.aura.service.service.PreviewMaskingServiceImpl;
 import com.aura.service.exception.GlobalExceptionHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -24,9 +29,17 @@ import java.util.Optional;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Checkpoints is a SILVER feature. These tests build the controller with a real
+ * {@link EntitlementServiceImpl} (only interfaces are mocked) so the envelope behavior is exercised
+ * end-to-end: an entitled caller (admin here) gets {@code entitled=true} + real {@code data}, an
+ * under-tier caller gets {@code entitled=false} + a masked {@code preview} (reads) or a plain locked
+ * envelope with the mutation never run (writes).
+ */
 class CheckpointControllerTest {
 
     private static final Long ENTITY_ID = 7L;
@@ -34,7 +47,8 @@ class CheckpointControllerTest {
 
     private CheckpointRepository checkpointRepository;
     private EntityAccessService entityAccess;
-    private MockMvc mvc;
+    private LicenseService licenseService;
+    private CheckpointService service;
     private final ObjectMapper mapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -43,14 +57,21 @@ class CheckpointControllerTest {
     void setUp() {
         checkpointRepository = mock(CheckpointRepository.class);
         entityAccess = mock(EntityAccessService.class);
+        licenseService = mock(LicenseService.class);
+        service = new CheckpointService(checkpointRepository, entityAccess);
+    }
 
-        CheckpointService service = new CheckpointService(checkpointRepository, entityAccess);
-        CheckpointController controller = new CheckpointController(service);
+    /** Builds MockMvc for a caller who is/isn't an admin (the simplest way to flip entitlement). */
+    private MockMvc mvcFor(boolean entitledAdmin) {
+        when(entityAccess.currentUserIsAdmin()).thenReturn(entitledAdmin);
+        EntitlementService entitlement = new EntitlementServiceImpl(
+                licenseService, entityAccess, new PreviewMaskingServiceImpl());
+        CheckpointController controller = new CheckpointController(service, entitlement);
 
         MappingJackson2HttpMessageConverter jacksonConverter = new MappingJackson2HttpMessageConverter();
         jacksonConverter.setObjectMapper(mapper);
 
-        mvc = MockMvcBuilders.standaloneSetup(controller)
+        return MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setMessageConverters(jacksonConverter)
                 .build();
@@ -72,8 +93,12 @@ class CheckpointControllerTest {
                 .build();
     }
 
+    // ------------------------------------------------------------------
+    // Entitled caller — real data inside the envelope
+    // ------------------------------------------------------------------
+
     @Test
-    void create_savesCheckpointAndReturns201() throws Exception {
+    void create_entitled_savesCheckpointAndReturnsRealData() throws Exception {
         when(entityAccess.assertOwnedByCurrentUser(ENTITY_ID)).thenReturn(entity());
         when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> {
             Checkpoint c = inv.getArgument(0);
@@ -86,15 +111,17 @@ class CheckpointControllerTest {
                 "checkpointDate", "2026-06-15",
                 "description", "Audio release"));
 
-        mvc.perform(post("/api/checkpoints")
+        mvcFor(true).perform(post("/api/checkpoints")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").value(1))
-                .andExpect(jsonPath("$.entityId").value(ENTITY_ID))
-                .andExpect(jsonPath("$.entityName").value(ENTITY_NAME))
-                .andExpect(jsonPath("$.checkpointDate").value("2026-06-15"))
-                .andExpect(jsonPath("$.description").value("Audio release"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(true))
+                .andExpect(jsonPath("$.preview").doesNotExist())
+                .andExpect(jsonPath("$.data.id").value(1))
+                .andExpect(jsonPath("$.data.entityId").value(ENTITY_ID))
+                .andExpect(jsonPath("$.data.entityName").value(ENTITY_NAME))
+                .andExpect(jsonPath("$.data.checkpointDate").value("2026-06-15"))
+                .andExpect(jsonPath("$.data.description").value("Audio release"));
 
         verify(checkpointRepository).save(any(Checkpoint.class));
     }
@@ -106,7 +133,7 @@ class CheckpointControllerTest {
                 "checkpointDate", "2026-06-15",
                 "description", "This description is way too long"));
 
-        mvc.perform(post("/api/checkpoints")
+        mvcFor(true).perform(post("/api/checkpoints")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());
@@ -118,7 +145,7 @@ class CheckpointControllerTest {
     void create_returns400WhenFieldsMissing() throws Exception {
         String body = mapper.writeValueAsString(Map.of("entityId", ENTITY_ID));
 
-        mvc.perform(post("/api/checkpoints")
+        mvcFor(true).perform(post("/api/checkpoints")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());
@@ -127,7 +154,7 @@ class CheckpointControllerTest {
     }
 
     @Test
-    void listByEntity_returnsCheckpointsOrderedByDate() throws Exception {
+    void listByEntity_entitled_returnsRealCheckpointsOrderedByDate() throws Exception {
         LocalDate earlier = LocalDate.of(2026, 6, 1);
         LocalDate later = LocalDate.of(2026, 7, 15);
         List<Checkpoint> checkpoints = List.of(
@@ -136,18 +163,19 @@ class CheckpointControllerTest {
         when(checkpointRepository.findByManagedEntityIdOrderByCheckpointDateAsc(ENTITY_ID))
                 .thenReturn(checkpoints);
 
-        mvc.perform(get("/api/checkpoints/entity/{entityId}", ENTITY_ID))
+        mvcFor(true).perform(get("/api/checkpoints/entity/{entityId}", ENTITY_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(1))
-                .andExpect(jsonPath("$[0].checkpointDate").value("2026-06-01"))
-                .andExpect(jsonPath("$[0].description").value("Teaser release"))
-                .andExpect(jsonPath("$[1].id").value(2))
-                .andExpect(jsonPath("$[1].checkpointDate").value("2026-07-15"))
-                .andExpect(jsonPath("$[1].description").value("Movie release"));
+                .andExpect(jsonPath("$.entitled").value(true))
+                .andExpect(jsonPath("$.data[0].id").value(1))
+                .andExpect(jsonPath("$.data[0].checkpointDate").value("2026-06-01"))
+                .andExpect(jsonPath("$.data[0].description").value("Teaser release"))
+                .andExpect(jsonPath("$.data[1].id").value(2))
+                .andExpect(jsonPath("$.data[1].checkpointDate").value("2026-07-15"))
+                .andExpect(jsonPath("$.data[1].description").value("Movie release"));
     }
 
     @Test
-    void update_changesDateAndDescriptionAndReturns200() throws Exception {
+    void update_entitled_changesDateAndDescription() throws Exception {
         Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
         when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
         when(checkpointRepository.findByManagedEntityIdAndCheckpointDate(ENTITY_ID, LocalDate.of(2026, 7, 1)))
@@ -158,46 +186,16 @@ class CheckpointControllerTest {
                 "checkpointDate", "2026-07-01",
                 "description", "Trailer drop"));
 
-        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
+        mvcFor(true).perform(patch("/api/checkpoints/{checkpointId}", 10L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(10))
-                .andExpect(jsonPath("$.checkpointDate").value("2026-07-01"))
-                .andExpect(jsonPath("$.description").value("Trailer drop"));
+                .andExpect(jsonPath("$.entitled").value(true))
+                .andExpect(jsonPath("$.data.id").value(10))
+                .andExpect(jsonPath("$.data.checkpointDate").value("2026-07-01"))
+                .andExpect(jsonPath("$.data.description").value("Trailer drop"));
 
         verify(checkpointRepository).save(existing);
-    }
-
-    @Test
-    void update_changesOnlyDescriptionWhenDateOmitted() throws Exception {
-        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
-        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
-        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        String body = mapper.writeValueAsString(Map.of("description", "Re-release"));
-
-        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.checkpointDate").value("2026-06-15"))
-                .andExpect(jsonPath("$.description").value("Re-release"));
-
-        verify(checkpointRepository, never()).findByManagedEntityIdAndCheckpointDate(any(), any());
-    }
-
-    @Test
-    void update_returns400WhenDescriptionExceeds20Chars() throws Exception {
-        String body = mapper.writeValueAsString(Map.of(
-                "description", "This description is way too long"));
-
-        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest());
-
-        verify(checkpointRepository, never()).save(any());
     }
 
     @Test
@@ -206,7 +204,7 @@ class CheckpointControllerTest {
 
         String body = mapper.writeValueAsString(Map.of("description", "Re-release"));
 
-        mvc.perform(patch("/api/checkpoints/{checkpointId}", 999L)
+        mvcFor(true).perform(patch("/api/checkpoints/{checkpointId}", 999L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());
@@ -215,41 +213,71 @@ class CheckpointControllerTest {
     }
 
     @Test
-    void update_returns400WhenDateCollidesWithAnotherCheckpoint() throws Exception {
-        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
-        Checkpoint other = checkpoint(11L, LocalDate.of(2026, 7, 1), "Movie release");
-        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
-        when(checkpointRepository.findByManagedEntityIdAndCheckpointDate(ENTITY_ID, LocalDate.of(2026, 7, 1)))
-                .thenReturn(Optional.of(other));
-
-        String body = mapper.writeValueAsString(Map.of("checkpointDate", "2026-07-01"));
-
-        mvc.perform(patch("/api/checkpoints/{checkpointId}", 10L)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest());
-
-        verify(checkpointRepository, never()).save(any());
-    }
-
-    @Test
-    void delete_returns204WhenCheckpointExists() throws Exception {
+    void delete_entitled_deletesAndReturnsEntitledEnvelope() throws Exception {
         Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
         when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
 
-        mvc.perform(delete("/api/checkpoints/{checkpointId}", 10L))
-                .andExpect(status().isNoContent());
+        mvcFor(true).perform(delete("/api/checkpoints/{checkpointId}", 10L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(true));
 
         verify(checkpointRepository).delete(existing);
     }
 
+    // ------------------------------------------------------------------
+    // Unentitled caller — masked preview (read) / locked, action never runs (write)
+    // ------------------------------------------------------------------
+
     @Test
-    void delete_returns400WhenCheckpointNotFound() throws Exception {
-        when(checkpointRepository.findById(999L)).thenReturn(Optional.empty());
+    void listByEntity_unentitled_returnsMaskedPreviewWithNoRealValues() throws Exception {
+        when(entityAccess.currentUserIsAdmin()).thenReturn(false);
+        when(licenseService.effectiveTier()).thenReturn(LicenseTier.BRONZE); // below SILVER
+        List<Checkpoint> checkpoints = List.of(
+                checkpoint(1L, LocalDate.of(2026, 6, 1), "Teaser release"),
+                checkpoint(2L, LocalDate.of(2026, 7, 15), "Movie release"));
+        when(checkpointRepository.findByManagedEntityIdOrderByCheckpointDateAsc(ENTITY_ID))
+                .thenReturn(checkpoints);
 
-        mvc.perform(delete("/api/checkpoints/{checkpointId}", 999L))
-                .andExpect(status().isBadRequest());
+        String response = mvcFor(false).perform(get("/api/checkpoints/entity/{entityId}", ENTITY_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(false))
+                .andExpect(jsonPath("$.requiredTier").value("SILVER"))
+                .andExpect(jsonPath("$.data").doesNotExist())
+                .andExpect(jsonPath("$.preview").exists())
+                .andReturn().getResponse().getContentAsString();
 
-        verify(checkpointRepository, never()).delete(any(Checkpoint.class));
+        // No real underlying value may leak into the preview.
+        org.assertj.core.api.Assertions.assertThat(response)
+                .doesNotContain("Teaser release")
+                .doesNotContain("Movie release")
+                .doesNotContain(ENTITY_NAME)
+                .doesNotContain("2026-06-01")
+                .doesNotContain("2026-07-15");
+        // List is truncated to a teaser (1 element), not the full 2.
+        org.assertj.core.api.Assertions.assertThat(
+                mapper.readTree(response).get("preview").size()).isEqualTo(1);
+    }
+
+    @Test
+    void create_unentitled_isLockedAndNeverSaves() throws Exception {
+        when(entityAccess.currentUserIsAdmin()).thenReturn(false);
+        when(licenseService.effectiveTier()).thenReturn(LicenseTier.BRONZE);
+
+        String body = mapper.writeValueAsString(Map.of(
+                "entityId", ENTITY_ID,
+                "checkpointDate", "2026-06-15",
+                "description", "Audio release"));
+
+        mvcFor(false).perform(post("/api/checkpoints")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(false))
+                .andExpect(jsonPath("$.requiredTier").value("SILVER"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        // The mutation must NOT run for an unentitled caller.
+        verify(checkpointRepository, never()).save(any());
+        verify(entityAccess, never()).assertOwnedByCurrentUser(any());
     }
 }

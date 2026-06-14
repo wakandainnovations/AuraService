@@ -6,8 +6,12 @@ import com.aura.service.proxy.AuraMathClientConfig;
 import com.aura.service.proxy.AuraMathProperties;
 import com.aura.service.proxy.AuraMathProxyService;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.service.EntitlementService;
+import com.aura.service.service.EntitlementServiceImpl;
 import com.aura.service.service.EntityAccessService;
+import com.aura.service.service.LicenseService;
 import com.aura.service.service.MarketingAggregationService;
+import com.aura.service.service.PreviewMaskingServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.mockwebserver.MockResponse;
@@ -62,8 +66,12 @@ class MarketingAggregationControllerTest {
         entityRepository = mock(ManagedEntityRepository.class);
         MarketingAggregationService service = new MarketingAggregationService(
                 entityRepository, proxyService, mapper);
+        EntityAccessService entityAccess = mock(EntityAccessService.class);
+        when(entityAccess.currentUserIsAdmin()).thenReturn(true);
+        EntitlementService entitlement = new EntitlementServiceImpl(
+                mock(LicenseService.class), entityAccess, new PreviewMaskingServiceImpl());
         MarketingAggregationController controller = new MarketingAggregationController(
-                service, mock(EntityAccessService.class));
+                service, entityAccess, entitlement);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -115,10 +123,10 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[0].author").value("user1"))
-                .andExpect(jsonPath("$[1].author").value("user2"))
-                .andExpect(jsonPath("$[2].author").value("user3"));
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andExpect(jsonPath("$.data[0].author").value("user1"))
+                .andExpect(jsonPath("$.data[1].author").value("user2"))
+                .andExpect(jsonPath("$.data[2].author").value("user3"));
 
         RecordedRequest req1 = takeRequest();
         assertThat(req1.getPath()).contains("top-50-spreaders/karuppu");
@@ -144,10 +152,10 @@ class MarketingAggregationControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        JsonNode json = mapper.readTree(response);
-        assertThat(json.has("baahubali")).isTrue();
-        assertThat(json.get("baahubali").isArray()).isTrue();
-        assertThat(json.get("baahubali").get(0).get("author").asText()).isEqualTo("spread1");
+        JsonNode data = mapper.readTree(response).get("data");
+        assertThat(data.has("baahubali")).isTrue();
+        assertThat(data.get("baahubali").isArray()).isTrue();
+        assertThat(data.get("baahubali").get(0).get("author").asText()).isEqualTo("spread1");
     }
 
     // ------------------------------------------------------------------
@@ -169,8 +177,8 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
                         .param("genre", "Drama"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].author").value("fan1"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].author").value("fan1"));
 
         assertThat(genrePattern.getValue()).isEqualTo("%,drama,%");
 
@@ -193,7 +201,7 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/viral-seeds")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.data.length()").value(2));
 
         RecordedRequest req = takeRequest();
         assertThat(req.getPath()).contains("viral-seeds");
@@ -217,8 +225,8 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/aspect-drivers")
                         .param("entityId", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value("driver1"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value("driver1"));
 
         RecordedRequest req = takeRequest();
         assertThat(req.getPath()).contains("aspect-drivers/movie1");
@@ -239,7 +247,7 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/brand-evangelists")
                         .param("language", "Telugu"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.data.length()").value(2));
 
         RecordedRequest req = takeRequest();
         assertThat(req.getPath()).contains("brand-evangelists/rrr");
@@ -262,7 +270,7 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/genre/potential-viewers")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3));
+                .andExpect(jsonPath("$.data.length()").value(3));
 
         RecordedRequest req1 = takeRequest();
         assertThat(req1.getPath()).contains("genre/action/potential-viewers");
@@ -286,8 +294,8 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/genre/channel-strategy")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].userId").value("viewer1"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].userId").value("viewer1"));
 
         RecordedRequest req1 = takeRequest();
         assertThat(req1.getPath()).contains("genre/action/channel-strategy");
@@ -310,9 +318,9 @@ class MarketingAggregationControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        JsonNode json = mapper.readTree(response);
-        assertThat(json.has("thriller")).isTrue();
-        assertThat(json.get("thriller").isArray()).isTrue();
+        JsonNode data = mapper.readTree(response).get("data");
+        assertThat(data.has("thriller")).isTrue();
+        assertThat(data.get("thriller").isArray()).isTrue();
     }
 
     @Test
@@ -334,7 +342,7 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
                         .param("language", "Klingon"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.data.length()").value(0));
     }
 
     @Test
@@ -348,9 +356,9 @@ class MarketingAggregationControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        JsonNode json = mapper.readTree(response);
-        assertThat(json.isObject()).isTrue();
-        assertThat(json.isEmpty()).isTrue();
+        JsonNode data = mapper.readTree(response).get("data");
+        assertThat(data.isObject()).isTrue();
+        assertThat(data.isEmpty()).isTrue();
     }
 
     // ------------------------------------------------------------------
@@ -370,8 +378,8 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].author").value("user1"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].author").value("user1"));
     }
 
     // ------------------------------------------------------------------
@@ -393,7 +401,7 @@ class MarketingAggregationControllerTest {
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
                         .param("language", "Tamil"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3));
+                .andExpect(jsonPath("$.data.length()").value(3));
     }
 
     // ------------------------------------------------------------------
@@ -412,6 +420,6 @@ class MarketingAggregationControllerTest {
                         .param("language", "Tamil")
                         .param("industry", "Kollywood"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(jsonPath("$.data.length()").value(1));
     }
 }

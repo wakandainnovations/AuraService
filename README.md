@@ -571,7 +571,7 @@ DELETE /api/entities/movie/1
 
 **Description:** Generate a single, complete, **prospect-facing** marketing intelligence report for a managed entity. It is designed to be shown at a high level to a production house's potential customers, so the most flattering, headline numbers are surfaced first and a deterministic `highlights` narrative summarizes them.
 
-> **Tier-gated (DIAMOND).** The Intelligence Report (`/marketing-report` and `/marketing-report/pdf`) requires the **DIAMOND** tier; a lower-tier caller receives a structured `403 Forbidden` (admins bypass). See [Premium Feature Tier Gating](#premium-feature-tier-gating).
+> **Tier-gated (DIAMOND).** The Intelligence Report (`/marketing-report` and `/marketing-report/pdf`) requires the **DIAMOND** tier. It is not blocked: a lower-tier caller still gets `200 OK` with an `EntitledResponse` whose `entitled=false` and a **masked `preview`** of the report (the PDF route returns the same masked JSON envelope rather than a PDF); admins are always entitled. See [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
 The report aggregates this service's own analytics with the upstream **AuraMath** entity report:
 
@@ -603,7 +603,9 @@ Authorization: Bearer {jwt_token}
 GET /api/entities/movie/1/marketing-report?period=DAY30&windowDays=7
 ```
 
-**Response (sections abbreviated for readability):**
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope. For an **entitled** caller the report below is the `data` field (`entitled: true`, `requiredTier: "DIAMOND"`, `preview: null`). A caller below **DIAMOND** instead gets `200 OK` with `entitled: false`, `data: null`, and a masked `preview` of the same report — every number bucketed (e.g. `8000` → `"thousands"`), every string starred, and lists truncated — so no real figure leaks.
+
+The report payload (the `data` field, sections abbreviated for readability):
 ```json
 {
   "generatedAt": "2026-06-11T08:30:00Z",
@@ -736,14 +738,16 @@ curl -X GET "http://localhost:8080/api/entities/movie/1/marketing-report/pdf" \
   -OJ
 ```
 
-**Response:** Binary `application/pdf` body.
+**Response (entitled caller):** Binary `application/pdf` body.
 
-**Response Headers:**
+**Response Headers (entitled caller):**
 - `Content-Type: application/pdf`
 - `Content-Disposition: attachment; filename="marketing-report-{slug}.pdf"` — the filename is derived from the entity name, lower-cased and slugified (e.g. `The Quantum Paradox` → `marketing-report-the-quantum-paradox.pdf`; falls back to `marketing-report-entity.pdf` when the name is missing).
 
+> **Tier behavior.** This route is tier-gated like [8a](#8a-generate-entity-marketing-report). An **entitled** caller (DIAMOND or admin) gets the PDF described above. A caller **below DIAMOND** gets `200 OK` with `Content-Type: application/json` carrying the **same masked [`EntitledResponse`](#premium-feature-tier-gating)** envelope as 8a (`entitled: false`, `data: null`, masked `preview`) — **no PDF is rendered**.
+
 **Status Codes:**
-- `200 OK` — PDF generated.
+- `200 OK` — PDF generated (entitled), or the masked JSON envelope (not entitled).
 - `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
 - `400 Bad Request` — The entity is owned by the caller but is not of the given `entityType`, or `windowDays` is outside 1–30.
 
@@ -793,9 +797,10 @@ allowed only when the caller's tier is **at least** the feature's minimum, using
 BRONZE  <  SILVER  <  GOLD  <  DIAMOND
 ```
 
-The gate is declarative: a `@RequiresTier(tier)` annotation on the controller (resolved by a
-`HandlerInterceptor`) reads the caller's tier and either lets the request through or rejects it.
-Holders of `ROLE_ADMIN` **bypass** the gate entirely and reach every feature regardless of tier.
+The gate is **visible-but-blurred**, not a hard block: a gated endpoint always answers `200 OK` with a
+generic envelope so the UI can render every feature — live for entitled users, or as a locked, blurred
+teaser that entices an upgrade. Entitlement reuses the single rule (admin, or effective tier at least
+the feature's minimum); holders of `ROLE_ADMIN` are always entitled regardless of tier.
 
 | Feature | Endpoint(s) | Minimum tier |
 |---------|-------------|:---:|
@@ -805,16 +810,53 @@ Holders of `ROLE_ADMIN` **bypass** the gate entirely and reach every feature reg
 | Intelligence Report | `/api/entities/{entityType}/{id}/marketing-report[/pdf]` | DIAMOND |
 | Audience & Content | `/api/audience-content` *(stub — module not yet implemented)* | DIAMOND |
 
-Gated endpoints are **not hidden from routing** — they stay callable so the UI can present them, and a
-caller below the required tier receives a structured, **price-free** `403 Forbidden` (see
-[403 Forbidden](#403-forbidden)):
+The envelope is `EntitledResponse<T>`:
 
 ```json
-{ "feature": "Crisis Management", "requiredTier": "GOLD" }
+{ "entitled": false, "requiredTier": "GOLD", "data": null,
+  "preview": { "generatedPlan": "★★★★★" } }
 ```
 
-- `feature` — the human-readable name of the gated feature.
+- `entitled` — whether the caller may use the feature.
 - `requiredTier` — the minimum tier that unlocks it (never the price of that tier).
+- `data` — the real payload, present only when `entitled`; otherwise `null`.
+- `preview` — a **masked** teaser of the payload, present only when **not** entitled; otherwise `null`.
+  Strings become a starred placeholder, numbers collapse to coarse digit-free buckets (never the exact
+  value), and lists are truncated — so no real underlying value ever leaks into the preview.
+
+For a mutating endpoint (e.g. creating a checkpoint) an unentitled caller gets `entitled=false` with no
+`preview`, and the mutation never runs.
+
+To render all features up-front with lock badges, the UI can read the full catalog from
+[`GET /api/license/features`](#license-feature-catalog), which returns
+`{ key, name, requiredTier, entitled }` per feature for the current user.
+
+> **Numeric caps still hard-fail.** Blurring applies to *feature data* only. Hitting a numeric limit
+> (keywords/entities, F4/F5) is still a real `409 Conflict` — see [Licensing & Usage APIs](#licensing--usage-apis).
+
+### License Feature Catalog
+
+`GET /api/license/features` returns the full catalog of premium features with the current user's
+entitlement for each, so the UI can render every feature up-front and lock-badge the ones the user's
+tier hasn't unlocked. JWT-protected; **price-free** (names the required tier, never its cost).
+
+**Response:** `200 OK`
+
+```json
+[
+  { "key": "checkpoints",         "name": "Checkpoints",         "requiredTier": "SILVER",  "entitled": true },
+  { "key": "crisis",              "name": "Crisis Management",   "requiredTier": "GOLD",    "entitled": false },
+  { "key": "audience-content",    "name": "Audience & Content",  "requiredTier": "DIAMOND", "entitled": false },
+  { "key": "intelligence-report", "name": "Intelligence Report", "requiredTier": "DIAMOND", "entitled": false },
+  { "key": "aggregated-intel",    "name": "Aggregated Intel",    "requiredTier": "DIAMOND", "entitled": false }
+]
+```
+
+- `key` — stable machine key the UI can switch on.
+- `name` — human-readable feature name.
+- `requiredTier` — the minimum tier that unlocks it.
+- `entitled` — whether the current user may use it (admins are entitled to everything; otherwise the
+  effective tier must be at least `requiredTier`).
 
 ### Offer-key overrides (effective tier)
 
@@ -988,8 +1030,9 @@ Checkpoints mark significant dates for a managed entity (e.g., trailer release, 
 > **Ownership:** Every checkpoint operation is scoped to the entity's owner. Creating or listing checkpoints for an entity, or updating/deleting a checkpoint, returns `404 Not Found` when the referenced entity does not exist **or** is owned by another user.
 
 > **Tier-gated (SILVER).** Checkpoints (`/api/checkpoints/**`) require at least the **SILVER** tier; a
-> BRONZE caller receives a structured `403 Forbidden` (admins bypass). See
-> [Premium Feature Tier Gating](#premium-feature-tier-gating).
+> BRONZE caller still gets `200 OK` with an `EntitledResponse` (`entitled=false` plus a masked
+> `preview` for reads; a plain locked envelope with the mutation skipped for writes). Admins are always
+> entitled. See [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
 ### 7a. Create Checkpoint
 
@@ -1017,18 +1060,25 @@ Content-Type: application/json
 - `checkpointDate` — required (ISO-8601 date).
 - `description` — required, non-blank, max 20 characters.
 
-**Response:**
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope.
 ```json
 {
-  "id": 10,
-  "entityId": 1,
-  "entityName": "The Quantum Paradox",
-  "checkpointDate": "2026-03-15",
-  "description": "Trailer Launch"
+  "entitled": true,
+  "requiredTier": "SILVER",
+  "data": {
+    "id": 10,
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "checkpointDate": "2026-03-15",
+    "description": "Trailer Launch"
+  },
+  "preview": null
 }
 ```
 
-**Status Code:** `201 Created`
+A caller below **SILVER** instead gets `200 OK` with `entitled: false`, `data: null`, and **no `preview`** — the checkpoint is **not** created (mutations are blocked, not blurred).
+
+**Status Code:** `200 OK`
 
 ---
 
@@ -1046,24 +1096,41 @@ Authorization: Bearer {jwt_token}
 **Path Parameters:**
 - `entityId` — Entity ID (e.g., 1)
 
-**Response:**
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; the checkpoint list is the `data` field.
 ```json
-[
-  {
-    "id": 10,
-    "entityId": 1,
-    "entityName": "The Quantum Paradox",
-    "checkpointDate": "2026-03-15",
-    "description": "Trailer Launch"
-  },
-  {
-    "id": 11,
-    "entityId": 1,
-    "entityName": "The Quantum Paradox",
-    "checkpointDate": "2026-04-01",
-    "description": "Opening Weekend"
-  }
-]
+{
+  "entitled": true,
+  "requiredTier": "SILVER",
+  "data": [
+    {
+      "id": 10,
+      "entityId": 1,
+      "entityName": "The Quantum Paradox",
+      "checkpointDate": "2026-03-15",
+      "description": "Trailer Launch"
+    },
+    {
+      "id": 11,
+      "entityId": 1,
+      "entityName": "The Quantum Paradox",
+      "checkpointDate": "2026-04-01",
+      "description": "Opening Weekend"
+    }
+  ],
+  "preview": null
+}
+```
+
+A caller below **SILVER** instead gets `entitled: false`, `data: null`, and a masked `preview` — the list is truncated to a single teaser element with every value blurred (numbers bucketed, strings starred), e.g.:
+```json
+{
+  "entitled": false,
+  "requiredTier": "SILVER",
+  "data": null,
+  "preview": [
+    { "id": "a handful", "entityId": "a handful", "entityName": "★★★★★", "checkpointDate": "★★★★★", "description": "★★★★★" }
+  ]
+}
 ```
 
 **Status Code:** `200 OK`
@@ -1097,16 +1164,23 @@ Content-Type: application/json
 - `checkpointDate` — optional (ISO-8601 date). When provided, must not collide with another checkpoint for the same entity (entity + date is unique).
 - `description` — optional; when provided, must be non-blank and at most 20 characters.
 
-**Response:**
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; the updated checkpoint is the `data` field.
 ```json
 {
-  "id": 10,
-  "entityId": 1,
-  "entityName": "The Quantum Paradox",
-  "checkpointDate": "2026-03-20",
-  "description": "Trailer v2"
+  "entitled": true,
+  "requiredTier": "SILVER",
+  "data": {
+    "id": 10,
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "checkpointDate": "2026-03-20",
+    "description": "Trailer v2"
+  },
+  "preview": null
 }
 ```
+
+A caller below **SILVER** gets `entitled: false`, `data: null`, **no `preview`**, and the update is **not** applied.
 
 **Status Code:** `200 OK`
 
@@ -1129,9 +1203,14 @@ Authorization: Bearer {jwt_token}
 **Path Parameters:**
 - `checkpointId` — Checkpoint ID (e.g., 10)
 
-**Response:** No body.
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; `data` is `null` (a delete has no payload).
+```json
+{ "entitled": true, "requiredTier": "SILVER", "data": null, "preview": null }
+```
 
-**Status Code:** `204 No Content`
+A caller below **SILVER** gets `entitled: false` (and `data`/`preview` both `null`) and the delete is **not** applied.
+
+**Status Code:** `200 OK`
 
 ---
 
@@ -2323,7 +2402,8 @@ POST /api/templates/6/use
 ## Crisis Management APIs
 
 > **Tier-gated (GOLD).** Crisis Management (`/api/crisis/**`) requires at least the **GOLD** tier; a
-> lower-tier caller receives a structured `403 Forbidden` (admins bypass). See
+> lower-tier caller still gets `200 OK` with an `EntitledResponse` whose `entitled=false` and a masked
+> `preview` of the generated plan. Admins are always entitled. See
 > [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
 ### 21. Generate Crisis Plan
@@ -2345,11 +2425,21 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-**Response:**
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; the generated plan is the `data` field.
 ```json
 {
-  "generatedPlan": "Mock Crisis Management Plan:\n\n1. Immediate Response: Issue a public statement acknowledging the situation.\n2. Assessment: Gather all facts and assess the severity of the crisis.\n3. Communication Strategy: Develop key messages for different stakeholders.\n4. Action Plan: Implement corrective measures and monitor progress.\n5. Follow-up: Continue monitoring sentiment and adjust strategy as needed.\n\nThis is a mock plan. In production, this would be generated by an actual LLM based on: Generate a detailed crisis management plan for The Quantum Paradox (MOVIE) regarding the following crisis: Negative reviews are flooding social media after controversial scene in the movie"
+  "entitled": true,
+  "requiredTier": "GOLD",
+  "data": {
+    "generatedPlan": "Mock Crisis Management Plan:\n\n1. Immediate Response: Issue a public statement acknowledging the situation.\n2. Assessment: Gather all facts and assess the severity of the crisis.\n3. Communication Strategy: Develop key messages for different stakeholders.\n4. Action Plan: Implement corrective measures and monitor progress.\n5. Follow-up: Continue monitoring sentiment and adjust strategy as needed.\n\nThis is a mock plan. In production, this would be generated by an actual LLM based on: Generate a detailed crisis management plan for The Quantum Paradox (MOVIE) regarding the following crisis: Negative reviews are flooding social media after controversial scene in the movie"
+  },
+  "preview": null
 }
+```
+
+A caller below **GOLD** instead gets `entitled: false`, `data: null`, and a masked `preview` (the plan text starred out), e.g.:
+```json
+{ "entitled": false, "requiredTier": "GOLD", "data": null, "preview": { "generatedPlan": "★★★★★" } }
 ```
 
 **Status Code:** `200 OK`
@@ -3592,7 +3682,8 @@ The marketing aggregation APIs aggregate data from the upstream AuraMath service
 All endpoints are JWT-protected and mounted under `/api/marketing/aggregate/`.
 
 > **Tier-gated (DIAMOND).** Aggregated Intel (`/api/marketing/aggregate/**`) requires the **DIAMOND**
-> tier; a lower-tier caller receives a structured `403 Forbidden` (admins bypass). See
+> tier; a lower-tier caller still gets `200 OK` with an `EntitledResponse` whose `entitled=false` and a
+> masked `preview` of the aggregation. Admins are always entitled. See
 > [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
 **Common Query Parameters (at least one required):**
@@ -3611,6 +3702,15 @@ If none of these filters are provided, the endpoint returns `400 Bad Request`.
 When `entityId` is supplied, that entity must be **owned by the caller** — otherwise the endpoint returns `404 Not Found` (the same response as for a non-existent entity, so existence is never leaked). The non-`entityId` filters (`language`, `industry`, `state`, `genre`) aggregate across keywords and are not entity-scoped.
 
 **Response format:**
+
+Every endpoint below is wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope. For an **entitled** caller (DIAMOND or admin) the aggregation is the `data` field (`entitled: true`, `requiredTier: "DIAMOND"`, `preview: null`); the per-endpoint JSON examples that follow show that `data` payload. A caller **below DIAMOND** instead gets `200 OK` with `entitled: false`, `data: null`, and a masked `preview` (lists truncated to a teaser, numbers bucketed, strings starred), e.g.:
+
+```json
+{ "entitled": false, "requiredTier": "DIAMOND", "data": null,
+  "preview": [ { "author": "★★★★★", "primaryPlatform": "★★★★★", "influenceTier": "★★★★★" } ] }
+```
+
+The shape of the `data` payload depends on `groupBy`:
 - **Default (flat):** A deduplicated JSON array merging results from all matching keywords. Duplicates are detected by `globalUserId`, `userId`, `author`, `username`, or `id` fields.
 - **Grouped (`?groupBy=keyword`):** A JSON object keyed by keyword (or genre), each value being the array of results for that keyword.
 
@@ -3829,9 +3929,14 @@ GET /api/marketing/aggregate/genre/channel-strategy?entityId=1
 - `200 OK`
 - `400 Bad Request` — no filter provided, or invalid `subType`
 
-**Validation Error (invalid subType):**
+**Validation Error (invalid subType):** rendered by the global error handler as a standard `ErrorResponse`.
 ```json
-{ "error": "subType must be one of: potential-viewers, super-spreaders, channel-strategy" }
+{
+  "timestamp": "2026-06-14T10:15:00",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "subType must be one of: potential-viewers, super-spreaders, channel-strategy"
+}
 ```
 
 ---
@@ -4710,13 +4815,9 @@ without `ROLE_ADMIN`.
 }
 ```
 
-A `403 Forbidden` is **also** returned when a caller below the required tier hits a tier-gated premium
-feature (see [Premium Feature Tier Gating](#premium-feature-tier-gating)). That response carries a
-distinct, structured, **price-free** body instead of the message envelope above:
-
-```json
-{ "feature": "Crisis Management", "requiredTier": "GOLD" }
-```
+Tier-gated **premium features** no longer return `403` at all: a caller below the required tier gets a
+`200 OK` `EntitledResponse` with `entitled=false` and a masked `preview` instead (see
+[Premium Feature Tier Gating](#premium-feature-tier-gating)).
 
 ### 409 Conflict
 
