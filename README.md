@@ -281,6 +281,9 @@ Authorization: Bearer {jwt_token}
 
 **Status Code:** `200 OK`
 
+**Error Responses:**
+- `409 Conflict` — the create would breach a per-tier cap and nothing is created: the user is already at `maxEntities` (`limitType: "ENTITIES"`), or the supplied keywords would push the account-wide keyword total past `maxKeywords` (`limitType: "KEYWORDS"`). See [Licensing & Usage APIs](#licensing--usage-apis) for the body shape.
+
 ---
 
 ### 4. Update Managed Entity
@@ -528,6 +531,7 @@ Authorization: Bearer {jwt_token}
 **Error Responses:**
 - `404 Not Found` - No such entity, or the entity is owned by another user (indistinguishable by design).
 - `400 Bad Request` - The entity is owned by the caller but is not of the given `entityType`.
+- `409 Conflict` - The new keyword set would push the user's account-wide keyword total past `maxKeywords`; the edit is rejected (`limitType: "KEYWORDS"`). Keywords are counted across **all** the user's entities, so this can trip even when the count for this one entity is unchanged. See [Licensing & Usage APIs](#licensing--usage-apis).
 
 ---
 
@@ -740,6 +744,120 @@ curl -X GET "http://localhost:8080/api/entities/movie/1/marketing-report/pdf" \
 - `200 OK` — PDF generated.
 - `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
 - `400 Bad Request` — The entity is owned by the caller but is not of the given `entityType`, or `windowDays` is outside 1–30.
+
+---
+
+## Licensing & Usage APIs
+
+Every user operates under exactly one active **license**, whose **tier** fixes the per-tier limits the
+account is allowed to consume. The tiers and their caps are defined in code by the `LicenseTier` enum
+(the single source of truth — no limit value is hard-coded anywhere else):
+
+| Tier | Max entities | Max keywords |
+|---------|:---:|:---:|
+| BRONZE | 5 | 5 |
+| SILVER | 10 | 10 |
+| GOLD | 15 | 15 |
+| DIAMOND | 20 | 25 |
+
+Two of these caps are enforced on the entity write paths:
+
+- **Entity cap** — creating an entity is rejected when the user already owns `maxEntities` entities.
+- **Keyword cap** — keywords are counted **across all of the user's entities**. Creating an entity
+  with keywords, or replacing an entity's keywords, is rejected when the resulting account-wide total
+  would exceed `maxKeywords`.
+
+Both rejections return **`409 Conflict`** with a structured, **price-free** body (see
+[409 Conflict](#409-conflict)):
+
+```json
+{ "limitType": "ENTITIES", "limit": 15, "current": 15 }
+```
+
+- `limitType` — `"ENTITIES"` or `"KEYWORDS"`.
+- `limit` — the tier's cap for that resource.
+- `current` — the value that breaches the cap: for `ENTITIES` the count the user already owns; for
+  `KEYWORDS` the account-wide total the operation would have produced.
+
+> Limits are user-facing, but **prices are not** — they are admin-only (`/api/admin/license-prices`,
+> `ROLE_ADMIN`) and never appear in any license, usage, or limit response.
+
+### L1. Get License Usage
+
+**Endpoint:** `GET /api/license/usage`
+
+**Description:** Read-only usage meter for the authenticated user: how many entities and keywords they
+are currently using against their tier's caps. Designed to back the UI's usage meters. Carries **no
+price** — only counts and limits.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+{
+  "entitiesUsed": 8,
+  "entitiesMax": 15,
+  "keywordsUsed": 11,
+  "keywordsMax": 15
+}
+```
+
+**Response fields:**
+- `entitiesUsed` — number of entities the user owns.
+- `entitiesMax` — the tier's `maxEntities`.
+- `keywordsUsed` — total keywords summed across all of the user's entities.
+- `keywordsMax` — the tier's `maxKeywords`.
+
+**Example (verified):** the seeded `user` account (GOLD) returns
+`{"entitiesUsed":0,"entitiesMax":15,"keywordsUsed":0,"keywordsMax":15}`; the same account on DIAMOND
+returns `{"entitiesUsed":0,"entitiesMax":20,"keywordsUsed":0,"keywordsMax":25}`.
+
+**cURL example:**
+```bash
+curl -X GET http://localhost:8080/api/license/usage \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
+**Status Codes:**
+- `200 OK`
+- `403 Forbidden` — no JWT supplied (or invalid token).
+- `404 Not Found` — the user has no active license.
+
+---
+
+### L2. Get My License
+
+**Endpoint:** `GET /api/licenses/me`
+
+**Description:** The authenticated user's own license: their tier and the per-tier limits it grants.
+User-facing, so it returns **no price**.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+{
+  "tier": "GOLD",
+  "maxKeywords": 15,
+  "maxEntities": 15,
+  "maxMentionsPerMonth": 40000,
+  "collectionFrequency": "PT1H"
+}
+```
+
+> `collectionFrequency` is the ISO-8601 duration string for how often the ingestion pipeline collects
+> mentions for the tier (e.g. `"PT24H"` for BRONZE, `"PT10M"` for DIAMOND).
+
+**Status Codes:**
+- `200 OK`
+- `403 Forbidden` — no JWT supplied (or invalid token).
+- `404 Not Found` — the user has no active license.
 
 ---
 
@@ -4114,6 +4232,24 @@ without `ROLE_ADMIN`.
   "message": "Only administrators may scope by ownerId"
 }
 ```
+
+### 409 Conflict
+
+Returned when an operation would breach a per-tier license cap (entity or keyword — see
+[Licensing & Usage APIs](#licensing--usage-apis)). The body is intentionally minimal and
+**price-free**, carrying only the limit type and the relevant counts:
+
+**Example:**
+```json
+{
+  "limitType": "KEYWORDS",
+  "limit": 15,
+  "current": 17
+}
+```
+
+(Some other endpoints, e.g. manual sentiment-alert creation, also use `409 Conflict` for duplicates,
+with an empty body.)
 
 ### 422 Validation Error
 
