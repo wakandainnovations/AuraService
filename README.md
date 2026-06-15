@@ -943,6 +943,55 @@ Authorization: Bearer {jwt_token}
 
 ---
 
+### L2a. Request a License
+
+**Endpoint:** `POST /api/licenses/me`
+
+**Description:** Self-service license request: the authenticated user picks a tier and a new **active**
+license is issued to them. Any license they already held is deactivated first, so a user always has a
+single active license. The new license never expires. Returns the generated license key — call
+[`GET /api/licenses/me`](#l2-get-my-license) for the resulting tier and limits. User-facing, so it
+carries **no price**.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "tier": "GOLD"
+}
+```
+
+- `tier` — required; one of `BRONZE`, `SILVER`, `GOLD`, `DIAMOND`.
+
+**Response:**
+```json
+{
+  "licenseKey": "3f9a1c0b8e2d4f6a7c5b9e1d0a2f4c6b8d0e2f4a6c8b0d2e4f6a8c0b2d4e6f80"
+}
+```
+
+- `licenseKey` — the generated key for the newly issued license (a 64-character SHA-256 hex string).
+
+**cURL example:**
+```bash
+curl -X POST http://localhost:8080/api/licenses/me \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"tier": "GOLD"}'
+```
+
+**Status Codes:**
+- `200 OK` — the license was issued; the new key is returned.
+- `400 Bad Request` — `tier` is missing or not one of the valid tiers.
+- `403 Forbidden` — no JWT supplied (or invalid token).
+
+---
+
 ### L3. Redeem Offer Key
 
 **Endpoint:** `POST /api/license/redeem-offer`

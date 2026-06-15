@@ -67,8 +67,8 @@ class LicenseServiceImplTest {
         assertThat(result.isActive()).isTrue();
         assertThat(result.getIssuedAt()).isNotNull();
         assertThat(result.getExpiresAt()).isNull();
-        assertThat(result.getLicenseKey()).startsWith("AURA-");
-        assertThat(result.getLicenseKey()).hasSizeGreaterThan("AURA-".length());
+        // The key is a SHA-256 hash: 64 lowercase hex characters.
+        assertThat(result.getLicenseKey()).matches("[0-9a-f]{64}");
     }
 
     @Test
@@ -95,6 +95,43 @@ class LicenseServiceImplTest {
 
         assertThatThrownBy(() -> service.issueLicense(USER_ID, LicenseTier.GOLD, null))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void requestLicense_issuesChosenTierToAuthenticatedUser() {
+        User current = user(USER_ID, "alice");
+        when(entityAccessService.currentUser()).thenReturn(current);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(current));
+        when(licenseRepository.findByUser(current)).thenReturn(List.of());
+        when(licenseRepository.save(any(License.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        License result = service.requestLicense(LicenseTier.DIAMOND);
+
+        // The license is issued to the caller's own user at the requested tier, active and never-expiring.
+        assertThat(result.getTier()).isEqualTo(LicenseTier.DIAMOND);
+        assertThat(result.getUser()).isEqualTo(current);
+        assertThat(result.isActive()).isTrue();
+        assertThat(result.getExpiresAt()).isNull();
+        assertThat(result.getLicenseKey()).matches("[0-9a-f]{64}");
+    }
+
+    @Test
+    void requestLicense_deactivatesCallersExistingActiveLicenseFirst() {
+        User current = user(USER_ID, "alice");
+        License existing = new License();
+        existing.setActive(true);
+        existing.setTier(LicenseTier.BRONZE);
+        existing.setUser(current);
+
+        when(entityAccessService.currentUser()).thenReturn(current);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(current));
+        when(licenseRepository.findByUser(current)).thenReturn(List.of(existing));
+        when(licenseRepository.save(any(License.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.requestLicense(LicenseTier.GOLD);
+
+        // Single-active-license invariant holds for self-service too.
+        assertThat(existing.isActive()).isFalse();
     }
 
     @Test

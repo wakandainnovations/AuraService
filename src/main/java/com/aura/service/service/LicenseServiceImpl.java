@@ -10,16 +10,18 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class LicenseServiceImpl implements LicenseService {
-
-    private static final String KEY_PREFIX = "AURA-";
 
     private final LicenseRepository licenseRepository;
     private final UserRepository userRepository;
@@ -81,6 +83,15 @@ public class LicenseServiceImpl implements LicenseService {
 
     @Override
     @Transactional
+    public License requestLicense(LicenseTier tier) {
+        // Resolve the caller from the security context and issue the license to their own user — the
+        // single-active-license invariant in issueLicense applies here too.
+        User user = entityAccessService.currentUser();
+        return issueLicense(user.getId(), tier, null);
+    }
+
+    @Override
+    @Transactional
     public License issueLicense(Long userId, LicenseTier tier, Instant expiresAt) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
@@ -122,7 +133,18 @@ public class LicenseServiceImpl implements LicenseService {
         return licenseRepository.save(license);
     }
 
+    /**
+     * Generates a license key as a SHA-256 hash (64-character lowercase hex string). A random UUID
+     * supplies the entropy that is hashed, so each issued key is effectively unique.
+     */
     private String generateKey() {
-        return KEY_PREFIX + UUID.randomUUID();
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is mandated by the Java platform, so this should never happen.
+            throw new IllegalStateException("SHA-256 algorithm not available", e);
+        }
     }
 }

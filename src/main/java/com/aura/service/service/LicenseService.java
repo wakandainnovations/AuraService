@@ -43,6 +43,18 @@ public interface LicenseService {
     Duration currentCollectionFrequency();
 
     // ------------------------------------------------------------------
+    // Self-service (reachable by any authenticated user).
+    // ------------------------------------------------------------------
+
+    /**
+     * Self-service issuance: the authenticated user requests a new active license at {@code tier}
+     * (one of BRONZE/SILVER/GOLD/DIAMOND). Mirrors {@link #issueLicense} for the caller's own user —
+     * any license they already held is deactivated first (single active license per user) and the new
+     * license never expires. Returns the newly issued license.
+     */
+    License requestLicense(LicenseTier tier);
+
+    // ------------------------------------------------------------------
     // Admin operations (reachable only through the ROLE_ADMIN endpoints).
     // ------------------------------------------------------------------
 
