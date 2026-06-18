@@ -128,7 +128,16 @@ public class MarketingAggregationService {
         // Genres are stored in whatever case the entity was created with, so lower-case
         // the pattern and compare against LOWER(genre) in the query for a case-insensitive match.
         String genrePattern = (genre == null || genre.isBlank()) ? null : "%," + genre.toLowerCase() + ",%";
-        return entityRepository.findKeywordsByFilters(language, industry, state, genrePattern, entityId);
+        // language/industry/state are matched case-insensitively too, but we lower-case the
+        // value here rather than wrapping the bind parameter in LOWER(...) in the query:
+        // Postgres can't infer the type of a bound arg inside lower(?) and falls back to
+        // bytea ("function lower(bytea) does not exist"). The query LOWER()s only the column.
+        return entityRepository.findKeywordsByFilters(
+                lowerOrNull(language), lowerOrNull(industry), lowerOrNull(state), genrePattern, entityId);
+    }
+
+    private static String lowerOrNull(String value) {
+        return value == null ? null : value.toLowerCase();
     }
 
     private Object aggregateByKeyword(String category, String language, String industry,

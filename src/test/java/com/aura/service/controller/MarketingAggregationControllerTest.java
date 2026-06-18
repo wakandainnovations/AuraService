@@ -109,7 +109,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_flat_mergesAcrossKeywords() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, null),
                         new EntityKeyword("surya", "media.celebrity", "Tamil", null, "Kollywood", null)
@@ -139,7 +139,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_groupedByKeyword() throws Exception {
-        when(entityRepository.findKeywordsByFilters(null, "Tollywood", null, null, null))
+        when(entityRepository.findKeywordsByFilters(null, "tollywood", null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("baahubali", "media.movie", "Telugu", null, "Tollywood", null)
                 ));
@@ -191,7 +191,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void viralSeeds_flat() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, null)
                 ));
@@ -237,7 +237,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void brandEvangelists_flat() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Telugu", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("telugu", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("rrr", "media.movie", "Telugu", null, null, null)
                 ));
@@ -258,7 +258,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void genre_potentialViewers_flat() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, "action"),
                         new EntityKeyword("surya-movie", "media.movie", "Tamil", null, null, "drama")
@@ -280,7 +280,7 @@ class MarketingAggregationControllerTest {
 
     @Test
     void genre_objectResponses_flat_dedupesIdenticalObjects() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, "action"),
                         new EntityKeyword("surya-movie", "media.movie", "Tamil", null, null, "drama")
@@ -305,7 +305,7 @@ class MarketingAggregationControllerTest {
 
     @Test
     void genre_superSpreaders_groupedByGenre() throws Exception {
-        when(entityRepository.findKeywordsByFilters(null, "Kollywood", null, null, null))
+        when(entityRepository.findKeywordsByFilters(null, "kollywood", null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("movie1", "media.movie", "Tamil", null, "Kollywood", "thriller")
                 ));
@@ -336,7 +336,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_noMatchingKeywords_returnsEmptyList() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Klingon", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("klingon", null, null, null, null))
                 .thenReturn(List.of());
 
         mvc.perform(get("/api/marketing/aggregate/top-spreaders")
@@ -347,7 +347,7 @@ class MarketingAggregationControllerTest {
 
     @Test
     void topSpreaders_noMatchingKeywords_grouped_returnsEmptyMap() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Klingon", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("klingon", null, null, null, null))
                 .thenReturn(List.of());
 
         String response = mvc.perform(get("/api/marketing/aggregate/top-spreaders")
@@ -366,7 +366,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_upstreamFailure_skipsFailedKeyword() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("good", "media.movie", "Tamil", null, null, null),
                         new EntityKeyword("bad", "media.movie", "Tamil", null, null, null)
@@ -387,7 +387,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_deduplicatesAcrossKeywords() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", null, null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("kw1", "media.movie", "Tamil", null, null, null),
                         new EntityKeyword("kw2", "media.movie", "Tamil", null, null, null)
@@ -409,7 +409,7 @@ class MarketingAggregationControllerTest {
     // ------------------------------------------------------------------
     @Test
     void topSpreaders_multipleFilters() throws Exception {
-        when(entityRepository.findKeywordsByFilters("Tamil", "Kollywood", null, null, null))
+        when(entityRepository.findKeywordsByFilters("tamil", "kollywood", null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("movie1", "media.movie", "Tamil", null, "Kollywood", null)
                 ));

@@ -128,6 +128,14 @@ class MentionActionControllerTest {
                         new ImpressionsResolver(mentionRepository));
         ReflectionTestUtils.setField(mobilizeAlliesService, "allyDmPromptTemplate", ALLY_DM_PROMPT_TEMPLATE);
 
+        EntityAccessService entityAccess = mock(EntityAccessService.class);
+        // The guard returns the linked entity the caller may act through; for these single-entity
+        // mentions that is simply the mention's only entity.
+        when(entityAccess.assertMentionAccessible(any(Mention.class)))
+                .thenAnswer(inv -> inv.getArgument(0, Mention.class).getPrimaryManagedEntity());
+        when(entityAccess.assertMentionAccessible(any(Mention.class), any()))
+                .thenAnswer(inv -> inv.getArgument(0, Mention.class).getPrimaryManagedEntity());
+
         MentionActionController controller = new MentionActionController(
                 llmService,
                 socialMediaService,
@@ -139,7 +147,7 @@ class MentionActionControllerTest {
                 mobilizeAlliesService,
                 new ReplyTemplateService(mock(ReplyTemplateRepository.class)),
                 new ImpressionsResolver(mentionRepository),
-                mock(EntityAccessService.class)
+                entityAccess
         );
         ReflectionTestUtils.setField(controller, "generateReplyPrompt", REPLY_PROMPT_TEMPLATE);
         ReflectionTestUtils.setField(controller, "crisisPlanPromptTemplate", CRISIS_PROMPT_TEMPLATE);
@@ -179,7 +187,7 @@ class MentionActionControllerTest {
 
         Mention m = new Mention();
         m.setId(MENTION_ID);
-        m.setManagedEntity(entity);
+        m.addManagedEntity(entity);
         m.setPlatform(Platform.X);
         m.setPostId(POST_ID);
         m.setContent(CONTENT);

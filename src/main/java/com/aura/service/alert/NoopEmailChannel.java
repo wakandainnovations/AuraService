@@ -5,6 +5,7 @@ import com.aura.service.entity.Mention;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
+import org.springframework.data.domain.PageRequest;
 import com.aura.service.repository.MentionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,8 +29,8 @@ public class NoopEmailChannel implements EmailChannel {
         String subject = "[Aura] " + name + " negative spike";
 
         List<Mention> top = mentionRepository
-                .findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
-                        alert.getManagedEntityId(), Sentiment.NEGATIVE);
+                .findTop3ByManagedEntityIdAndSentiment(
+                        alert.getManagedEntityId(), Sentiment.NEGATIVE, PageRequest.of(0, 3));
 
         StringBuilder body = new StringBuilder();
         body.append("Alert ").append(alert.getId())

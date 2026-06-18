@@ -316,7 +316,7 @@ class SentimentAlertServiceTest {
     private Mention mention(long id, ManagedEntity entity, String author, String permalink, Sentiment sentiment) {
         Mention m = new Mention();
         m.setId(id);
-        m.setManagedEntity(entity);
+        m.addManagedEntity(entity);
         m.setAuthor(author);
         m.setPermalink(permalink);
         m.setSentiment(sentiment);

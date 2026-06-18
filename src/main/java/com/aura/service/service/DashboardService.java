@@ -616,7 +616,7 @@ public class DashboardService {
                 mention.getId(), new ActionHistorySummary(0, 0, false));
         return new MentionResponse(
                 mention.getId(),
-                mention.getManagedEntity().getId(),
+                mention.getPrimaryManagedEntity().getId(),
                 mention.getPlatform(),
                 mention.getPostId(),
                 mention.getContent(),

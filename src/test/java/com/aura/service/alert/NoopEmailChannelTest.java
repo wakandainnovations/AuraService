@@ -9,6 +9,7 @@ import com.aura.service.entity.SentimentAlert;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.MentionRepository;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,8 +77,7 @@ class NoopEmailChannelTest {
 
     @Test
     void logsSubjectWithEntityNameAndTopThreeMentions() {
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.NEGATIVE)).thenReturn(List.of(
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentiment(ENTITY_ID, Sentiment.NEGATIVE, PageRequest.of(0, 3))).thenReturn(List.of(
                         mention("alice", "https://x.com/alice/1"),
                         mention("bob", "https://x.com/bob/2"),
                         mention("carol", "https://x.com/carol/3")
@@ -85,8 +85,7 @@ class NoopEmailChannelTest {
 
         channel.send(alert(), "Galaxy Quest");
 
-        verify(mentionRepository).findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.NEGATIVE);
+        verify(mentionRepository).findTop3ByManagedEntityIdAndSentiment(ENTITY_ID, Sentiment.NEGATIVE, PageRequest.of(0, 3));
         String msg = renderedMessage();
         assertThat(msg).contains("[Aura] Galaxy Quest negative spike");
         assertThat(msg).contains("https://x.com/alice/1");
@@ -97,8 +96,7 @@ class NoopEmailChannelTest {
 
     @Test
     void fallsBackToEntityIdWhenEntityNameMissing() {
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.NEGATIVE)).thenReturn(List.of());
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentiment(ENTITY_ID, Sentiment.NEGATIVE, PageRequest.of(0, 3))).thenReturn(List.of());
 
         channel.send(alert(), null);
 
@@ -107,8 +105,7 @@ class NoopEmailChannelTest {
 
     @Test
     void handlesEmptyTopMentionsGracefully() {
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.NEGATIVE)).thenReturn(List.of());
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentiment(ENTITY_ID, Sentiment.NEGATIVE, PageRequest.of(0, 3))).thenReturn(List.of());
 
         channel.send(alert(), "Galaxy Quest");
 

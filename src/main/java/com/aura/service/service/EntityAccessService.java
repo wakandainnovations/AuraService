@@ -1,6 +1,7 @@
 package com.aura.service.service;
 
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
 
 /**
@@ -59,4 +60,23 @@ public interface EntityAccessService {
      * ownership check here too, so every guard routed through this method honors admin access.
      */
     ManagedEntity assertOwnedByCurrentUser(Long entityId);
+
+    /**
+     * Access guard for a {@link Mention}, which may now be attributed to several entities. Returns the
+     * linked entity the caller is allowed to act through, so callers get both the check and the
+     * contextual entity in one call. Applies the same admin rules as {@link #assertAccessible}:
+     * <ul>
+     *   <li>non-admin → the entity the caller owns among the mention's links (else 404);</li>
+     *   <li>admin + {@code ownerId} → the link owned by {@code ownerId} (else 404);</li>
+     *   <li>admin + {@code null} → any linked entity (the first).</li>
+     * </ul>
+     * Throws {@link com.aura.service.exception.ResourceNotFoundException} (→ 404) when no linked entity
+     * satisfies the rule, keeping not-owned and absent indistinguishable.
+     */
+    ManagedEntity assertMentionAccessible(Mention mention, Long requestedOwnerId);
+
+    /** Convenience for the no-{@code ownerId} call sites: {@code assertMentionAccessible(mention, null)}. */
+    default ManagedEntity assertMentionAccessible(Mention mention) {
+        return assertMentionAccessible(mention, null);
+    }
 }

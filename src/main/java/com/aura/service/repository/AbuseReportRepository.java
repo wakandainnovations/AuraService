@@ -39,7 +39,8 @@ public interface AbuseReportRepository extends JpaRepository<AbuseReport, Long> 
      */
     @Query("SELECT r FROM AbuseReport r WHERE r.userId = :userId AND r.status = :status " +
             "AND r.resolvedAt > :since AND r.mentionId IN " +
-            "(SELECT m.id FROM Mention m WHERE m.managedEntity.id = :entityId)")
+            "(SELECT m.id FROM Mention m WHERE EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId))")
     List<AbuseReport> findResolvedForUserAndEntitySince(
             @Param("userId") Long userId,
             @Param("entityId") Long entityId,

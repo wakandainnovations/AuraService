@@ -5,6 +5,7 @@ import com.aura.service.entity.AbuseReport;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
+import org.springframework.data.domain.PageRequest;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.ManagedEntityRepository;
@@ -158,8 +159,7 @@ class WhatsNewServiceTest {
 
         stubNoNewSpreaders(entity);
         stubNoNegativeSpike();
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                101L, Sentiment.NEGATIVE, LAST_SEEN))
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(101L, Sentiment.NEGATIVE, LAST_SEEN, PageRequest.of(0, 3)))
                 .thenReturn(List.of(mention(901L), mention(902L)));
 
         List<WhatsNewCard> cards = service.getCards(USER_ID, ENTITY_ID);
@@ -207,8 +207,7 @@ class WhatsNewServiceTest {
                 .thenReturn(List.of("bob"));
         spreaderLookup.put("comedy", Set.of("alice"));
 
-        when(mentionRepository.findTop3ByManagedEntityIdAndAuthorAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                ENTITY_ID, "alice", Sentiment.POSITIVE, LAST_SEEN))
+        when(mentionRepository.findTop3ByManagedEntityIdAndAuthorAndSentimentAndPostDateAfter(ENTITY_ID, "alice", Sentiment.POSITIVE, LAST_SEEN, PageRequest.of(0, 3)))
                 .thenReturn(List.of(mention(501L), mention(502L)));
 
         stubNoNegativeSpike();
@@ -232,8 +231,7 @@ class WhatsNewServiceTest {
         stubScoreCounts(ENTITY_ID, 80, 20, 30, 10);
         stubNoNewSpreaders(entity);
         stubNoNegativeSpike();
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.POSITIVE, LAST_SEEN))
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(ENTITY_ID, Sentiment.POSITIVE, LAST_SEEN, PageRequest.of(0, 3)))
                 .thenReturn(List.of(mention(701L), mention(702L), mention(703L)));
 
         List<WhatsNewCard> cards = service.getCards(USER_ID, ENTITY_ID);
@@ -254,8 +252,7 @@ class WhatsNewServiceTest {
         stubNoNewSpreaders(entity);
         when(mentionRepository.countByManagedEntityIdAndSentimentAndPostDateAfter(
                 ENTITY_ID, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(8L);
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.NEGATIVE, LAST_SEEN))
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(ENTITY_ID, Sentiment.NEGATIVE, LAST_SEEN, PageRequest.of(0, 3)))
                 .thenReturn(List.of(mention(801L), mention(802L)));
 
         List<WhatsNewCard> cards = service.getCards(USER_ID, ENTITY_ID);
@@ -277,8 +274,7 @@ class WhatsNewServiceTest {
         stubNoNewSpreaders(entity);
         when(mentionRepository.countByManagedEntityIdAndSentimentAndPostDateAfter(
                 ENTITY_ID, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(0L);
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                ENTITY_ID, Sentiment.POSITIVE, LAST_SEEN)).thenReturn(List.of(mention(701L)));
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(ENTITY_ID, Sentiment.POSITIVE, LAST_SEEN, PageRequest.of(0, 3))).thenReturn(List.of(mention(701L)));
 
         AbuseReport upheld = AbuseReport.builder()
                 .id(900L).mentionId(555L).userId(USER_ID)
@@ -311,8 +307,7 @@ class WhatsNewServiceTest {
             competitors.add(c);
             // Each competitor drops sharply.
             stubScoreCounts(id, 0, 1, 100, 1);
-            when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                    id, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(List.of());
+            when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(id, Sentiment.NEGATIVE, LAST_SEEN, PageRequest.of(0, 3))).thenReturn(List.of());
         }
         ManagedEntity entity = entityWith();
         entity.setCompetitors(competitors);
@@ -349,10 +344,8 @@ class WhatsNewServiceTest {
         stubScoreCounts(102L, 0, 1, 100, 1);
         stubNoNewSpreaders(entity);
         stubNoNegativeSpike();
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                101L, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(List.of());
-        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                102L, Sentiment.NEGATIVE, LAST_SEEN)).thenReturn(List.of());
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(101L, Sentiment.NEGATIVE, LAST_SEEN, PageRequest.of(0, 3))).thenReturn(List.of());
+        when(mentionRepository.findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(102L, Sentiment.NEGATIVE, LAST_SEEN, PageRequest.of(0, 3))).thenReturn(List.of());
 
         // Collections.shuffle on a 2-element list calls nextInt(2) and swaps index 1 with that
         // result. nextInt(2)=0 reverses; nextInt(2)=1 leaves order alone. Drive both branches

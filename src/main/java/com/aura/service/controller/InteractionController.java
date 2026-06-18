@@ -37,9 +37,8 @@ public class InteractionController {
         }
         Mention mention = mentionOptional.get();
 
-        // Only the owner of the mention's entity may generate a reply for it (404s otherwise).
-        ManagedEntity managedEntity =
-                entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
+        // Only the owner of one of the mention's entities may generate a reply for it (404s otherwise).
+        ManagedEntity managedEntity = entityAccessService.assertMentionAccessible(mention);
 
         String prompt = generateReplyPrompt
                 .replace("[Managed Entity]", managedEntity.getName())

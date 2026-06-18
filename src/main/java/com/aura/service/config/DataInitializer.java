@@ -174,7 +174,7 @@ public class DataInitializer implements CommandLineRunner {
                               String[] authors, Platform[] platforms, Random random) {
         for (int i = 0; i < count; i++) {
             Mention mention = new Mention();
-            mention.setManagedEntity(entity);
+            mention.addManagedEntity(entity);
             mention.setPlatform(platforms[random.nextInt(platforms.length)]);
             mention.setPostId(entity.getName() + "_" + sentiment + "_" + i);
             mention.setSentiment(sentiment);

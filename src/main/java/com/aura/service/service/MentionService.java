@@ -36,8 +36,8 @@ public class MentionService {
         if (mention == null) {
             return false;
         }
-        // A mention may only be purged by the owner of the entity it is attributed to.
-        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
+        // A mention may only be purged by the owner of an entity it is attributed to.
+        entityAccessService.assertMentionAccessible(mention);
 
         abuseReportRepository.deleteByMentionId(mentionId);
         replyDraftRepository.deleteByMentionId(mentionId);

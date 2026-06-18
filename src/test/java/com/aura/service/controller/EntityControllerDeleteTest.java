@@ -66,7 +66,8 @@ class EntityControllerDeleteTest {
         mvc.perform(delete("/api/entities/{entityType}/{id}", "movie", 1L))
                 .andExpect(status().isNoContent());
 
-        verify(mentionRepository).deleteByManagedEntityId(1L);
+        verify(mentionRepository).unlinkEntityFromMentions(1L);
+        verify(mentionRepository).deleteMentionsWithNoEntities();
         verify(checkpointRepository).deleteByManagedEntityId(1L);
         verify(entityRepository).delete(movie);
     }
@@ -102,7 +103,8 @@ class EntityControllerDeleteTest {
 
         verify(entityRepository, never()).delete(any(ManagedEntity.class));
         verify(checkpointRepository, never()).deleteByManagedEntityId(anyLong());
-        verify(mentionRepository, never()).deleteByManagedEntityId(anyLong());
+        verify(mentionRepository, never()).unlinkEntityFromMentions(anyLong());
+        verify(mentionRepository, never()).deleteMentionsWithNoEntities();
     }
 
     @Test
@@ -115,6 +117,7 @@ class EntityControllerDeleteTest {
 
         verify(entityRepository, never()).delete(any(ManagedEntity.class));
         verify(checkpointRepository, never()).deleteByManagedEntityId(anyLong());
-        verify(mentionRepository, never()).deleteByManagedEntityId(anyLong());
+        verify(mentionRepository, never()).unlinkEntityFromMentions(anyLong());
+        verify(mentionRepository, never()).deleteMentionsWithNoEntities();
     }
 }

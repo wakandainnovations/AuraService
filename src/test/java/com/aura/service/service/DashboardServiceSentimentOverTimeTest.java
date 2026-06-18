@@ -77,7 +77,7 @@ class DashboardServiceSentimentOverTimeTest {
         ManagedEntity e = entity(entityId, entityName);
         Mention m = new Mention();
         m.setId(1L);
-        m.setManagedEntity(e);
+        m.addManagedEntity(e);
         m.setPlatform(Platform.REDDIT);
         m.setPostId("post-" + postDate.toString());
         m.setContent("test");

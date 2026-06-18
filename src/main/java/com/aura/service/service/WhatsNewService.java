@@ -5,6 +5,7 @@ import com.aura.service.entity.AbuseReport;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
+import org.springframework.data.domain.PageRequest;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.AbuseReportRepository;
@@ -203,8 +204,8 @@ public class WhatsNewService {
         List<WhatsNewCard> cards = new ArrayList<>();
         for (String author : newAuthors) {
             List<Mention> positives = mentionRepository
-                    .findTop3ByManagedEntityIdAndAuthorAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                            entityId, author, Sentiment.POSITIVE, lastSeen);
+                    .findTop3ByManagedEntityIdAndAuthorAndSentimentAndPostDateAfter(
+                            entityId, author, Sentiment.POSITIVE, lastSeen, PageRequest.of(0, 3));
             if (positives.isEmpty()) {
                 continue;
             }
@@ -263,8 +264,8 @@ public class WhatsNewService {
 
     private List<Long> recentMentionIds(Long entityId, Sentiment sentiment, Instant lastSeen) {
         return mentionRepository
-                .findTop3ByManagedEntityIdAndSentimentAndPostDateAfterOrderByPostDateDesc(
-                        entityId, sentiment, lastSeen)
+                .findTop3ByManagedEntityIdAndSentimentAndPostDateAfter(
+                        entityId, sentiment, lastSeen, PageRequest.of(0, 3))
                 .stream()
                 .map(Mention::getId)
                 .collect(Collectors.toList());

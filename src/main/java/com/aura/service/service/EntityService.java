@@ -173,8 +173,10 @@ public class EntityService {
         // Remove dependent checkpoints (managed_entity_id is a non-null foreign key).
         checkpointRepository.deleteByManagedEntityId(id);
 
-        // Remove dependent mentions, otherwise fk_mentions_managed_entities blocks the delete.
-        mentionRepository.deleteByManagedEntityId(id);
+        // Detach this entity from its mentions (a post may be shared with other entities), then purge
+        // any mention left with no entity links, otherwise the join-table FK blocks the delete.
+        mentionRepository.unlinkEntityFromMentions(id);
+        mentionRepository.deleteMentionsWithNoEntities();
 
         entityRepository.delete(entity);
     }

@@ -1,6 +1,7 @@
 package com.aura.service.service;
 
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
 import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.ManagedEntityRepository;
@@ -189,5 +190,68 @@ class EntityAccessServiceImplTest {
     void requireAdminToScopeByOwner_allowsNullForEveryone() {
         authenticateAs("alice");
         service.requireAdminToScopeByOwner(null); // no exception
+    }
+
+    // ------------------------------------------------------------------
+    // assertMentionAccessible: a post may be attributed to several entities, so the guard returns the
+    // link the caller is allowed to act through rather than assuming a single entity.
+    // ------------------------------------------------------------------
+
+    private Mention mentionLinkedTo(ManagedEntity... entities) {
+        Mention m = new Mention();
+        m.setId(99L);
+        for (ManagedEntity e : entities) {
+            m.addManagedEntity(e);
+        }
+        return m;
+    }
+
+    @Test
+    void assertMentionAccessible_nonAdminReturnsTheLinkTheyOwn() {
+        authenticateAs("alice");
+        // The post is shared between another user's entity and alice's — she may act through hers.
+        Mention mention = mentionLinkedTo(entityOwnedBy(5L, OTHER_ID), entityOwnedBy(6L, USER_ID));
+
+        ManagedEntity result = service.assertMentionAccessible(mention);
+
+        assertThat(result.getId()).isEqualTo(6L);
+    }
+
+    @Test
+    void assertMentionAccessible_nonAdmin404sWhenOwningNoLinkedEntity() {
+        authenticateAs("alice");
+        Mention mention = mentionLinkedTo(entityOwnedBy(5L, OTHER_ID));
+
+        assertThatThrownBy(() -> service.assertMentionAccessible(mention))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void assertMentionAccessible_adminUnscopedReachesAnyLink() {
+        authenticateAs("root");
+        Mention mention = mentionLinkedTo(entityOwnedBy(5L, OTHER_ID));
+
+        ManagedEntity result = service.assertMentionAccessible(mention);
+
+        assertThat(result.getId()).isEqualTo(5L);
+    }
+
+    @Test
+    void assertMentionAccessible_adminScopedToOwnerReturnsThatOwnersLink() {
+        authenticateAs("root");
+        Mention mention = mentionLinkedTo(entityOwnedBy(5L, USER_ID), entityOwnedBy(6L, OTHER_ID));
+
+        ManagedEntity result = service.assertMentionAccessible(mention, OTHER_ID);
+
+        assertThat(result.getId()).isEqualTo(6L);
+    }
+
+    @Test
+    void assertMentionAccessible_nonAdminWithOwnerId_isForbidden() {
+        authenticateAs("alice");
+        Mention mention = mentionLinkedTo(entityOwnedBy(6L, USER_ID));
+
+        assertThatThrownBy(() -> service.assertMentionAccessible(mention, OTHER_ID))
+                .isInstanceOf(AccessDeniedException.class);
     }
 }

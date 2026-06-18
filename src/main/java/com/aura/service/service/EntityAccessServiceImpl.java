@@ -1,6 +1,7 @@
 package com.aura.service.service;
 
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.Mention;
 import com.aura.service.entity.User;
 import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.ManagedEntityRepository;
@@ -88,5 +89,29 @@ public class EntityAccessServiceImpl implements EntityAccessService {
     @Override
     public ManagedEntity assertOwnedByCurrentUser(Long entityId) {
         return assertAccessible(entityId, null);
+    }
+
+    @Override
+    public ManagedEntity assertMentionAccessible(Mention mention, Long requestedOwnerId) {
+        User user = currentUser();
+        boolean admin = ROLE_ADMIN.equals(user.getRole());
+        if (requestedOwnerId != null && !admin) {
+            // Reject (403) before inspecting the mention's links, mirroring assertAccessible.
+            throw new AccessDeniedException("Only administrators may scope by ownerId");
+        }
+
+        // The owner each candidate link must belong to: the requested one for an admin scoped to a
+        // user, the caller themselves for a non-admin, or null (any link) for an unscoped admin.
+        Long requiredOwnerId = admin ? requestedOwnerId : user.getId();
+        if (mention != null && mention.getManagedEntities() != null) {
+            for (ManagedEntity entity : mention.getManagedEntities()) {
+                if (requiredOwnerId == null
+                        || (entity.getOwner() != null && requiredOwnerId.equals(entity.getOwner().getId()))) {
+                    return entity;
+                }
+            }
+        }
+        // No link the caller may act through — same 404 whether absent or someone else's.
+        throw new ResourceNotFoundException("Mention not found");
     }
 }

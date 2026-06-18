@@ -150,12 +150,22 @@ public class SentimentAlertService {
     }
 
     void evaluateInfluencerNegative(Mention mention) {
-        ManagedEntity entity = mention.getManagedEntity();
-        if (entity == null) {
-            return;
-        }
         String author = mention.getAuthor();
         if (author == null || author.isBlank()) {
+            return;
+        }
+        if (mention.getManagedEntities() == null) {
+            return;
+        }
+        // A post can be attributed to several entities; evaluate the alert for each independently
+        // since each entity has its own keywords, rules and owners.
+        for (ManagedEntity entity : mention.getManagedEntities()) {
+            evaluateInfluencerNegativeForEntity(mention, entity, author);
+        }
+    }
+
+    private void evaluateInfluencerNegativeForEntity(Mention mention, ManagedEntity entity, String author) {
+        if (entity == null) {
             return;
         }
         List<EntityKeyword> keywords = entity.getKeywords();

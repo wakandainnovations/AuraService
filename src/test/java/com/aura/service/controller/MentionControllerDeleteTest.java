@@ -62,7 +62,7 @@ class MentionControllerDeleteTest {
         m.setPostId("x-12345");
         ManagedEntity entity = new ManagedEntity();
         entity.setId(99L);
-        m.setManagedEntity(entity);
+        m.addManagedEntity(entity);
         return m;
     }
 

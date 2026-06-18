@@ -40,10 +40,15 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
     // Legacy rows from before ownership existed; assigned to the seeded admin by the startup backfill.
     List<ManagedEntity> findByOwnerIsNull();
 
+    // language/industry/state are stored verbatim in whatever case the entity was
+    // created with (e.g. "Kannada", "Tollywood"), but callers filter in any case, so
+    // compare case-insensitively — same convention as the genre filter below. Only the
+    // column is wrapped in LOWER(); the caller pre-lower-cases the bind value, because
+    // Postgres can't infer the type of an arg inside lower(?) and errors on lower(bytea).
     @Query("SELECT ek FROM ManagedEntity e JOIN e.keywords ek WHERE " +
-           "(:language IS NULL OR ek.language = :language) AND " +
-           "(:industry IS NULL OR ek.industry = :industry) AND " +
-           "(:state IS NULL OR ek.state = :state) AND " +
+           "(:language IS NULL OR LOWER(ek.language) = :language) AND " +
+           "(:industry IS NULL OR LOWER(ek.industry) = :industry) AND " +
+           "(:state IS NULL OR LOWER(ek.state) = :state) AND " +
            // genre is stored as a comma-separated list. The caller passes a pre-built
            // ',value,'-style pattern (see EntityKeyword genre handling) so we match a
            // whole token within the list; the pattern is only ever the right-hand side

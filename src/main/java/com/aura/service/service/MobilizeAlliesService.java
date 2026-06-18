@@ -64,7 +64,7 @@ public class MobilizeAlliesService {
      */
     @Transactional(readOnly = true)
     public MobilizeAlliesResponse getOrComputeAllies(Mention mention) {
-        String key = cacheKey(mention.getManagedEntity(), mention);
+        String key = cacheKey(mention.getPrimaryManagedEntity(), mention);
         MobilizeAlliesResponse cached = allyCache.get(key);
         if (cached != null) {
             return cached;
@@ -88,7 +88,7 @@ public class MobilizeAlliesService {
             if (mention == null) {
                 return;
             }
-            String key = cacheKey(mention.getManagedEntity(), mention);
+            String key = cacheKey(mention.getPrimaryManagedEntity(), mention);
             if (allyCache.get(key) != null) {
                 return;
             }
@@ -99,7 +99,7 @@ public class MobilizeAlliesService {
     }
 
     private MobilizeAlliesResponse computeAllies(Mention mention) {
-        ManagedEntity entity = mention.getManagedEntity();
+        ManagedEntity entity = mention.getPrimaryManagedEntity();
 
         List<String> keywords = new ArrayList<>();
         if (entity.getKeywords() != null) {
@@ -235,7 +235,7 @@ public class MobilizeAlliesService {
     private MentionResponse toMentionResponse(Mention mention) {
         return new MentionResponse(
                 mention.getId(),
-                mention.getManagedEntity().getId(),
+                mention.getPrimaryManagedEntity().getId(),
                 mention.getPlatform(),
                 mention.getPostId(),
                 mention.getContent(),

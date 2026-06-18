@@ -80,7 +80,7 @@ public class MentionActionController {
             return ResponseEntity.notFound().build();
         }
         // Admins scoped to a user (ownerId) only reach that user's mentions; otherwise normal ownership.
-        entityAccessService.assertAccessible(mention.getManagedEntity().getId(), ownerId);
+        entityAccessService.assertMentionAccessible(mention, ownerId);
 
         // Viewing a mention's action panel is a strong signal the user may mobilize allies
         // next. Warm the (expensive) ally cache in the background so that click is a cache hit.
@@ -149,8 +149,7 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
-        ManagedEntity entity = mention.getManagedEntity();
-        entityAccessService.assertOwnedByCurrentUser(entity.getId());
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
         User user = requireUser(principal);
 
         String prompt;
@@ -201,7 +200,7 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
-        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
+        entityAccessService.assertMentionAccessible(mention);
 
         ReplyDraft draft = replyDraftRepository.findById(request.getDraftId()).orElse(null);
         if (draft == null || !draft.getMentionId().equals(mentionId)) {
@@ -236,8 +235,7 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
-        ManagedEntity entity = mention.getManagedEntity();
-        entityAccessService.assertOwnedByCurrentUser(entity.getId());
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
 
         String prompt = crisisPlanPromptTemplate
                 .replace("[Managed Entity]", entity.getName())
@@ -271,11 +269,11 @@ public class MentionActionController {
         if (mention == null) {
             return ResponseEntity.notFound().build();
         }
-        entityAccessService.assertOwnedByCurrentUser(mention.getManagedEntity().getId());
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
         User user = requireUser(principal);
 
         MobilizeAlliesResponse response = mobilizeAlliesService.getOrComputeAllies(mention);
-        recordMobilize(mention, mention.getManagedEntity(), user, response.getAllies().size());
+        recordMobilize(mention, entity, user, response.getAllies().size());
         return ResponseEntity.ok(response);
     }
 
@@ -302,7 +300,7 @@ public class MentionActionController {
     private MentionResponse toMentionResponse(Mention mention) {
         return new MentionResponse(
                 mention.getId(),
-                mention.getManagedEntity().getId(),
+                mention.getPrimaryManagedEntity().getId(),
                 mention.getPlatform(),
                 mention.getPostId(),
                 mention.getContent(),
