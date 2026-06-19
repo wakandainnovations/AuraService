@@ -66,6 +66,9 @@ public class EntityService {
         entity.setKeywords(keywords);
 
         entity = entityRepository.save(entity);
+        // Attribute any mentions already collected for these keywords, so a brand-new entity sees its
+        // keywords' history on the dashboards instead of an empty join table.
+        resyncMentionLinks(entity.getId());
 
         return mapToDetailResponse(entity);
     }
@@ -93,6 +96,8 @@ public class EntityService {
         entity.setKeywords(buildKeywordEntities(entity, request.getKeywords()));
 
         entity = entityRepository.save(entity);
+        // Keywords may have changed; re-derive this entity's mention links from the new keyword set.
+        resyncMentionLinks(entity.getId());
 
         return mapToDetailResponse(entity);
     }
@@ -151,6 +156,9 @@ public class EntityService {
         entity.setKeywords(keywords);
 
         entity = entityRepository.save(entity);
+        // Re-derive this entity's mention links so newly added keywords pick up their existing history
+        // and any removed keywords' posts are dropped.
+        resyncMentionLinks(entity.getId());
 
         return mapToDetailResponse(entity);
     }
@@ -226,6 +234,19 @@ public class EntityService {
 
     private Long ownerIdOf(ManagedEntity entity) {
         return entity.getOwner() == null ? null : entity.getOwner().getId();
+    }
+
+    /**
+     * Re-derives an entity's {@code mention_entities} links from its current keywords: links any
+     * already-collected mention whose content matches a keyword and drops links to mentions that no
+     * longer match. Mentions are attributed to an entity purely by keyword-content match (the same rule
+     * the dashboard queries use), so an entity created — or re-keyworded — after its keywords' mentions
+     * were collected still shows their history rather than an empty dashboard. Must run after the
+     * entity's keyword rows are persisted (the repository statements flush before reading them).
+     */
+    private void resyncMentionLinks(Long entityId) {
+        mentionRepository.unlinkStaleMentionsByKeyword(entityId);
+        mentionRepository.linkExistingMentionsByKeyword(entityId);
     }
 
     /**
