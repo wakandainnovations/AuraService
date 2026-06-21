@@ -43,6 +43,7 @@ public class MentionService {
         replyDraftRepository.deleteByMentionId(mentionId);
         mobilizeActionRepository.deleteByMentionId(mentionId);
         crisisPlanRepository.deleteByMentionId(mentionId);
+        mentionRepository.unlinkMentionFromEntities(mentionId);
 
         mentionRepository.delete(mention);
         return true;

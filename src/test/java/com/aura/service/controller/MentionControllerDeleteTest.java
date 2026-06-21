@@ -78,6 +78,7 @@ class MentionControllerDeleteTest {
         verify(replyDraftRepository).deleteByMentionId(1L);
         verify(mobilizeActionRepository).deleteByMentionId(1L);
         verify(crisisPlanRepository).deleteByMentionId(1L);
+        verify(mentionRepository).unlinkMentionFromEntities(1L);
         verify(mentionRepository).delete(m);
     }
 

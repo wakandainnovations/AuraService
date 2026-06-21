@@ -36,6 +36,11 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     @Query(value = "DELETE FROM mention_entities WHERE managed_entity_id = :entityId", nativeQuery = true)
     int unlinkEntityFromMentions(@Param("entityId") Long entityId);
 
+    /** Removes all join-table rows for a mention before the mention itself is deleted. */
+    @Modifying
+    @Query(value = "DELETE FROM mention_entities WHERE mention_id = :mentionId", nativeQuery = true)
+    void unlinkMentionFromEntities(@Param("mentionId") Long mentionId);
+
     /** Deletes mentions that are no longer attributed to any entity (orphaned after an unlink). */
     @Modifying
     @Query("DELETE FROM Mention m WHERE m.managedEntities IS EMPTY")
