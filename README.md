@@ -91,6 +91,7 @@ CREATE TABLE managed_entities (
     language VARCHAR(255),
     industry VARCHAR(255),
     genre VARCHAR(255),
+    synopsis TEXT,
     CONSTRAINT fk_managed_entities_owner FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
@@ -256,11 +257,12 @@ Authorization: Bearer {jwt_token}
   "keywords": ["keanureeves", "matrix", "sequel"],
   "language": "English",
   "industry": "Hollywood",
-  "genre": ["Science Fiction", "Action"]
+  "genre": ["Science Fiction", "Action"],
+  "synopsis": "A hacker uncovers a conspiracy that pulls him back into a simulated reality he thought he'd left behind."
 }
 ```
 
-> `language` and `genre` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`.
+> `language`, `genre`, and `synopsis` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`. `synopsis` is capped at 5000 characters and is the free-text plot summary consumed by narrative-metric scoring (see [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance)).
 >
 > Keywords carry only their text in the request; each stored `entity_keywords` row is stamped from the entity's own classification — `category` from the type (`media.movie` / `media.celebrity`), plus the entity's `language`, `industry`, and `genre`. A movie's multiple genres are stored on the single keyword row as a comma-separated `genre` value; readers of the column (marketing filters and genre aggregation) split it back into individual genres.
 
@@ -275,6 +277,7 @@ Authorization: Bearer {jwt_token}
   "keywords": ["keanureeves", "matrix", "sequel"],
   "industry": "Hollywood",
   "genre": ["Science Fiction", "Action"],
+  "synopsis": "A hacker uncovers a conspiracy that pulls him back into a simulated reality he thought he'd left behind.",
   "competitors": []
 }
 ```
@@ -311,11 +314,12 @@ Authorization: Bearer {jwt_token}
   "releaseDate": "2024-03-01",
   "language": "English",
   "industry": "Hollywood",
-  "genre": ["Science Fiction", "Adventure"]
+  "genre": ["Science Fiction", "Adventure"],
+  "synopsis": "Paul Atreides unites with the Fremen to seek revenge against the conspirators who destroyed his family."
 }
 ```
 
-> `name` is required. `releaseDate`, `language`, and `genre` are only applied when `entityType` is `movie`; `industry` is applied when `entityType` is `movie` or `celebrity`. `genre` accepts multiple comma-separated values as a JSON list. Keywords carry only their text — each stored `entity_keywords` row is stamped from the entity's `category` (from the type), `language`, `industry`, and one row per `genre` (see [Create Managed Entity](#3-create-managed-entity)). Competitors are managed via the separate competitors endpoint and are not affected by this call.
+> `name` is required. `releaseDate`, `language`, `genre`, and `synopsis` are only applied when `entityType` is `movie`; `industry` is applied when `entityType` is `movie` or `celebrity`. `genre` accepts multiple comma-separated values as a JSON list. This is a full replace — an omitted `synopsis` clears it. Note: like the box-office prediction endpoint, [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance) caches its result per movie ID for the life of the server process, so editing `synopsis` here does **not** invalidate an already-cached conflict-balance score. Keywords carry only their text — each stored `entity_keywords` row is stamped from the entity's `category` (from the type), `language`, `industry`, and one row per `genre` (see [Create Managed Entity](#3-create-managed-entity)). Competitors are managed via the separate competitors endpoint and are not affected by this call.
 
 **Response:** The updated entity, in the same shape as [Get Entity by ID](#6-get-entity-by-id).
 
@@ -3137,6 +3141,60 @@ GET /api/analytics/11
 - `404 Not Found` - The `movieId` does not exist, or the entity is owned by another user (indistinguishable by design). Enforced before any cached prediction is served.
 
 **Note:** Mock implementation returns random values between $50M-$150M
+
+---
+
+### 28. Get Protagonist-Antagonist Conflict Balance
+
+**Endpoint:** `GET /api/analytics/{movieId}/conflict-balance`
+
+**Description:** Get the "Protagonist-Antagonist Conflict Balance" narrative-structure score for a movie, derived from its `synopsis` (see [Create](#3-create-managed-entity) / [Update Managed Entity](#4-update-managed-entity)) via the LLM. The `movieId` must reference a movie entity owned by the caller.
+
+The LLM is asked only for qualitative judgment — four ordinal ratings (1-5) and a short rationale — never the final score. `balanceScore` is computed server-side, normalized to `[0.0, 1.0]`, where **higher is always more positive** (Direction: Positive, catalog Impact +25% to +35%): "a strong, competent antagonist raises narrative stakes, directly driving audience engagement and word-of-mouth." It is driven entirely by antagonist quality — `protagonistPower` is returned for context but deliberately excluded from the formula, since a symmetric protagonist-vs-antagonist gap would penalize a dominant antagonist, contradicting the "positive" direction:
+
+```
+balanceScore = (antagonistPower - 1) / 4 * 0.5
+             + (antagonistMotivationClarity - 1) / 4 * 0.25
+             + (stakesEscalation - 1) / 4 * 0.25
+```
+
+`1.0` means a maximally strong, clearly motivated antagonist with fully escalating stakes; `0.0` means the opposite (or no credible antagonist at all).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `movieId` - Movie entity ID (e.g., 1)
+
+**Example Request:**
+```
+GET /api/analytics/11/conflict-balance
+```
+
+**Response:**
+```json
+{
+  "movieId": 11,
+  "conflictBalance": {
+    "protagonistPower": 4,
+    "antagonistPower": 5,
+    "antagonistMotivationClarity": 4,
+    "stakesEscalation": 5,
+    "rationale": "The antagonist commands superior resources and a clear, escalating motive, keeping the protagonist consistently on the back foot.",
+    "balanceScore": 0.9375
+  }
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` - The `movieId` does not exist, or the entity is owned by another user (indistinguishable by design). Enforced before any cached score is served.
+- `400 Bad Request` - The movie has no `synopsis` set, or the LLM response could not be parsed into valid ratings.
+
+**Note:** Like [Get Box Office Prediction](#27-get-box-office-prediction), the result is cached per `movieId` for the life of the server process — editing the movie's `synopsis` afterward does not invalidate an already-cached score.
 
 ---
 

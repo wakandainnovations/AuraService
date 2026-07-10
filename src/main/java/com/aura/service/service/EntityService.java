@@ -54,6 +54,7 @@ public class EntityService {
             entity.setIndustry(request.getIndustry());
             entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
+            entity.setSynopsis(request.getSynopsis());
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
         }
@@ -88,6 +89,7 @@ public class EntityService {
             entity.setIndustry(request.getIndustry());
             entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
+            entity.setSynopsis(request.getSynopsis());
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
         }
@@ -367,6 +369,7 @@ public class EntityService {
             response.setLanguage(entity.getLanguage());
             response.setIndustry(entity.getIndustry());
             response.setGenre(splitGenres(entity.getGenre()));
+            response.setSynopsis(entity.getSynopsis());
         } else if ("CELEBRITY".equalsIgnoreCase(entity.getType())) {
             response.setIndustry(entity.getIndustry());
         }

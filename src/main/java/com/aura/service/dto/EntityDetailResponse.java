@@ -23,4 +23,5 @@ public class EntityDetailResponse {
     private String language;
     private String industry;
     private List<String> genre = new ArrayList<>();
+    private String synopsis;
 }

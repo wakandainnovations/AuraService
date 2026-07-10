@@ -66,4 +66,7 @@ public class ManagedEntity {
 
     @Column(name = "genre")
     private String genre;
+
+    @Column(name = "synopsis", columnDefinition = "TEXT")
+    private String synopsis;
 }
