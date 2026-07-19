@@ -47,8 +47,9 @@ class EntityServiceLimitTest {
         MentionRepository mentionRepository = mock(MentionRepository.class);
         entityAccess = mock(EntityAccessService.class);
         licenseService = mock(LicenseService.class);
+        IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
-                entityAccess, licenseService);
+                entityAccess, licenseService, macroEconomicDataService);
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(entityAccess.currentUser()).thenReturn(user(USER_ID));

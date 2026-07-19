@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.EntityBasicInfo;
 import com.aura.service.dto.EntityDetailResponse;
+import com.aura.service.dto.IndianMacroSnapshot;
 import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateCompetitorsRequest;
 import com.aura.service.dto.UpdateEntityRequest;
@@ -21,8 +22,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,6 +38,7 @@ public class EntityService {
     private final MentionRepository mentionRepository;
     private final EntityAccessService entityAccessService;
     private final LicenseService licenseService;
+    private final IndianMacroEconomicDataService macroEconomicDataService;
 
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
@@ -55,6 +60,10 @@ public class EntityService {
             entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
             entity.setSynopsis(request.getSynopsis());
+            entity.setBudget(request.getBudget());
+            entity.setProductionCompany(request.getProductionCompany());
+            entity.setRuntime(request.getRuntime());
+            applyReleaseDateDerivedFields(entity, request.getReleaseDate());
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
         }
@@ -90,6 +99,10 @@ public class EntityService {
             entity.setLanguage(resolveLanguage(request.getIndustry(), request.getLanguage()));
             entity.setGenre(joinGenres(request.getGenre()));
             entity.setSynopsis(request.getSynopsis());
+            entity.setBudget(request.getBudget());
+            entity.setProductionCompany(request.getProductionCompany());
+            entity.setRuntime(request.getRuntime());
+            applyReleaseDateDerivedFields(entity, request.getReleaseDate());
         } else if ("CELEBRITY".equalsIgnoreCase(entityType)) {
             entity.setIndustry(request.getIndustry());
         }
@@ -317,6 +330,27 @@ public class EntityService {
         return derived != null ? derived : requestedLanguage;
     }
 
+    /**
+     * Derives {@code releaseDay} (day of week) and India's {@code gdpUsdBillions}/
+     * {@code inflationRatePct} for the release year, purely from {@code releaseDate} — none of
+     * these are client-supplied, so they can never drift out of sync with the date they describe.
+     * A null {@code releaseDate} clears all three, since there is nothing to derive them from.
+     */
+    private void applyReleaseDateDerivedFields(ManagedEntity entity, LocalDate releaseDate) {
+        if (releaseDate == null) {
+            entity.setReleaseDay(null);
+            entity.setGdpUsdBillions(null);
+            entity.setInflationRatePct(null);
+            return;
+        }
+
+        entity.setReleaseDay(releaseDate.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+
+        IndianMacroSnapshot macroSnapshot = macroEconomicDataService.lookup(releaseDate);
+        entity.setGdpUsdBillions(macroSnapshot == null ? null : macroSnapshot.gdpUsdBillions());
+        entity.setInflationRatePct(macroSnapshot == null ? null : macroSnapshot.inflationRatePct());
+    }
+
     private String joinGenres(List<String> genres) {
         if (genres == null || genres.isEmpty()) {
             return null;
@@ -370,6 +404,12 @@ public class EntityService {
             response.setIndustry(entity.getIndustry());
             response.setGenre(splitGenres(entity.getGenre()));
             response.setSynopsis(entity.getSynopsis());
+            response.setBudget(entity.getBudget());
+            response.setProductionCompany(entity.getProductionCompany());
+            response.setRuntime(entity.getRuntime());
+            response.setReleaseDay(entity.getReleaseDay());
+            response.setGdpUsdBillions(entity.getGdpUsdBillions());
+            response.setInflationRatePct(entity.getInflationRatePct());
         } else if ("CELEBRITY".equalsIgnoreCase(entity.getType())) {
             response.setIndustry(entity.getIndustry());
         }

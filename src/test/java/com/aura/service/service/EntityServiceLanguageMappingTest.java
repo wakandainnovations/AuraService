@@ -39,8 +39,9 @@ class EntityServiceLanguageMappingTest {
         MentionRepository mentionRepository = mock(MentionRepository.class);
         entityAccess = mock(EntityAccessService.class);
         LicenseService licenseService = mock(LicenseService.class);
+        IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
-                entityAccess, licenseService);
+                entityAccess, licenseService, macroEconomicDataService);
         // save() returns the entity it was given so the response reflects the resolved language.
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

@@ -8,6 +8,7 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.EntityService;
+import com.aura.service.service.IndianMacroEconomicDataService;
 import com.aura.service.service.LicenseService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,9 +40,11 @@ class EntityControllerDeleteTest {
         mentionRepository = mock(MentionRepository.class);
         entityAccess = mock(EntityAccessService.class);
         LicenseService licenseService = mock(LicenseService.class);
+        IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
 
         EntityService service = new EntityService(
-                entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService);
+                entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService,
+                macroEconomicDataService);
         EntityController controller = new EntityController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)

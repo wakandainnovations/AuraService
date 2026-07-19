@@ -9,6 +9,7 @@ import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.EntityAccessServiceImpl;
 import com.aura.service.service.EntityService;
+import com.aura.service.service.IndianMacroEconomicDataService;
 import com.aura.service.service.LicenseService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -62,8 +63,10 @@ class EntityOwnershipTest {
         EntityAccessServiceImpl entityAccess =
                 new EntityAccessServiceImpl(entityRepository, userRepository);
         LicenseService licenseService = mock(LicenseService.class);
+        IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         EntityService service = new EntityService(
-                entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService);
+                entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService,
+                macroEconomicDataService);
         EntityController controller = new EntityController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)

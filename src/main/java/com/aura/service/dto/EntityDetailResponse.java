@@ -24,4 +24,10 @@ public class EntityDetailResponse {
     private String industry;
     private List<String> genre = new ArrayList<>();
     private String synopsis;
+    private Double budget;
+    private String productionCompany;
+    private Integer runtime;
+    private String releaseDay;
+    private Double gdpUsdBillions;
+    private Double inflationRatePct;
 }

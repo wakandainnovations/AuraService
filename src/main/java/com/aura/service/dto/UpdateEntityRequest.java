@@ -34,4 +34,10 @@ public class UpdateEntityRequest {
 
     @Size(max = 5000, message = "Synopsis must be at most 5000 characters")
     private String synopsis;
+
+    private Double budget;
+
+    private String productionCompany;
+
+    private Integer runtime;
 }

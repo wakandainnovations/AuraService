@@ -69,4 +69,26 @@ public class ManagedEntity {
 
     @Column(name = "synopsis", columnDefinition = "TEXT")
     private String synopsis;
+
+    @Column(name = "budget")
+    private Double budget;
+
+    @Column(name = "production_company")
+    private String productionCompany;
+
+    @Column(name = "runtime")
+    private Integer runtime;
+
+    // Day of week the movie releases on (e.g. "Friday"), derived from releaseDate — not
+    // client-supplied, so it can't drift out of sync with the date it's derived from.
+    @Column(name = "release_day")
+    private String releaseDay;
+
+    // India's macro backdrop for the release year, looked up from movies_data_collection at
+    // create/update time (see IndianMacroEconomicDataService) rather than entered by the client.
+    @Column(name = "gdp_usd_billions")
+    private Double gdpUsdBillions;
+
+    @Column(name = "inflation_rate_pct")
+    private Double inflationRatePct;
 }
