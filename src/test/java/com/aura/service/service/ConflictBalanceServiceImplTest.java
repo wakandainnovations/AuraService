@@ -12,15 +12,18 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Covers {@link ConflictBalanceServiceImpl}: the balance-score formula and the failure paths that
- * must throw rather than silently degrade (unlike {@link MockAnalyticsService}, since this metric
- * feeds a downstream predictive model). Collaborators are mocked as interfaces
- * ({@link LLMService}, {@link ManagedEntityRepository}) — never concrete classes.
+ * Covers {@link ConflictBalanceServiceImpl}: the balance-score formula must stay within the catalog's
+ * fixed [0.25, 0.35] band (Direction: Positive, Impact: +25% to +35%, read as bounds on the score
+ * itself), the request-level failures that must still throw (no movie, no synopsis, unparseable JSON),
+ * and the per-rating tolerance that defaults a missing/invalid/out-of-range field to 1 rather than
+ * discarding an otherwise-usable response. Collaborators are mocked as interfaces ({@link LLMService},
+ * {@link ManagedEntityRepository}) — never concrete classes.
  */
 class ConflictBalanceServiceImplTest {
 
@@ -40,7 +43,7 @@ class ConflictBalanceServiceImplTest {
     }
 
     @Test
-    void computesNormalizedBalanceScoreFromAntagonistRatingsOnly() {
+    void computesBalanceScoreWithinFixedBand() {
         when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A hero faces a rival.")));
         when(llmService.generateReply(any())).thenReturn("""
                 {"protagonistPower": 3, "antagonistPower": 5, "antagonistMotivationClarity": 4, \
@@ -51,12 +54,12 @@ class ConflictBalanceServiceImplTest {
         assertThat(score.getProtagonistPower()).isEqualTo(3);
         assertThat(score.getAntagonistPower()).isEqualTo(5);
         assertThat(score.getRationale()).isEqualTo("Clear escalating threat.");
-        // (5-1)/4*0.5 + (4-1)/4*0.25 + (5-1)/4*0.25 = 0.5 + 0.1875 + 0.25 = 0.9375
-        assertThat(score.getBalanceScore()).isEqualTo(0.9375);
+        // normalized = (5-1)/4*0.5 + (4-1)/4*0.25 + (5-1)/4*0.25 = 0.9375 -> 0.25 + 0.9375*0.10 = 0.34375
+        assertThat(score.getBalanceScore()).isCloseTo(0.34375, within(1e-9));
     }
 
     @Test
-    void minimumRatingsYieldZeroScore() {
+    void minimumRatingsYieldScoreFloor() {
         when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A flat, low-stakes plot.")));
         when(llmService.generateReply(any())).thenReturn("""
                 {"protagonistPower": 3, "antagonistPower": 1, "antagonistMotivationClarity": 1, \
@@ -64,11 +67,11 @@ class ConflictBalanceServiceImplTest {
 
         ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
 
-        assertThat(score.getBalanceScore()).isEqualTo(0.0);
+        assertThat(score.getBalanceScore()).isCloseTo(0.25, within(1e-9));
     }
 
     @Test
-    void maximumAntagonistRatingsYieldScoreOfOneRegardlessOfProtagonistPower() {
+    void maximumAntagonistRatingsYieldScoreCeilingRegardlessOfProtagonistPower() {
         when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A weak hero, an unstoppable foe.")));
         when(llmService.generateReply(any())).thenReturn("""
                 {"protagonistPower": 1, "antagonistPower": 5, "antagonistMotivationClarity": 5, \
@@ -76,7 +79,23 @@ class ConflictBalanceServiceImplTest {
 
         ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
 
-        assertThat(score.getBalanceScore()).isEqualTo(1.0);
+        assertThat(score.getBalanceScore()).isCloseTo(0.35, within(1e-9));
+    }
+
+    @Test
+    void scoreNeverFallsOutsideFixedBandAcrossAllRatingCombinations() {
+        when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("Some plot.")));
+        for (int antagonist = 1; antagonist <= 5; antagonist++) {
+            for (int motivation = 1; motivation <= 5; motivation++) {
+                for (int stakes = 1; stakes <= 5; stakes++) {
+                    when(llmService.generateReply(any())).thenReturn(String.format("""
+                            {"protagonistPower": 3, "antagonistPower": %d, "antagonistMotivationClarity": %d, \
+                            "stakesEscalation": %d, "rationale": "r"}""", antagonist, motivation, stakes));
+                    double balanceScore = service.getConflictBalance(MOVIE_ID).getBalanceScore();
+                    assertThat(balanceScore).isBetween(0.25, 0.35);
+                }
+            }
+        }
     }
 
     @Test
@@ -98,6 +117,36 @@ class ConflictBalanceServiceImplTest {
         double weakAntagonistScore = service.getConflictBalance(MOVIE_ID).getBalanceScore();
 
         assertThat(strongAntagonistScore).isGreaterThan(weakAntagonistScore);
+    }
+
+    @Test
+    void quotedIntegerRatingsAreAcceptedLikePlainIntegers() {
+        // Regression test: despite the prompt's explicit "PLAIN INTEGERS" instruction, the LLM
+        // frequently quotes ratings as strings (e.g. "4" instead of 4). The parser must tolerate this.
+        when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A hero faces a rival.")));
+        when(llmService.generateReply(any())).thenReturn("""
+                {"protagonistPower": "3", "antagonistPower": "5", "antagonistMotivationClarity": "4", \
+                "stakesEscalation": "5", "rationale": "Clear escalating threat."}""");
+
+        ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
+
+        assertThat(score.getAntagonistPower()).isEqualTo(5);
+        assertThat(score.getBalanceScore()).isCloseTo(0.34375, within(1e-9));
+    }
+
+    @Test
+    void nonNumericStringRatingDefaultsToOneRatherThanThrowing() {
+        // Regression test: the model sometimes writes "NA" (or similar) instead of following its own
+        // instruction to rate 1 when there's no clear antagonist. Default to 1 rather than discarding
+        // an otherwise-usable response.
+        when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A plot.")));
+        when(llmService.generateReply(any())).thenReturn("""
+                {"protagonistPower": 4, "antagonistPower": "NA", "antagonistMotivationClarity": 4, \
+                "stakesEscalation": 5, "rationale": "Non-numeric rating."}""");
+
+        ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
+
+        assertThat(score.getAntagonistPower()).isEqualTo(1);
     }
 
     @Test
@@ -126,14 +175,27 @@ class ConflictBalanceServiceImplTest {
     }
 
     @Test
-    void outOfRangeRatingThrows() {
+    void outOfRangeRatingDefaultsToOneRatherThanThrowing() {
         when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A plot.")));
         when(llmService.generateReply(any())).thenReturn("""
                 {"protagonistPower": 7, "antagonistPower": 5, "antagonistMotivationClarity": 4, \
                 "stakesEscalation": 5, "rationale": "Out of range."}""");
 
-        assertThatThrownBy(() -> service.getConflictBalance(MOVIE_ID))
-                .isInstanceOf(RuntimeException.class);
+        ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
+
+        assertThat(score.getProtagonistPower()).isEqualTo(1);
+    }
+
+    @Test
+    void missingRatingFieldDefaultsToOneRatherThanThrowing() {
+        when(entityRepository.findById(MOVIE_ID)).thenReturn(Optional.of(movieWithSynopsis("A plot.")));
+        when(llmService.generateReply(any())).thenReturn("""
+                {"antagonistPower": 5, "antagonistMotivationClarity": 4, \
+                "stakesEscalation": 5, "rationale": "Missing protagonistPower entirely."}""");
+
+        ConflictBalanceScore score = service.getConflictBalance(MOVIE_ID);
+
+        assertThat(score.getProtagonistPower()).isEqualTo(1);
     }
 
     private static ManagedEntity movieWithSynopsis(String synopsis) {

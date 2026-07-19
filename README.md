@@ -262,7 +262,7 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-> `language`, `genre`, and `synopsis` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`. `synopsis` is capped at 5000 characters and is the free-text plot summary consumed by narrative-metric scoring (see [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance)).
+> `language`, `genre`, and `synopsis` are optional and only applied when `entityType` is `movie`. `industry` is optional and applied when `entityType` is `movie` or `celebrity`. `synopsis` is capped at 5000 characters and is the free-text plot summary consumed by narrative-metric scoring (see [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance) and [Get Narrative Novelty](#29-get-high-concept-narrative-novelty)).
 >
 > Keywords carry only their text in the request; each stored `entity_keywords` row is stamped from the entity's own classification — `category` from the type (`media.movie` / `media.celebrity`), plus the entity's `language`, `industry`, and `genre`. A movie's multiple genres are stored on the single keyword row as a comma-separated `genre` value; readers of the column (marketing filters and genre aggregation) split it back into individual genres.
 
@@ -319,7 +319,7 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-> `name` is required. `releaseDate`, `language`, `genre`, and `synopsis` are only applied when `entityType` is `movie`; `industry` is applied when `entityType` is `movie` or `celebrity`. `genre` accepts multiple comma-separated values as a JSON list. This is a full replace — an omitted `synopsis` clears it. Note: like the box-office prediction endpoint, [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance) caches its result per movie ID for the life of the server process, so editing `synopsis` here does **not** invalidate an already-cached conflict-balance score. Keywords carry only their text — each stored `entity_keywords` row is stamped from the entity's `category` (from the type), `language`, `industry`, and one row per `genre` (see [Create Managed Entity](#3-create-managed-entity)). Competitors are managed via the separate competitors endpoint and are not affected by this call.
+> `name` is required. `releaseDate`, `language`, `genre`, and `synopsis` are only applied when `entityType` is `movie`; `industry` is applied when `entityType` is `movie` or `celebrity`. `genre` accepts multiple comma-separated values as a JSON list. This is a full replace — an omitted `synopsis` clears it. Note: like the box-office prediction endpoint, [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance) and [Get Narrative Novelty](#29-get-high-concept-narrative-novelty) each cache their result per movie ID for the life of the server process, so editing `synopsis` here does **not** invalidate an already-cached score. Keywords carry only their text — each stored `entity_keywords` row is stamped from the entity's `category` (from the type), `language`, `industry`, and one row per `genre` (see [Create Managed Entity](#3-create-managed-entity)). Competitors are managed via the separate competitors endpoint and are not affected by this call.
 
 **Response:** The updated entity, in the same shape as [Get Entity by ID](#6-get-entity-by-id).
 
@@ -3150,15 +3150,17 @@ GET /api/analytics/11
 
 **Description:** Get the "Protagonist-Antagonist Conflict Balance" narrative-structure score for a movie, derived from its `synopsis` (see [Create](#3-create-managed-entity) / [Update Managed Entity](#4-update-managed-entity)) via the LLM. The `movieId` must reference a movie entity owned by the caller.
 
-The LLM is asked only for qualitative judgment — four ordinal ratings (1-5) and a short rationale — never the final score. `balanceScore` is computed server-side, normalized to `[0.0, 1.0]`, where **higher is always more positive** (Direction: Positive, catalog Impact +25% to +35%): "a strong, competent antagonist raises narrative stakes, directly driving audience engagement and word-of-mouth." It is driven entirely by antagonist quality — `protagonistPower` is returned for context but deliberately excluded from the formula, since a symmetric protagonist-vs-antagonist gap would penalize a dominant antagonist, contradicting the "positive" direction:
+The LLM is asked only for qualitative judgment — four ordinal ratings (1-5) and a short rationale — never the final score. Per the catalog decision (Direction: Positive, Impact +25% to +35%, read as fixed bounds on the score itself — same convention as [Get Narrative Novelty](#29-get-high-concept-narrative-novelty)), `balanceScore` is an affine remap of the normalized ratings into `[0.25, 0.35]` — the floor is never breached even for the weakest antagonist, and the ceiling is never exceeded even for the strongest one. It is driven entirely by antagonist quality — `protagonistPower` is returned for context but deliberately excluded from the formula, since a symmetric protagonist-vs-antagonist gap would penalize a dominant antagonist, contradicting the "positive" direction:
 
 ```
-balanceScore = (antagonistPower - 1) / 4 * 0.5
-             + (antagonistMotivationClarity - 1) / 4 * 0.25
-             + (stakesEscalation - 1) / 4 * 0.25
+normalizedBalance = (antagonistPower - 1) / 4 * 0.5
+                   + (antagonistMotivationClarity - 1) / 4 * 0.25
+                   + (stakesEscalation - 1) / 4 * 0.25
+
+balanceScore = 0.25 + normalizedBalance * 0.10
 ```
 
-`1.0` means a maximally strong, clearly motivated antagonist with fully escalating stakes; `0.0` means the opposite (or no credible antagonist at all).
+`0.35` means a maximally strong, clearly motivated antagonist with fully escalating stakes; `0.25` means the opposite (or no credible antagonist at all). A rating the LLM omits, mis-formats, or puts out of range (e.g. `"NA"`, `0`) defaults to `1` (the floor) rather than failing the whole request — see [Narrative Novelty](#29-get-high-concept-narrative-novelty) for the identical tolerance policy.
 
 **Headers:**
 ```
@@ -3183,7 +3185,7 @@ GET /api/analytics/11/conflict-balance
     "antagonistMotivationClarity": 4,
     "stakesEscalation": 5,
     "rationale": "The antagonist commands superior resources and a clear, escalating motive, keeping the protagonist consistently on the back foot.",
-    "balanceScore": 0.9375
+    "balanceScore": 0.34375
   }
 }
 ```
@@ -3195,6 +3197,63 @@ GET /api/analytics/11/conflict-balance
 - `400 Bad Request` - The movie has no `synopsis` set, or the LLM response could not be parsed into valid ratings.
 
 **Note:** Like [Get Box Office Prediction](#27-get-box-office-prediction), the result is cached per `movieId` for the life of the server process — editing the movie's `synopsis` afterward does not invalidate an already-cached score.
+
+---
+
+### 29. Get High-Concept Narrative Novelty
+
+**Endpoint:** `GET /api/analytics/{movieId}/narrative-novelty`
+
+**Description:** Get the "High-Concept Narrative Novelty" score for a movie, derived from its `synopsis` (see [Create](#3-create-managed-entity) / [Update Managed Entity](#4-update-managed-entity)) via the LLM. The `movieId` must reference a movie entity owned by the caller.
+
+The LLM is asked only for qualitative judgment — four ordinal ratings (1-5) and a short rationale — never the final score. Per the catalog decision (Direction: Positive, Impact +30% to +45%, read as fixed bounds on the score itself rather than just its weight), `noveltyScore` is an affine remap of the normalized ratings into `[0.30, 0.45]` — the floor is never breached even for the most generic premise, and the ceiling is never exceeded even for the most novel one:
+
+```
+normalizedNovelty = (worldBuildingDistinctiveness - 1) / 4 * 0.40
+                   + (premiseClarity - 1) / 4 * 0.25
+                   + (hookMemorability - 1) / 4 * 0.20
+                   + (1 - (conceptualCollisionRisk - 1) / 4) * 0.15
+
+noveltyScore = 0.30 + normalizedNovelty * 0.15
+```
+
+`conceptualCollisionRisk` is inverted before weighting — a premise that closely resembles a specific existing film scores lower novelty. `0.45` means a highly distinctive, clearly-pitchable, memorable premise with no resemblance to an existing film; `0.30` means the opposite (a generic, derivative premise).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `movieId` - Movie entity ID (e.g., 1)
+
+**Example Request:**
+```
+GET /api/analytics/11/narrative-novelty
+```
+
+**Response:**
+```json
+{
+  "movieId": 11,
+  "narrativeNovelty": {
+    "premiseClarity": 4,
+    "worldBuildingDistinctiveness": 5,
+    "hookMemorability": 4,
+    "conceptualCollisionRisk": 2,
+    "rationale": "The premise compresses into a single vivid pitch and builds a distinctive world with only a loose resemblance to prior films.",
+    "noveltyScore": 0.4275
+  }
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` - The `movieId` does not exist, or the entity is owned by another user (indistinguishable by design). Enforced before any cached score is served.
+- `400 Bad Request` - The movie has no `synopsis` set, or the LLM response could not be parsed into valid ratings.
+
+**Note:** Like [Get Conflict Balance](#28-get-protagonist-antagonist-conflict-balance), the result is cached per `movieId` for the life of the server process — editing the movie's `synopsis` afterward does not invalidate an already-cached score.
 
 ---
 
