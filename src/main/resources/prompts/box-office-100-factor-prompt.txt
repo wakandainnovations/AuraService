@@ -1,0 +1,222 @@
+Given below are 100 factors that affect how well a movie will perform in the box office, based on the data provided check how well has the following movie has performed at the box office and what factors impacted it and by how much?
+
+Data available:
+Movie Name: <Movie_Name>
+Release date: <Movie_Release_Date>
+Genre: <Movie_Genre>
+Language: <Movie_Language>
+Release Day: <Movie_Release_Day>
+Indian GDP on release date in USD: <India_GDP_On_Release_Date>
+India inflation rate: <India_Inflation_Rate_On_Release_Date>
+Movie Budget in USD: <Movie_Budget>
+Production Company: <Movie_Production_Company>
+Movie runtime: <Movie_Runtime>
+Market: <Movie_Market_Or_Industry>
+Director: <Movie_Director>
+Cast: <Movie_Cast>
+Synopsis: <Movie_Synopsis>
+First Song Release: <Movie_First_Song_Release_Date>
+First Song Views: <Movie_First_Song_Views>
+Teaser Release: <Movie_Teaser_Release_Date>
+Teaser Views: <Movie_Teaser_Views>
+Trailer Release: <Movie_Trailer_Release_Date>
+Trailer Views: <Movie_Trailer_Views>
+
+
+Factors:
+Category 1: Narrative Architecture and Screenplay Engineering (Factors 1–15)
+    • 1. Protagonist-Antagonist Conflict Balance [Direction: Positive] (Impact: +25% to +35%) - A strong, competent antagonist raises narrative stakes, directly driving audience engagement and word-of-mouth.
+    • 2. High-Concept Narrative Novelty [Direction: Positive] (Impact: +30% to +45%) - Unique world-building captures audience attention in a crowded market.
+    • 4. Genre Template Adherence vs. Subversion [Direction: Bidirectional] (Impact: +/- 20%) - Balancing familiar genre conventions with fresh subversions satisfies expectations while preventing formulaic fatigue.
+    • 11. Romantic Track Integration [Direction: Bidirectional] (Impact: +/- 15%) - Well-integrated romantic subplots enhance appeal, but forced or unconvincing romances can stall narrative momentum.
+    • 15. Twist Effectiveness and Unpredictability [Direction: Positive] (Impact: +20% to +30%) - A well-executed, unpredictable twist in the final act significantly boosts post-release discussions and word-of-mouth.
+Category 2: Cast Capital, Persona Alignment, and Off-Screen Controversies (Factors 16–30)
+    • 16. Star-to-Character Persona Fit [Direction: Bidirectional] (Impact: +/- 40%) - Perfect alignment between an actor's iconic persona and their role maximizes draw, while major deviations can alienate core fans.
+    • 17. Core Fanbase Mobilization Value [Direction: Positive] (Impact: +30% to +50%) - A highly dedicated fanbase guarantees a strong opening weekend, insulating the film from initial negative reviews.
+    • 18. Lead Actor Screen Chemistry [Direction: Positive] (Impact: +20% to +35%) - Strong on-screen chemistry between the leads enhances the emotional core, directly driving appeal among family audiences.
+    • 19. Support Cast Performance Credibility [Direction: Positive] (Impact: +15% to +25%) - Strong performances from character actors anchor the story, making up for occasional weaknesses in the main script.
+    • 20. Directorial Brand Equity [Direction: Positive] (Impact: +25% to +40%) - A director with a distinct and trusted style attracts neutral, content-driven viewers irrespective of the lead cast.
+    • 21. Anti-Hero Appeal and Moral Ambiguity [Direction: Positive] (Impact: +20% to +30%) - Complex, morally ambiguous protagonists resonate with modern audiences, driving higher youth engagement.
+    • 22. Off-Screen Actor Controversy [Direction: Bidirectional] (Impact: +/- 35%) - High-profile personal controversies can severely damage an actor's brand and lead to boycotts, though they occasionally generate pre-release curiosity.
+    • 23. Star Satiation and Screen Overexposure [Direction: Negative] (Impact: -15% to -25%) - Audiences lose interest when an actor releases too many similar films in a short period, leading to diminishing box office returns.
+    • 24. Off-Script Event Speech Impact [Direction: Bidirectional] (Impact: +/- 15%) - Passionate or controversial speeches during promotional events can overshadow the campaign, creating division among fans.
+    • 25. Lead Actor Vulnerability and Range [Direction: Positive] (Impact: +15% to +25%) - Showing vulnerability on screen humanizes larger-than-life stars, strengthening the audience's emotional connection.
+    • 26. Multi-Generational Appeal of the Star [Direction: Positive] (Impact: +25% to +35%) - Stars who appeal to children, youth, and elderly demographics alike provide a major boost to overall family occupancy.
+    • 27. Miscasting and Role Incongruence [Direction: Negative] (Impact: -20% to -35%) - Casting an actor in a role that clashes with their physical or acting capabilities ruins narrative immersion.
+    • 28. Nostalgic Screen Reunions [Direction: Positive] (Impact: +20% to +30%) - Reuniting iconic on-screen pairings after a long hiatus generates strong nostalgic appeal and media buzz.
+    • 29. Star Political Aspirations / Dialogue Placement [Direction: Bidirectional] (Impact: +/- 20%) - Placing politically charged dialogues in a film can excite core supporters but alienate neutral viewers.
+    • 30. Cameo Appearances of Iconic Stars [Direction: Positive] (Impact: +15% to +25%) - Well-marketed cameos by major stars create exciting "theatre moments" and can significantly boost opening-day footfalls.
+Category 3: Production Scale, Visual Assets, and Technical Logistics (Factors 31–45)
+    • 31. Technical Quality of Visual Effects (VFX) [Direction: Bidirectional] (Impact: +/- 30%) - High-quality VFX creates an immersive experience; conversely, poor CGI breaks immersion and can lead to online mockery.
+    • 32. Immersive Sound Design and Mixing [Direction: Positive] (Impact: +10% to +20%) - Exceptional sound design enhances theatrical immersion, drawing viewers to premium formats like IMAX and Dolby.
+    • 33. Action Sequence Choreography Innovation [Direction: Positive] (Impact: +20% to +35%) - Creative, well-executed action choreography is a major selling point for mass action films, generating strong repeat business.
+    • 34. Background Score (BGM) Impact [Direction: Positive] (Impact: +25% to +40%) - A powerful background score elevates key scenes, transforming ordinary moments into highly memorable theatrical experiences.
+    • 35. Production Design and Architectural Scale [Direction: Positive] (Impact: +20% to +30%) - Visually striking sets and grand scale justify the premium cost of a theatre ticket over streaming at home.
+    • 36. Realistic Color Grading and Cinematography [Direction: Positive] (Impact: +10% to +20%) - High-quality cinematography and polished color grading enhance the film's visual appeal and overall aesthetic.
+    • 37. Excessive Runtime and Editing Lag [Direction: Negative] (Impact: -15% to -30%) - Runtimes exceeding 160 minutes without tight editing can lead to pacing issues, reducing daily show counts and viewer satisfaction.
+    • 38. Dynamic Editing and Transition Pacing [Direction: Positive] (Impact: +10% to +15%) - Sharp, creative editing maintains visual interest and keeps the narrative moving at an engaging pace.
+    • 39. Authenticity of Period / Cultural Setting [Direction: Positive] (Impact: +15% to +25%) - Meticulous attention to historical and cultural details earns critical acclaim and builds trust with discerning audiences.
+    • 40. Budget-to-Scale Efficiency [Direction: Bidirectional] (Impact: +/- 20%) - Maximizing visual scale on a modest budget lowers the financial break-even point, increasing profitability.
+    • 41. Use of Animation for Complex Flashbacks [Direction: Positive] (Impact: +10% to +15%) - Utilizing animation for highly violent or complex sequences is a creative and cost-effective way to convey key backstory.
+    • 42. Excessive and Intrusive Song Placements [Direction: Negative] (Impact: -15% to -25%) - Placing songs abruptly in the middle of tense or narrative-heavy sequences halts the film's momentum.
+    • 43. Location Novelty and Aesthetic Variety [Direction: Positive] (Impact: +10% to +15%) - Filming in fresh, visually interesting locations adds production value and enhances the cinematic experience.
+    • 44. Live Action over Heavy Green-Screen [Direction: Positive] (Impact: +15% to +25%) - Prioritizing physical sets and practical effects over excessive green-screen creates a more authentic and engaging film.
+    • 45. Overuse of Graphic / Gratuitous Violence [Direction: Bidirectional] (Impact: +/- 15%) - While stylized action can appeal to youth, excessive or graphic violence can alienate family audiences and limit certification options.
+Category 4: Pre-Release Marketing and Promotional Levers (Factors 46–60)
+    • 46. Teaser and Trailer Impact [Direction: Positive] (Impact: +35% to +50%) - A highly engaging, well-timed trailer is the single most effective tool for driving massive opening-day ticket sales.
+    • 47. Timing of First Single Release [Direction: Positive] (Impact: +15% to +25%) - Releasing a hit single 6 to 8 weeks before launch builds sustained musical hype and organic promotion.
+    • 48. Use of Brand Extensions / Sequel Names [Direction: Bidirectional] (Impact: +/- 30%) - Capitalizing on an established movie title generates strong initial curiosity, though it risks backlash if the content is weak.
+    • 49. Viral Music and Social Media Audio Trends [Direction: Positive] (Impact: +20% to +35%) - A track that goes viral on platforms like Instagram Reels and YouTube Shorts drives massive organic reach among younger audiences.
+    • 50. Pre-Release Promotional Controversies [Direction: Bidirectional] (Impact: +/- 15%) - While heated debates can keep a film in the news, severe controversies risk boycotts and administrative bans.
+    • 51. Star Attendance at On-Ground Events [Direction: Positive] (Impact: +10% to +20%) - Major public promotional events build strong personal connections with fans and generate extensive local media coverage.
+    • 52. Micro-Video Social Media Campaigns [Direction: Positive] (Impact: +15% to +25%) - Creative, targeted digital campaigns are highly cost-effective tools for maintaining high visibility leading up to release.
+    • 53. Influencer-Driven Promotions [Direction: Positive] (Impact: +10% to +15%) - Collaborating with popular digital creators helps promotional campaigns connect authentically with younger demographics.
+    • 54. Misleading Trailer Marketing [Direction: Negative] (Impact: -25% to -40%) - Trailers that promise a completely different movie style lead to immediate disappointment and poor post-release word-of-mouth.
+    • 55. High-Definition Promo / BTS Content [Direction: Positive] (Impact: +10% to +15%) - Sharing high-quality behind-the-scenes content builds intrigue and keeps fans engaged with the production journey.
+    • 56. Strategic Use of Countdown Posters [Direction: Positive] (Impact: +5% to +10%) - Dynamic countdown campaigns during the final week of release maintain high visibility and drive last-minute bookings.
+    • 57. Excessive / Over-Saturated Marketing [Direction: Negative] (Impact: -10% to -15%) - Marketing campaigns that are overly aggressive can exhaust the audience, leading to pre-release fatigue and high expectations.
+    • 58. Cross-Promotion and Brand Partnerships [Direction: Positive] (Impact: +10% to +20%) - Strategic tie-ins with major consumer brands significantly expand marketing reach outside traditional entertainment channels.
+    • 59. Dynamic Pre-Release Ticket Pricing [Direction: Bidirectional] (Impact: +/- 15%) - Adjusting ticket prices based on demand can maximize initial revenues, though overpricing risks alienating budget-conscious families.
+    • 60. Global Promotional Tours [Direction: Positive] (Impact: +15% to +25%) - Multi-city international promotional tours are key for expanding a film's footprint and driving strong overseas ticket sales.
+Category 5: Temporal Scheduling, Holiday Windows, and Market Dynamics (Factors 61–70)
+    • 61. Holiday Release Windows [Direction: Positive] (Impact: +40% to +60%) - Releasing during major festive windows (e.g., Pongal, Diwali, Eid) provides a massive boost to theatrical footfalls.
+    • 62. Direct Box Office Clashes [Direction: Negative] (Impact: -20% to -35%) - Direct competition with other highly anticipated films splits screen count, showtimes, and opening-weekend audience attention.
+    • 63. Student Examination Schedules [Direction: Negative] (Impact: -15% to -25%) - Releasing during peak academic examination seasons significantly depresses youth turnout, which is a key demographic for initial momentum.
+    • 64. Political Events and Elections [Direction: Negative] (Impact: -20% to -40%) - Intense political campaigning and elections distract public attention and can lead to administrative restrictions in theatres.
+    • 65. Major Sporting Events (e.g., IPL) [Direction: Negative] (Impact: -10% to -20%) - Prime-time sporting events act as strong competition for household attention, occasionally lowering evening theatrical attendance.
+    • 66. Academic Summer Vacation Windows [Direction: Positive] (Impact: +25% to +35%) - Summer holidays create a highly favorable window for family-friendly releases, ensuring steady weekday footfalls.
+    • 67. Extreme Weather Conditions [Direction: Negative] (Impact: -10% to -15%) - Severe weather events like heavy monsoons or extreme heatwaves naturally discourage people from traveling to theatres.
+    • 68. Theatrical Window / OTT Release Strategy [Direction: Bidirectional] (Impact: +/- 20%) - Ensuring a healthy, exclusive theatrical window before streaming platform release maximizes box office potential.
+    • 69. Post-Clash Spillover Audience [Direction: Positive] (Impact: +10% to +15%) - High-demand releases that sell out quickly can create a positive spillover effect, directing excess crowds to competing films.
+    • 70. Re-Release Timing and Nostalgia [Direction: Positive] (Impact: +10% to +20%) - Strategically re-releasing classic blockbusters during quiet theatrical weeks can tap into nostalgia and generate surprise profits.
+Category 6: Legal, Administrative, and Censorship Barriers (Factors 71–80)
+    • 71. CBFC Rating Classifications (U vs. UA/A) [Direction: Bidirectional] (Impact: +/- 30%) - A "U" rating opens the doors for universal family viewership, while an "A" rating restricts access and limits TV broadcast options.
+    • 72. Multi-State Political / Cultural Bans [Direction: Negative] (Impact: -30% to -50%) - Local administrative bans over sensitive content can completely eliminate key territories from a film's revenue model.
+    • 73. High-Definition Pre-Release Leak [Direction: Negative] (Impact: -60% to -80%) - A complete, high-quality leak online prior to theatrical release destroys potential opening numbers and overall viability.
+    • 74. Legal Disputes over Title Ownership [Direction: Negative] (Impact: -15% to -25%) - Late-stage trademark disputes can stall promotional campaigns and delay release plans, draining marketing momentum.
+    • 75. Copyright Claims on Visuals / Audio [Direction: Negative] (Impact: -20% to -35%) - Legal injunctions over unauthorized use of materials can force extensive last-minute edits or halt distribution entirely.
+    • 76. Regional Entertainment Tax Exemptions [Direction: Positive] (Impact: +15% to +30%) - Securing local tax exemptions significantly lowers the final ticket cost for viewers, driving higher theatre attendance.
+    • 77. Inter-State Distribution Disputes [Direction: Negative] (Impact: -15% to -30%) - Disagreements between producers and local distributors over terms can lead to reduced screen allocation in key regions.
+    • 78. Plagiarism Allegations and Remake Laws [Direction: Bidirectional] (Impact: +/- 15%) - Plagiarism claims can create negative publicity, while secured official remake rights guarantee a legally sound path.
+    • 79. Real-Life Personality Name Similarities [Direction: Negative] (Impact: -10% to -20%) - Visual or linguistic similarities to active public officials can invite legal notices and force late-stage edits.
+    • 80. Administrative Delays in Certifications [Direction: Negative] (Impact: -20% to -40%) - Prolonged standoffs with regulatory boards push releases out of lucrative holiday slots, throwing scheduling into chaos.
+Category 7: Financial Controls and Distribution Models (Factors 81–90)
+    • 81. Digital Key Delivery Message (KDM) Lockout [Direction: Negative] (Impact: -40% to -60%) - Withholding KDMs on release morning due to unpaid dues creates immediate panic, show cancellations, and negative press.
+    • 82. Minimum Guarantee (MG) Distribution [Direction: Positive] (Impact: +20% to +35%) - Selling territorial rights on an MG basis secures upfront cash for producers, transferring performance risk to regional buyers.
+    • 83. Outright Purchase Territorial Sales [Direction: Positive] (Impact: +15% to +25%) - Outright sales provide guaranteed immediate returns for the production company, protecting it from potential box office failure.
+    • 84. High Interest Rates on Film Finance [Direction: Negative] (Impact: -15% to -30%) - Borrowing from private financiers at high interest rates increases the break-even threshold, making any release delay highly dangerous.
+    • 85. Multiplex Revenue Share Splits [Direction: Bidirectional] (Impact: +/- 20%) - Favorable revenue splits (e.g., higher percentages in the first week) are critical for recouping high production costs.
+    • 86. Global Subtitle / Dubbing Quality [Direction: Positive] (Impact: +15% to +25%) - High-quality translation and localization are essential for connecting with diverse, non-native audiences worldwide.
+    • 87. Screen Count Allocation and Show Pacing [Direction: Positive] (Impact: +25% to +40%) - Securing a high screen count and prime showtimes in major multiplex chains is vital for maximizing opening-weekend draw.
+    • 88. Print & Advertising (P&A) Commitments [Direction: Positive] (Impact: +20% to +30%) - A strong and well-funded P&A budget is essential for translating pre-release interest into actual theatre ticket sales.
+    • 89. Joint Production Partnerships [Direction: Positive] (Impact: +15% to +25%) - Partnering with established studios brings valuable distribution networks and strong financial stability to a project.
+    • 90. Producer Debt and Studio Solvency [Direction: Negative] (Impact: -25% to -45%) - Severe debt can lead to sudden asset freezes and legal actions that can permanently shelve completed films.
+Category 8: Post-Release Dynamics, Word-of-Mouth, and Macro Cultural Shifts (Factors 91–100)
+    • 91. Organic Word-of-Mouth (Post-Day 1) [Direction: Bidirectional] (Impact: +/- 50%) - Positive word-of-mouth is the ultimate driver of long theatrical runs, while negative reviews can quickly end a film's run.
+    • 92. Social Media Discourse and Meme Trends [Direction: Bidirectional] (Impact: +/- 25%) - Viral social media discussion and memes can dramatically boost visibility or, conversely, accelerate a poor film's decline.
+    • 93. Target Audience Alignment (Families vs. Youth) [Direction: Bidirectional] (Impact: +/- 30%) - Reaching family and youth demographics simultaneously is key for achieving blockbuster numbers and repeat business.
+    • 94. Critical Review Ratings on Aggregators [Direction: Bidirectional] (Impact: +/- 15%) - High ratings on review platforms build credibility, particularly for content-driven, medium-budget films.
+    • 95. Fast-Tracked Online Ticket Booking Trends [Direction: Positive] (Impact: +20% to +30%) - Smooth, high-volume online booking trends create a sense of urgency, driving higher ticket sales.
+    • 96. Sensitivity of Cultural / Religious Portrayals [Direction: Bidirectional] (Impact: +/- 25%) - Respectful, grounded cultural portrayals earn wide acclaim, while insensitive depictions can spark protests and legal issues.
+    • 97. Audience Fatigue with Repetitive Templates [Direction: Negative] (Impact: -30% to -45%) - Releasing formulaic content into an oversaturated genre leads to rapid drops in interest and swift commercial failure.
+    • 98. Theatrical Communal Viewing Experience [Direction: Positive] (Impact: +20% to +35%) - Films designed for a shared, energetic experience (with cheer moments) drive higher multiplex and single-screen footfalls.
+    • 99. Value-for-Money Perception of Tickets [Direction: Bidirectional] (Impact: +/- 15%) - Delivering a high-quality visual and narrative experience justifies premium ticket prices, especially for budget-conscious families.
+    • 100. Repeat Theatrical Viewership Value [Direction: Positive] (Impact: +25% to +40%) - Films containing rich detail, spectacular moments, or powerful music draw viewers back for multiple theatre visits.
+
+Category 9: External Factors
+    • 101. Indian GDP  [Direction: Positive] (Impact: +20% to +40%) - Defines the absolute USD ceiling of the box office; dictates the capacity of the consumer base
+    • 102. Inflation Rate [Direction: Bidirectional] (Impact: +/- 15%) - High inflation increases nominal gross but risks reducing total ticket volume due to loss of purchasing power.
+    • 103. Size of the Market [Direction: Positive] (Impact: +30% to +150%) - Determines the absolute revenue ceiling based on linguistic reach; moves the film from a regional cap to a national or global scale.
+
+
+SECTION B — LIVE SIGNAL INTELLIGENCE
+  This is a historical backtest run — no live social-listening data was collected for this specific
+  title at its time of release, so every field below is marked "Not Available". Treat that as an
+  absence of signal, not as neutral or negative; do not fabricate a value for it, and do not invent
+  plausible-sounding usernames, keywords, or platforms to fill the gap.
+
+  B1. Keyword-Level Signals (scoped to this movie's language/industry/state/genre keywords)
+    - Viral Seeds: Not Available
+    - Aspect Drivers: Not Available
+    - Top Spreaders: Not Available
+    - Brand Evangelists: Not Available
+
+  B2. Genre-Level Signals (per genre)
+    - Potential Viewers: Not Available
+    - Super Spreaders: Not Available
+    - Channel Strategy: Not Available
+
+  B3. Sentiment Alerts
+    - Not Available
+
+Signal-to-Factor mapping (for reference only — since Section B is entirely "Not Available" for this
+run, none of these factors should be re-weighted from live signal data; score them from the
+Data Available block and the 103 factors above instead):
+    - B1 Viral Seeds, Aspect Drivers, Top Spreaders → re-weight Factors 46, 49, 52, 53, 92
+    - B1 Brand Evangelists → re-weight Factor 17
+    - B2 Potential Viewers → re-weight Factor 93
+    - B2 Super Spreaders → re-weight Factors 49, 92
+    - B2 Channel Strategy → re-weight Factors 52, 53
+    - B3 Sentiment Alerts → re-weight Factors 91, 92 (and Factor 50 if the alert's matchedAuthor
+      ties to a promotional controversy)
+
+
+Give the response in the format:
+{
+  "Estimated Print & Advertising Cost": <integer>,
+  "Estimated Thearetical Break-Even Point": <integer>,
+  "The Upside Multipliers (Revenue Boosters)": [],
+  "The Downside Multipliers (Revenue Leakage)": [],
+  "Live Signal Impact Analysis": [
+        {
+          "Signal": "",
+          "Reading": "",
+          "Linked Factors": [],
+          "Interpretation": "",
+          "Recommended Action": ""
+        }
+    ],
+  "Post Release Factors that will help (Positive Impact)": [],
+  "Post Release Factors that will affect (NegativeImpact)": [],
+  "Potential Revenue Projections":  {
+      "Conservative (Underperformed)":  {
+        "Key Factor": "",
+        "Estimated Gross": "",
+        "Verdict": ""
+      },
+      "Moderate (Hit)":  {
+        "Key Factor": "",
+        "Estimated Gross": "",
+        "Verdict": ""
+      },
+      "Optimistic (Blockbuster)":  {
+        "Key Factor": "",
+        "Estimated Gross": "",
+        "Verdict": ""
+      }
+    },
+  "Final Estimated Verdict": "",
+  "Projected Global Gross": "",
+  "Estimated Profit Margin": "",
+  "Primary Constraint": "",
+  "Actions": []
+}
+
+Notes:
+    1. "Estimated Print & Advertising Cost" should be returned ONLY if Print & Advertising Cost is NOT mentioned in the "Data Available" section above. This is cost in USD, given in integer format. For example, 8000000
+    2. "Estimated Thearetical Break-Even Point" is given in Integer format. For example, 87000000
+    3. "The Upside Multipliers (Revenue Boosters)" is an array of Factors (from the list of factors provided) that work well for the movie.
+    4. "The Downside Multipliers (Revenue Leakage)" is an array of Factors (from the list of factors provided) that do NOT work well for the movie.
+    5. "Potential Revenue Projections" is a list of potential estimated revenue projection
+    6. "Key Factor" is the main factor affecting the performance of the movie for either Conservative (Underperformed), Moderate (Hit) or Optimistic (Blockbuster)
+    7. "Estimated Gross" is the gross estimated range in USD in String format. For example, "$90 Million – $130 Million USD"
+    8. "Verdict" is the verdict given for each of Conservative (Underperformed), Moderate (Hit) or Optimistic (Blockbuster)
+    9. "Final Estimated Verdict" is the final verdict is String format. For example, Given the factors, the most realistic projection for movie X  is $11 Million USD.
+    10. "Projected Global Gross" is the global gross projected in the String format. For example, "$9M – $12M"
+    11. "Estimated Profit Margin" is the estimated profit margin given in percentage in String format. For example, "15% to 40%"
+    12. "Primary Constraint" is the main constraint that will affect the performance.
+    13. "Post Release Factors that will help (Positive Impact)" is the factors post release of the movie that will help the movie do well. This is an array of Strings
+    14. "Post Release Factors that will affect (Negative Impact)" is the factors post release of the movie that might negatively impact the movie performance.
+    15. "Actions" is the list of all actions that can be taken by the Production and Marketing team before the release of the movie which will positively impact the movie performance.
+
+IMPORTANT: Respond with ONLY the JSON object above, no markdown code fences, no commentary before or after it.

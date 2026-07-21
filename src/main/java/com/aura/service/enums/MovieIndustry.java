@@ -40,4 +40,25 @@ public enum MovieIndustry {
         }
         return null;
     }
+
+    /**
+     * Reverse of {@link #languageFor(String)}: returns the display name of the regional industry
+     * for a given language (e.g. "Kannada" → "Sandalwood"), or {@code null} if the language isn't
+     * one of the five recognized regional languages.
+     */
+    public static String industryFor(String language) {
+        if (language == null || language.isBlank()) {
+            return null;
+        }
+        for (MovieIndustry value : values()) {
+            if (value.language.equalsIgnoreCase(language.trim())) {
+                return capitalize(value.name());
+            }
+        }
+        return null;
+    }
+
+    private static String capitalize(String enumName) {
+        return enumName.charAt(0) + enumName.substring(1).toLowerCase();
+    }
 }
