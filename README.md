@@ -768,7 +768,7 @@ account is allowed to consume. The tiers and their caps are defined in code by t
 | BRONZE | 5 | 5 |
 | SILVER | 10 | 10 |
 | GOLD | 15 | 15 |
-| DIAMOND | 20 | 25 |
+| DIAMOND | 100 | 100 |
 
 Two of these caps are enforced on the entity write paths:
 
@@ -897,7 +897,7 @@ Authorization: Bearer {jwt_token}
 
 **Example (verified):** the seeded `user` account (GOLD) returns
 `{"entitiesUsed":0,"entitiesMax":15,"keywordsUsed":0,"keywordsMax":15}`; the same account on DIAMOND
-returns `{"entitiesUsed":0,"entitiesMax":20,"keywordsUsed":0,"keywordsMax":25}`.
+returns `{"entitiesUsed":0,"entitiesMax":100,"keywordsUsed":0,"keywordsMax":100}`.
 
 **cURL example:**
 ```bash
@@ -1097,6 +1097,43 @@ Authorization: Bearer {jwt_token}
 - `200 OK`
 - `403 Forbidden` — no JWT supplied (or invalid token).
 - `404 Not Found` — the user has no active license (non-admin callers only; an admin is always entitled).
+
+---
+
+### L5. Audience & Content Module (Preview Placeholder)
+
+**Endpoint:** `GET /api/audience-content`
+
+**Description:** Placeholder for the Audience & Content premium module, which has not been built yet. This endpoint exists only so the `audience-content` feature (see [L4](#l4-list-premium-features)) has a real route to gate: the entire surface requires **DIAMOND**. It always returns `200` — an entitled caller gets a stub `data` payload, a caller below DIAMOND gets a masked `preview` instead — never `403`. Replace the placeholder payload with the real module when it ships.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope.
+
+Entitled (DIAMOND or admin):
+```json
+{
+  "entitled": true,
+  "requiredTier": "DIAMOND",
+  "data": { "module": "audience-content", "status": "not-implemented" },
+  "preview": null
+}
+```
+
+Not entitled:
+```json
+{
+  "entitled": false,
+  "requiredTier": "DIAMOND",
+  "data": null,
+  "preview": { "module": "****************", "status": "***************" }
+}
+```
+
+**Status Code:** `200 OK`
 
 ---
 
@@ -3037,7 +3074,57 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 26b. Delete Mention
+### 26b. Get Abuse Reports for a Mention
+
+**Endpoint:** `GET /api/mentions/{mentionId}/abuse-reports`
+
+**Description:** List every abuse report filed against a single mention, newest first — the mention-scoped counterpart to [Report Abuse](#26a-report-abuse). Every report in the list carries the same nested mention summary (loaded once, not per-report).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID to list reports for
+
+**Example Request:**
+```
+GET /api/mentions/9123/abuse-reports
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 4242,
+    "mentionId": 9123,
+    "userId": 55,
+    "category": "HARASSMENT",
+    "notes": "Repeated targeted abuse against the entity's staff.",
+    "status": "SUBMITTED",
+    "externalRef": "x-mod-4242",
+    "submittedAt": "2026-05-31T12:00:00Z",
+    "resolvedAt": null,
+    "mention": {
+      "id": 9123,
+      "author": "user_handle",
+      "text": "Original post text...",
+      "platform": "TWITTER",
+      "permalink": "https://twitter.com/user_handle/status/9123",
+      "sourceUrl": null
+    }
+  }
+]
+```
+
+**Status Codes:**
+- `200 OK` — Returns the (possibly empty) list of reports filed against the mention.
+- `404 Not Found` — No mention with the given id.
+
+---
+
+### 26c. Delete Mention
 
 **Endpoint:** `DELETE /api/mentions/{mentionId}`
 
@@ -3081,6 +3168,59 @@ async function deleteMention(mentionId, token) {
   throw new Error(`Failed to delete mention ${mentionId}: ${res.status}`);
 }
 ```
+
+---
+
+### 26d. List Abuse Reports
+
+**Endpoint:** `GET /api/abuse-reports`
+
+**Description:** List every abuse report the calling user has filed, newest first. Unlike [Get Abuse Reports for a Mention](#26b-get-abuse-reports-for-a-mention), which scopes to one mention, this is a user-wide view across all of the caller's reports — intended for a "my abuse reports" audit screen. Each report includes a nested summary of the reported mention (`null` if that mention has since been [deleted](#26c-delete-mention)).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `status` *(optional)* — narrow to a single lifecycle stage: `SUBMITTED`, `UPHELD`, or `REJECTED`. Omit to return all statuses.
+
+**Example Request:**
+```
+GET /api/abuse-reports?status=SUBMITTED
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 4242,
+    "mentionId": 9123,
+    "userId": 55,
+    "category": "HARASSMENT",
+    "notes": "Repeated targeted abuse against the entity's staff.",
+    "status": "SUBMITTED",
+    "externalRef": "x-mod-4242",
+    "submittedAt": "2026-05-31T12:00:00Z",
+    "resolvedAt": null,
+    "mention": {
+      "id": 9123,
+      "author": "user_handle",
+      "text": "Original post text...",
+      "platform": "TWITTER",
+      "permalink": "https://twitter.com/user_handle/status/9123",
+      "sourceUrl": null
+    }
+  }
+]
+```
+
+**Response fields:**
+- Same fields as [Report Abuse](#26a-report-abuse)'s response ([status](#26a-report-abuse) values: `SUBMITTED`, `UPHELD`, `REJECTED`), plus:
+- `resolvedAt` — set once the moderation backend reaches a terminal status (`UPHELD`/`REJECTED`); `null` while `SUBMITTED`.
+- `mention` — summary of the reported mention (`id`, `author`, `text`, `platform`, `permalink`); `null` if the mention has since been deleted.
+
+**Status Code:** `200 OK`
 
 ---
 
@@ -3257,6 +3397,158 @@ GET /api/analytics/11/narrative-novelty
 
 ---
 
+## Movie Audience APIs
+
+Audience-size analytics over tracked `MOVIE` entities: unique posters per language, per movie (with per-user engagement), and how a movie's audience compares to similarly-budgeted movies. Only mentions with a non-zero sentiment score are counted. Movies are scoped to the caller's own entities, same as [Entity Management APIs](#entity-management-apis).
+
+### 29a. Get Language Audience
+
+**Endpoint:** `GET /api/movies/audience`
+
+**Description:** Total unique users who posted about any tracked movie in a given `language`, counting a user only once even if they posted about several movies in that language.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `language` *(required)* — movie language to aggregate across, e.g. `Tamil`.
+- `ownerId` — (admin only) scope to this user's movies; a non-admin who supplies it gets `403 Forbidden`. Optional.
+
+**Example Request:**
+```
+GET /api/movies/audience?language=Tamil
+```
+
+**Response:**
+```json
+{
+  "language": "Tamil",
+  "movieCount": 3,
+  "uniqueAudienceCount": 18420,
+  "movieNames": ["Movie A", "Movie B", "Movie C"]
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No movie entities exist for `language` (scoped to the caller, or to `ownerId` for an admin).
+
+---
+
+### 29b. Get Movie Audience Detail
+
+**Endpoint:** `GET /api/movies/audience/detail`
+
+**Description:** Every unique user who posted about `movieName` in `language`, with each user's post count, engagement ratio (their share of the movie's qualifying posts), average sentiment score, and positive-sentiment ratio. Sorted by post count descending and capped at `limit`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `language` *(required)* — the movie's language.
+- `movieName` *(required)* — movie name to look up.
+- `ownerId` — (admin only) scope to this user's movies; a non-admin who supplies it gets `403 Forbidden`. Optional.
+- `limit` — max number of users to return. Default `100`, max `500`. Optional.
+
+**Example Request:**
+```
+GET /api/movies/audience/detail?language=Tamil&movieName=Movie%20A&limit=50
+```
+
+**Response:**
+```json
+{
+  "movieName": "Movie A",
+  "language": "Tamil",
+  "uniqueAudienceCount": 640,
+  "totalPosts": 1120,
+  "users": [
+    {
+      "author": "user_handle",
+      "postCount": 14,
+      "engagementRatio": 0.0125,
+      "averageSentimentScore": 0.62,
+      "positiveRatio": 0.86
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `uniqueAudienceCount` — total distinct posters for the movie (not capped by `limit`; only the `users` array is).
+- `totalPosts` — total qualifying (non-zero sentiment) posts about the movie, across all users.
+- `users[].engagementRatio` — this user's `postCount` divided by `totalPosts` — their share of the whole conversation.
+- `users[].positiveRatio` — fraction of this user's own posts about the movie rated `POSITIVE`.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No movie named `movieName` exists in `language` (scoped to the caller, or to `ownerId` for an admin).
+
+---
+
+### 29c. Get Budget Comparison
+
+**Endpoint:** `GET /api/movies/audience/budget-comparison`
+
+**Description:** Benchmarks `movieName` against other tracked movies budgeted within ±50% of it (any language, unless `language` is passed), each with its own audience size, to show how the target movie's audience compares to comparable-budget peers.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `movieName` *(required)* — movie to benchmark.
+- `language` — restrict lookup of `movieName` to this language; required if more than one movie shares that name across languages. Optional.
+- `ownerId` — (admin only) scope to this user's movies; a non-admin who supplies it gets `403 Forbidden`. Optional.
+
+**Example Request:**
+```
+GET /api/movies/audience/budget-comparison?movieName=Movie%20A&language=Tamil
+```
+
+**Response:**
+```json
+{
+  "targetMovieName": "Movie A",
+  "targetLanguage": "Tamil",
+  "targetBudget": 5000000.0,
+  "targetUniqueAudienceCount": 640,
+  "targetTotalPosts": 1120,
+  "targetAudiencePercentileInRange": 84.5,
+  "budgetRangeMinUsd": 2500000.0,
+  "budgetRangeMaxUsd": 7500000.0,
+  "comparableMovies": [
+    {
+      "movieName": "Movie D",
+      "language": "Telugu",
+      "budget": 5500000.0,
+      "uniqueAudienceCount": 758,
+      "totalPosts": 1310,
+      "audiencePercentileInRange": 100.0
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `targetAudiencePercentileInRange` — the target's `uniqueAudienceCount` as a percentage of the highest audience count across the target and every comparable movie (`100` = top of the range); `null` when every movie in the range has zero qualifying audience.
+- `comparableMovies` — excludes the target itself, sorted by `uniqueAudienceCount` descending. Each entry's `audiencePercentileInRange` is computed against the same range maximum as the target's.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No movie named `movieName` exists (in `language`, if supplied; scoped to the caller, or to `ownerId` for an admin).
+- `400 Bad Request` — `movieName` matches more than one movie and `language` was not supplied to disambiguate, or the resolved movie has no `budget` recorded.
+
+---
+
 ## Alerts APIs
 
 Sentiment alerts are produced by `SentimentAlertService`, which runs two background detectors:
@@ -3267,7 +3559,7 @@ Sentiment alerts are produced by `SentimentAlertService`, which runs two backgro
 After an alert is persisted, `AlertDispatcher` fans it out to two async channels (failures are caught and logged — they do not block alert persistence):
 
 - **Email** — `EmailChannel` interface with a log-only `NoopEmailChannel` `@Component` shipped by default (swap in SendGrid in prod). Subject is `[Aura] {entityName} negative spike`; body lists the top 3 most recent negative mentions for the entity with their permalinks.
-- **Webhook** — `WebhookChannel` POSTs the alert JSON to every user's configured `alertWebhookUrl` (see [Set Alert Webhook URL](#set-alert-webhook-url)).
+- **Webhook** — `WebhookChannel` POSTs the alert JSON to every user's configured `alertWebhookUrl` (see [Set Alert Webhook URL](#31-set-alert-webhook-url)).
 
 ### Morning Digest
 
@@ -3771,7 +4063,51 @@ Backup and restore the authenticated user's entire workspace — their reply tem
 
 All routes are JWT-protected — pass `Authorization: Bearer {jwt_token}`.
 
-### 31f. Export Workspace
+### 31f. Get Workspace Impact
+
+**Endpoint:** `GET /api/workspace/impact`
+
+**Description:** The authenticated user's accumulated investment in their workspace, reflected back as counters plus display-ready highlight sentences (e.g. `"Your playbook library has handled 12 crises."`). Intended for the dashboard header and the morning digest, so the value the user has built up over time is visible rather than silent.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+{
+  "entitiesWatched": 6,
+  "templateCount": 4,
+  "draftsSavedByTemplates": 27,
+  "playbookCount": 12,
+  "favoritePlaybookCount": 3,
+  "repliesPosted": 58,
+  "alliesMobilized": 214,
+  "abuseReportsFiled": 9,
+  "abuseReportsUpheld": 5,
+  "highlights": [
+    "Your playbook library has handled 12 crises.",
+    "You've rallied 214 allies across mobilize actions.",
+    "5 of your abuse reports have been upheld."
+  ]
+}
+```
+
+**Response fields:**
+- `entitiesWatched` — distinct entities the user actively views.
+- `templateCount` / `draftsSavedByTemplates` — reply templates authored, and how many times those templates have seeded a reply in total.
+- `playbookCount` / `favoritePlaybookCount` — crisis playbooks built, and how many are starred for quick reuse.
+- `repliesPosted` — replies the user has actually posted to platforms (see [Post Reply](#24-post-reply)).
+- `alliesMobilized` — supporters rallied across all [Mobilize Allies](#26-mobilize-allies) actions.
+- `abuseReportsFiled` / `abuseReportsUpheld` — abuse reports filed, and how many of those were upheld (posts removed) by the platform.
+- `highlights` — display-ready sentences for the non-zero metrics, ordered most-rewarding first. A client can render these directly without re-deriving copy.
+
+**Status Code:** `200 OK`
+
+---
+
+### 31g. Export Workspace
 
 **Endpoint:** `GET /api/workspace/export`
 
@@ -3831,7 +4167,7 @@ Authorization: Bearer {jwt_token}
 
 ---
 
-### 31g. Import Workspace
+### 31h. Import Workspace
 
 **Endpoint:** `POST /api/workspace/import`
 
@@ -4519,6 +4855,51 @@ GET /v1/diagnostics/process-user/alice
 
 ---
 
+### 52a. List Celebrity Analytics
+
+**Endpoint:** `GET /v1/analytics/celebrity`
+
+**Description:** List managed entities of type `CELEBRITY`. Forwards to upstream `GET /api/analytics/celebrity` and returns the body verbatim on `2xx`.
+
+**Authentication:** Not required
+
+**Example Request:**
+```
+GET /v1/analytics/celebrity
+```
+
+**Cache:** 5-minute TTL (list endpoint)
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
+### 52b. Get Celebrity Analytics
+
+**Endpoint:** `GET /v1/analytics/celebrity/{entityId}`
+
+**Description:** Full analytics for a single `CELEBRITY` entity. Forwards to upstream `GET /api/analytics/celebrity/{entityId}`. `entityId` is an opaque `managed_entities` id — treated as a string (not assumed numeric) and forwarded verbatim after URL-encoding.
+
+**Authentication:** Not required
+
+**Path Parameters:**
+- `entityId` - The managed entity id (must not be blank)
+
+**Example Request:**
+```
+GET /v1/analytics/celebrity/42
+```
+
+**Cache:** 60-second TTL
+
+**Status Codes:**
+- `200 OK` (upstream status preserved) — analytics for the entity.
+- `400 Bad Request` — `entityId` is empty/blank (rejected before any upstream call).
+- `404 Not Found` — relayed unchanged from upstream when `entityId` is unknown or refers to an entity that is not a `CELEBRITY`.
+- `502 Bad Gateway` — upstream `5xx`, mapped to a sanitized envelope so SQL/stack fragments are never leaked (same convention as the other AuraMath proxies).
+
+---
+
 ## AuraMath Marketing Proxy (`/v1/marketing/**`)
 
 A second proxy surface that mirrors the upstream `/api/marketing/{genre,party,celebrity}` resource tree one-for-one. Twelve GET endpoints plus a `/v1/marketing/_catalog` discovery route forward each upstream path verbatim (URL-encoding `{genre}`, `{party}`, and `{celebrity}` segments so spaces, ampersands, and non-ASCII names like `A R Rahman` or `திமுக` pass through correctly). Each request uses a 15-second connect/read budget (`auramath.marketing-timeout-ms`); successful responses are cached in-memory by full URL for 60 seconds, except the three list endpoints (`/genre`, `/party`, `/celebrity`) which use a 5-minute TTL (`auramath.cache.list-ttl-seconds`). 2xx bodies — including empty arrays like `{"totalVoters":0,"voters":[]}` — are returned to the caller byte-for-byte. Upstream 5xx responses are logged with their `message`/`path` and translated to a sanitized `502 { "error":"upstream_failure", "upstream_path":"…" }` so SQL fragments are never leaked to clients; connection failures/timeouts continue to map to `504 { "error":"upstream_unavailable" }`. Wrapped routes: `GET /v1/marketing/genre` (and `/{genre}/{potential-viewers,super-spreaders,channel-strategy}`); `GET /v1/marketing/party` (and `/{party}/{potential-voters,super-spreaders,channel-strategy}`); `GET /v1/marketing/celebrity` (and `/{celebrity}/{potential-fans,super-fans,channel-strategy}`); `GET /v1/marketing/_catalog` returns the full list with its upstream mapping. Integration tests live in `AuraMathMarketingProxyControllerTest` (path-encoding pass-through for ASCII, spaces, ampersands, and Tamil script; upstream-500 → sanitized-502 mapping; cache hit; `_catalog` shape).
@@ -4958,6 +5339,252 @@ Authorization: Bearer {admin_jwt_token}
 **Error Responses:**
 - `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
 - `404 Not Found` — no offer key exists with the given `id`.
+
+---
+
+### Box Office Backtest
+
+Admin-only. Runs the [Box Office Prediction](#27-get-box-office-prediction) 100+3-factor prompt against historical Indian movies in `movies_data_collection` and checks each prediction against the actual gross, to validate how close AuraLLM's predictions land to reality. A run executes in the background (`@Async`); the start/rerun endpoints return immediately with a `runId` to poll. Run state is held in memory only and does not survive an app restart.
+
+#### Start Box Office Backtest Run
+
+**Endpoint:** `POST /api/admin/box-office-backtest`
+
+**Description:** Starts a run over up to `limit` eligible movies (default 50) and returns immediately with the initial run status. Poll [Get Box Office Backtest Run Status](#get-box-office-backtest-run-status) for progress. Keep `limit` small for a first smoke test — each movie is one real call to the AuraLLM gateway.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Query Parameters:**
+- `limit` — max number of movies to include in the run. Default `50`. Optional.
+
+**Example Request:**
+```
+POST /api/admin/box-office-backtest?limit=10
+```
+
+**Response:**
+```json
+{
+  "runId": "a1b2c3d4",
+  "state": "RUNNING",
+  "totalMovies": 10,
+  "processedCount": 0,
+  "validatedCount": 0,
+  "withinPredictedRangeCount": 0,
+  "startedAt": "2026-07-26T09:00:00Z",
+  "completedAt": null,
+  "logFilePath": "/var/log/aura/box-office-backtest-a1b2c3d4.log",
+  "errorMessage": null,
+  "factorSummary": [],
+  "results": []
+}
+```
+
+**Response fields:**
+- `state` — `RUNNING`, `COMPLETED`, or `FAILED`.
+- `processedCount` — movies processed so far (success or per-movie error); `validatedCount` — of those, how many had both an actual and predicted gross to compare; `withinPredictedRangeCount` — of the validated ones, how many landed within tolerance.
+- `results` — per-movie `BoxOfficeBacktestResult` entries, populated as the run progresses. Each includes `baseline` (the server-computed pre-compounding potential), `compoundMultiplier`, `predictedGrossUsd`, `withinTolerance`, `deviationPct`, `factorDeltas`, and `rationale`; `error` is set (with other fields `null`) when the LLM call or response parsing failed for that movie — a single bad response never aborts the run.
+- `factorSummary` — populated only once `state` is `COMPLETED`: per-catalog-factor aggregates (how often the LLM rated it vs. answered "NA", and its average delta when rated) — see [Get Box Office Backtest Run Status](#get-box-office-backtest-run-status) for a populated example.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
+#### Get Box Office Backtest Run Status
+
+**Endpoint:** `GET /api/admin/box-office-backtest/{runId}`
+
+**Description:** Poll the live/completed state of a run started by [Start Box Office Backtest Run](#start-box-office-backtest-run) or one of the rerun endpoints below.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Path Parameters:**
+- `runId` — the run id returned when the run was started.
+
+**Example Request:**
+```
+GET /api/admin/box-office-backtest/a1b2c3d4
+```
+
+**Response:**
+```json
+{
+  "runId": "a1b2c3d4",
+  "state": "COMPLETED",
+  "totalMovies": 10,
+  "processedCount": 10,
+  "validatedCount": 9,
+  "withinPredictedRangeCount": 6,
+  "startedAt": "2026-07-26T09:00:00Z",
+  "completedAt": "2026-07-26T09:04:12Z",
+  "logFilePath": "/var/log/aura/box-office-backtest-a1b2c3d4.log",
+  "errorMessage": null,
+  "factorSummary": [
+    {
+      "factorNumber": 12,
+      "factorName": "Festive Release Window",
+      "ratedCount": 8,
+      "naCount": 2,
+      "avgDeltaWhenRated": 0.14
+    }
+  ],
+  "results": [
+    {
+      "movieName": "Movie A",
+      "releaseDate": "2025-01-24",
+      "actualGrossUsd": 12500000.0,
+      "actualGrossSource": "movies_data_collection",
+      "baseline": {
+        "adjustedBudgetUsd": 6000000.0,
+        "rStar": 1.2,
+        "rDirector": 1.1,
+        "rConcept": 1.05,
+        "rIP": 1.0,
+        "baselineB0Usd": 8316000.0
+      },
+      "compoundMultiplier": 1.42,
+      "predictedGrossUsd": 11808720.0,
+      "withinTolerance": true,
+      "deviationPct": -5.53,
+      "factorDeltas": { "Festive Release Window": 0.14 },
+      "postReleaseFactorsHelp": ["Positive word-of-mouth in week 2"],
+      "postReleaseFactorsHurt": [],
+      "rationale": "Strong opening aided by the festive window; the prediction lands within tolerance of actual gross.",
+      "error": null
+    }
+  ]
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no run exists with the given `runId` (including a valid-looking id from before the app last restarted, since run state does not persist).
+
+---
+
+#### Rerun Box Office Backtest
+
+**Endpoint:** `POST /api/admin/box-office-backtest/{runId}/rerun`
+
+**Description:** Re-runs the prompt over exactly the same movies as run `runId` — use this after editing the prompt catalog's impact ranges, to check whether the change actually helped on a like-for-like movie set rather than a fresh (possibly different) sample. Returns a new run (new `runId`) in the same shape as [Start Box Office Backtest Run](#start-box-office-backtest-run).
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Path Parameters:**
+- `runId` — the prior run whose movie set should be replayed.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+- `404 Not Found` — no run exists with the given `runId`.
+
+---
+
+#### Rerun Box Office Backtest (Explicit Movie Set)
+
+**Endpoint:** `POST /api/admin/box-office-backtest/rerun-movies`
+
+**Description:** Same as [Rerun Box Office Backtest](#rerun-box-office-backtest), but takes the movie set explicitly instead of referencing a prior run — for validating a prompt-catalog change against a specific movie list captured before the app restarted to load that change (run state is in-memory only and doesn't survive a restart).
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Request Body:**
+```json
+[
+  { "movieName": "Movie A", "releaseDate": "2025-01-24" },
+  { "movieName": "Movie B", "releaseDate": "2025-03-07" }
+]
+```
+
+**Request fields:**
+- Each entry is a movie's natural key in `movies_data_collection` (that table has no surrogate id): `movieName` and `releaseDate`.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
+
+---
+
+## Audit Log APIs
+
+### List Audit Logs
+
+**Endpoint:** `GET /api/audit-logs`
+
+**Description:** Admin-only read access to the API audit trail — one row per request handled by the service, recording who called what, when, whether it succeeded, and request details. Every filter is optional; the bare endpoint returns the full trail newest-first and the query parameters narrow it. Access requires `ROLE_ADMIN`, enforced by the `/api/audit-logs/**` request matcher.
+
+**Headers:**
+```
+Authorization: Bearer {admin_jwt_token}
+```
+
+**Query Parameters:**
+- `username` — exact match on the authenticated principal that made the call (`"anonymous"` for unauthenticated requests). Optional.
+- `success` — `true`/`false`; filters to 2xx/3xx responses or non-2xx/3xx responses respectively. Optional.
+- `from` / `to` — ISO-8601 timestamp bounds (inclusive) on when the request completed, e.g. `2026-07-01T00:00:00Z`. Optional.
+- `page` — zero-based page number. Default `0`. Optional.
+- `size` — page size. Default `50`, hard-capped at `200`. Optional.
+
+**Example Request:**
+```
+GET /api/audit-logs?username=alice&success=false&from=2026-07-01T00:00:00Z&page=0&size=50
+```
+
+**Response:**
+```json
+{
+  "content": [
+    {
+      "id": 91234,
+      "timestamp": "2026-07-26T09:03:11Z",
+      "username": "alice",
+      "httpMethod": "DELETE",
+      "path": "/api/mentions/9123",
+      "queryString": null,
+      "statusCode": 404,
+      "success": false,
+      "durationMs": 12,
+      "clientIp": "203.0.113.7",
+      "userAgent": "Mozilla/5.0 ...",
+      "requestBody": null
+    }
+  ],
+  "totalElements": 1,
+  "totalPages": 1,
+  "number": 0,
+  "size": 50
+}
+```
+
+**Response fields:**
+- Standard Spring `Page` envelope wrapping `AuditLog` rows.
+- `requestBody` — truncated request payload for write operations; redacted (`null`) for authentication endpoints so credentials are never persisted.
+- `clientIp` — honours `X-Forwarded-For` when present.
+- `success` — convenience flag: `true` for 2xx/3xx responses, `false` otherwise.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `403 Forbidden` — the caller is not an admin (or no/invalid JWT).
 
 ---
 
