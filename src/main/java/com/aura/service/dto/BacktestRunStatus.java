@@ -39,9 +39,9 @@ public class BacktestRunStatus {
     public void recordResult(BoxOfficeBacktestResult result) {
         results.add(result);
         processedCount.incrementAndGet();
-        if (result.error() == null && result.actualGrossUsd() != null && result.predictedLowUsd() != null) {
+        if (result.error() == null && result.actualGrossUsd() != null && result.predictedGrossUsd() != null) {
             validatedCount.incrementAndGet();
-            if (Boolean.TRUE.equals(result.withinPredictedRange())) {
+            if (Boolean.TRUE.equals(result.withinTolerance())) {
                 withinRangeCount.incrementAndGet();
             }
         }

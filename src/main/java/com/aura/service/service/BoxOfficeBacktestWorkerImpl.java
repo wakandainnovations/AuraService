@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.BacktestRunStatus;
 import com.aura.service.dto.BoxOfficeBacktestResult;
 import com.aura.service.dto.BoxOfficeFactorStat;
+import com.aura.service.dto.BoxOfficeMovieBaseline;
 import com.aura.service.dto.MovieBacktestRow;
 import com.aura.service.enums.MovieIndustry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,22 +20,28 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
- * Calls AuraLLM (via {@link LLMService}) once per movie with the 100+3-factor box-office
- * prediction prompt (template at {@code prompts/box-office-100-factor-prompt.txt}), then checks
- * the "Projected Global Gross" prediction against what {@code movies_data_collection} recorded
- * actually happened. Every movie's result is appended to a log file so the run can be reviewed
- * later; a per-factor citation-vs-outcome summary is appended once the run finishes. This never
- * rewrites the prompt's stated impact ranges itself — see the class javadoc on
- * {@link BoxOfficeBacktestService} for why that's a deliberate scope boundary.
+ * Calls AuraLLM (via {@link LLMService}) once per movie, but only for qualitative 1-5 (or "NA")
+ * ratings on each {@link BoxOfficeFactorCatalog} factor - never a dollar figure. Everything from
+ * the baseline (B0) through the final predicted gross is computed here or in
+ * {@link BoxOfficeBaselineService} from real budget/cast/director/genre/market data, using the
+ * LLM's ratings only as the compounding multiplier's per-factor deltas. This replaces an earlier
+ * design that asked the LLM for the gross directly as a free-text range - recalibrating that
+ * version's stated impact percentages had no measurable effect on accuracy, because the LLM
+ * wasn't actually doing arithmetic over them to begin with (see git history). Every movie's result
+ * is appended to a log file so the run can be reviewed later; a per-factor rating-frequency summary
+ * is appended once the run finishes.
  */
 @Slf4j
 @Service
@@ -42,27 +49,42 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
 
     private static final String LLM_ERROR_SENTINEL = "Error generating reply from LLM.";
 
-    // Matches an LLM-cited factor string like "61. Holiday Release Windows" or
-    // "Factor 61: Holiday Release Windows" down to a canonical "61. Holiday Release Windows" key,
-    // so citations of the same factor group together in the summary even if the model varies its
-    // phrasing slightly. Falls back to the raw trimmed text when no leading number is present.
-    private static final Pattern FACTOR_PREFIX =
-            Pattern.compile("^(?:factor\\s*)?#?\\s*(\\d{1,3})\\s*[.:\\-)]?\\s*(.*)$", Pattern.CASE_INSENSITIVE);
+    // A prediction within this fraction of actual gross counts as "within tolerance" - there's no
+    // range from the LLM anymore (it only supplies ratings), so this replaces the old
+    // predicted-low/predicted-high containment check with a single point-estimate band.
+    private static final double TOLERANCE_PCT = 0.25;
 
-    // "$9M – $12M", "$90 Million – $130 Million USD", "$1.2B - $1.5B" — pulls the first two
-    // dollar amounts out of a free-text gross-range string. A bare number with no unit is assumed
-    // to already be an absolute USD figure.
-    private static final Pattern MONEY_PATTERN =
-            Pattern.compile("\\$?\\s*([0-9][0-9,]*\\.?[0-9]*)\\s*(billion|million|bn|mn|b|m)?\\b",
-                    Pattern.CASE_INSENSITIVE);
+    // Factor 46 (Teaser and Trailer Impact) thresholds, per the explicit formula given: released
+    // less than 14 days before launch is too late to build hype (-15%); 30-45 days out is the
+    // optimal window (+25%). Applied identically to teaser and trailer dates, then averaged.
+    private static final int SHORT_WINDOW_DAYS = 14;
+    private static final double SHORT_WINDOW_PENALTY = -0.15;
+    private static final int OPTIMAL_MIN_DAYS_46 = 30;
+    private static final int OPTIMAL_MAX_DAYS_46 = 45;
+    private static final double OPTIMAL_BONUS_46 = 0.25;
+
+    // Factor 47 (Timing of First Single Release): catalog description says "6 to 8 weeks before
+    // launch" (42-56 days) builds sustained hype; only a positive band is defined; outside it stays
+    // neutral (0) rather than inventing a penalty the catalog never specified.
+    private static final int OPTIMAL_MIN_DAYS_47 = 42;
+    private static final int OPTIMAL_MAX_DAYS_47 = 56;
+    private static final double OPTIMAL_BONUS_47 = 0.25;
+
+    // Defensive backstop on the geometric-mean compound multiplier (see geometricCompound()) -
+    // should rarely bind given the averaging, but guards against a pathological LLM response.
+    private static final double MIN_COMPOUND_MULTIPLIER = 0.3;
+    private static final double MAX_COMPOUND_MULTIPLIER = 4.0;
 
     private final LLMService llmService;
     private final ObjectMapper objectMapper;
+    private final BoxOfficeBaselineService baselineService;
     private final String promptTemplate;
 
-    public BoxOfficeBacktestWorkerImpl(LLMService llmService, ObjectMapper objectMapper) {
+    public BoxOfficeBacktestWorkerImpl(LLMService llmService, ObjectMapper objectMapper,
+                                        BoxOfficeBaselineService baselineService) {
         this.llmService = llmService;
         this.objectMapper = objectMapper;
+        this.baselineService = baselineService;
         this.promptTemplate = loadTemplate();
     }
 
@@ -70,7 +92,8 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
     @Async
     public void processAsync(String runId, BacktestRunStatus status, List<MovieBacktestRow> movies) {
         Path logPath = Path.of(status.getLogFilePath());
-        Map<String, int[]> tally = new LinkedHashMap<>();
+        Map<Integer, int[]> tally = new LinkedHashMap<>(); // [ratedCount, naCount], deltaSum tracked separately
+        Map<Integer, Double> deltaSumWhenRated = new LinkedHashMap<>();
         try {
             if (logPath.getParent() != null) {
                 Files.createDirectories(logPath.getParent());
@@ -79,14 +102,14 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
                 BoxOfficeBacktestResult result = processMovie(row);
                 status.recordResult(result);
                 appendLogLine(logPath, result);
-                if (result.error() == null && result.predictedLowUsd() != null && result.actualGrossUsd() != null) {
-                    tallyFactors(tally, result);
+                if (result.error() == null && result.factorDeltas() != null) {
+                    tallyFactors(tally, deltaSumWhenRated, result);
                 }
             }
-            List<BoxOfficeFactorStat> factorStats = buildFactorStats(tally);
+            List<BoxOfficeFactorStat> factorStats = buildFactorStats(tally, deltaSumWhenRated);
             appendSummary(logPath, runId, status, factorStats);
             status.complete(factorStats);
-            log.info("Box office backtest run {} completed: {} processed, {} validated, {} within predicted range",
+            log.info("Box office backtest run {} completed: {} processed, {} validated, {} within tolerance",
                     runId, status.getProcessedCount(), status.getValidatedCount(), status.getWithinRangeCount());
         } catch (Exception e) {
             log.error("Box office backtest run {} failed", runId, e);
@@ -113,46 +136,84 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
             return errorResult(row, "Could not parse LLM response as JSON: " + e.getMessage());
         }
 
-        String projectedGrossRaw = textOrNull(node, "Projected Global Gross");
-        double[] range = parseGrossRange(projectedGrossRaw);
-        List<String> upside = arrayToList(node.path("The Upside Multipliers (Revenue Boosters)"));
-        List<String> downside = arrayToList(node.path("The Downside Multipliers (Revenue Leakage)"));
-        String verdict = textOrNull(node, "Final Estimated Verdict");
+        Map<Integer, Integer> ratings = parseFactorRatings(node.path("factorRatings"));
+        List<String> postReleaseHelp = arrayToList(node.path("postReleaseFactorsHelp"));
+        List<String> postReleaseHurt = arrayToList(node.path("postReleaseFactorsHurt"));
+        String rationale = textOrNull(node, "rationale");
+
+        Map<String, Double> factorDeltas = new TreeMap<>((a, b) -> Integer.compare(Integer.parseInt(a), Integer.parseInt(b)));
+        List<Double> ratedDeltas = new ArrayList<>();
+        for (BoxOfficeFactorCatalog.FactorDefinition def : BoxOfficeFactorCatalog.byRole(BoxOfficeFactorCatalog.Role.COMPOUNDING)) {
+            Integer rating = ratings.get(def.number());
+            double delta = (rating == null) ? 0.0 : def.deltaForRating(rating);
+            factorDeltas.put(String.valueOf(def.number()), delta);
+            if (rating != null) {
+                ratedDeltas.add(delta);
+            }
+        }
+        Double delta46 = timingDelta46(row);
+        Double delta47 = timingDelta47(row);
+        factorDeltas.put("46", delta46 == null ? 0.0 : delta46);
+        factorDeltas.put("47", delta47 == null ? 0.0 : delta47);
+        if (delta46 != null) {
+            ratedDeltas.add(delta46);
+        }
+        if (delta47 != null) {
+            ratedDeltas.add(delta47);
+        }
+
+        double compoundMultiplier = geometricCompound(ratedDeltas);
+
+        BoxOfficeMovieBaseline baseline = baselineService.computeBaseline(row);
+        double predictedGross = baseline.baselineB0Usd() * compoundMultiplier;
 
         ActualGross actual = resolveActualGross(row);
-
-        Double predictedLow = range == null ? null : range[0];
-        Double predictedHigh = range == null ? null : range[1];
-        Boolean withinRange = null;
+        Boolean withinTolerance = null;
         Double deviationPct = null;
-        if (range != null && actual != null) {
-            withinRange = actual.amountUsd() >= predictedLow && actual.amountUsd() <= predictedHigh;
-            if (actual.amountUsd() < predictedLow) {
-                deviationPct = (predictedLow - actual.amountUsd()) / predictedLow * 100.0;
-            } else if (actual.amountUsd() > predictedHigh) {
-                deviationPct = (actual.amountUsd() - predictedHigh) / predictedHigh * 100.0;
-            } else {
-                deviationPct = 0.0;
-            }
+        if (actual != null && actual.amountUsd() > 0) {
+            deviationPct = Math.abs(predictedGross - actual.amountUsd()) / actual.amountUsd() * 100.0;
+            withinTolerance = deviationPct <= TOLERANCE_PCT * 100.0;
         }
 
         return new BoxOfficeBacktestResult(
                 row.movieName(), row.releaseDate(),
                 actual == null ? null : actual.amountUsd(),
                 actual == null ? null : actual.source(),
-                predictedLow, predictedHigh, projectedGrossRaw,
-                withinRange, deviationPct, upside, downside, verdict, null);
+                baseline, compoundMultiplier, predictedGross,
+                withinTolerance, deviationPct, factorDeltas,
+                postReleaseHelp, postReleaseHurt, rationale, null);
+    }
+
+    // Geometric mean of the (1+delta) compounding factors, i.e. Y = B0 * exp(mean(ln(1+delta_i))),
+    // NOT their raw product. For small deltas, PROD(1+delta_i) ~ exp(SUM(delta_i)) - exponential in
+    // the *count* of rated factors, not just their average size. That makes the result depend on
+    // how finely the catalog happens to be split (ten near-duplicate +20% factors compound to
+    // ~1.2^10 = 6.2x under a raw product, vs. one +20% factor compounding to 1.2x, for what is
+    // substantively the same underlying judgment about the movie). The geometric mean is invariant
+    // to that split: it converges to a stable multiplier driven by the *average* rated delta, so
+    // asking about more factors doesn't itself inflate the prediction. Only non-NA deltas
+    // (ratedDeltas) enter the mean; an empty list (every factor came back NA) yields a neutral 1.0.
+    private double geometricCompound(List<Double> ratedDeltas) {
+        if (ratedDeltas.isEmpty()) {
+            return 1.0;
+        }
+        double logSum = 0.0;
+        for (double delta : ratedDeltas) {
+            logSum += Math.log(1 + delta);
+        }
+        double multiplier = Math.exp(logSum / ratedDeltas.size());
+        return Math.max(MIN_COMPOUND_MULTIPLIER, Math.min(MAX_COMPOUND_MULTIPLIER, multiplier));
     }
 
     private BoxOfficeBacktestResult errorResult(MovieBacktestRow row, String error) {
         return new BoxOfficeBacktestResult(
                 row.movieName(), row.releaseDate(), null, null, null, null, null, null, null,
-                List.of(), List.of(), null, error);
+                null, List.of(), List.of(), null, error);
     }
 
     private String buildPrompt(MovieBacktestRow row) {
         String market = MovieIndustry.industryFor(row.language());
-        return promptTemplate
+        String base = promptTemplate
                 .replace("<Movie_Name>", valueOrNA(row.movieName()))
                 .replace("<Movie_Release_Date>", valueOrNA(row.releaseDate()))
                 .replace("<Movie_Genre>", valueOrNA(row.genre()))
@@ -184,16 +245,169 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
                 .replace("<Movie_Trailer_Release_Date>", valueOrNA(row.trailerReleaseDate()))
                 .replace("<Movie_Trailer_Views>",
                         row.trailerViews() == null ? "Not Available" : String.valueOf(row.trailerViews()));
+
+        return base + "\n\n" + buildFactorListSection() + "\n\n" + buildResponseFormatSection();
+    }
+
+    private String buildFactorListSection() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Factors to rate for this movie:\n");
+        for (BoxOfficeFactorCatalog.FactorDefinition def : BoxOfficeFactorCatalog.llmRated()) {
+            sb.append("    • ").append(def.number()).append(". ").append(def.name())
+                    .append(" [Direction: ").append(directionLabel(def.direction())).append("]")
+                    .append(" (Impact if applicable: ").append(impactLabel(def)).append(")");
+            if (def.role() == BoxOfficeFactorCatalog.Role.POST_RELEASE) {
+                sb.append(" - post-release factor, informational only, not used in the gross calculation");
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String buildResponseFormatSection() {
+        List<Integer> numbers = BoxOfficeFactorCatalog.llmRated().stream()
+                .map(BoxOfficeFactorCatalog.FactorDefinition::number)
+                .collect(Collectors.toList());
+        return "For EACH factor number listed above, rate how strongly it applies to THIS movie:\n" +
+                "  - 1 = strongly against this movie's performance in that factor's direction\n" +
+                "  - 3 = neutral / roughly average\n" +
+                "  - 5 = strongly in favor of this movie's performance in that factor's direction\n" +
+                "  - \"NA\" = you have no real basis to judge this factor from the data given - do NOT guess a 3 " +
+                "just to fill it in, use \"NA\" instead so it is excluded rather than silently treated as average.\n\n" +
+                "Respond with ONLY this JSON object, no markdown code fences, no commentary before or after it:\n" +
+                "{\n" +
+                "  \"factorRatings\": { " + numbers.stream().map(n -> "\"" + n + "\": <1-5 or \"NA\">")
+                        .collect(Collectors.joining(", ")) + " },\n" +
+                "  \"postReleaseFactorsHelp\": [ \"short strings describing post-release factors (91-100) that " +
+                "would help this specific movie\" ],\n" +
+                "  \"postReleaseFactorsHurt\": [ \"short strings describing post-release factors (91-100) that " +
+                "would hurt this specific movie\" ],\n" +
+                "  \"rationale\": \"one or two sentences on the overall qualitative read of this movie\"\n" +
+                "}";
+    }
+
+    private String directionLabel(BoxOfficeFactorCatalog.Direction direction) {
+        return switch (direction) {
+            case POSITIVE -> "Positive";
+            case NEGATIVE -> "Negative";
+            case BIDIRECTIONAL -> "Bidirectional";
+        };
+    }
+
+    private String impactLabel(BoxOfficeFactorCatalog.FactorDefinition def) {
+        double low = def.low() * 100, high = def.high() * 100;
+        if (def.direction() == BoxOfficeFactorCatalog.Direction.BIDIRECTIONAL && low == -high) {
+            return String.format(Locale.ROOT, "+/- %.0f%%", high);
+        }
+        return String.format(Locale.ROOT, "%+.0f%% to %+.0f%%", low, high);
+    }
+
+    private Map<Integer, Integer> parseFactorRatings(JsonNode ratingsNode) {
+        Map<Integer, Integer> result = new LinkedHashMap<>();
+        if (ratingsNode == null || !ratingsNode.isObject()) {
+            return result;
+        }
+        ratingsNode.fields().forEachRemaining(entry -> {
+            Integer factorNumber = parseIntOrNull(entry.getKey());
+            if (factorNumber == null) {
+                return;
+            }
+            JsonNode valueNode = entry.getValue();
+            Integer rating = asRatingInteger(valueNode);
+            if (rating != null && rating >= 1 && rating <= 5) {
+                result.put(factorNumber, rating);
+            }
+            // "NA"/out-of-range/non-numeric values are simply omitted - processMovie() then
+            // defaults that factor's delta to 0 (neutral), not the range midpoint.
+        });
+        return result;
+    }
+
+    private static Integer parseIntOrNull(String s) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // Accepts either a JSON integer or a numeric string, same tolerance ConflictBalanceServiceImpl
+    // applies - LLMs are inconsistent about honoring "output a plain integer". A literal "NA" (or
+    // anything else non-numeric) correctly falls through to null here.
+    private static Integer asRatingInteger(JsonNode valueNode) {
+        if (valueNode.isIntegralNumber()) {
+            return valueNode.asInt();
+        }
+        if (valueNode.isTextual()) {
+            try {
+                return Integer.parseInt(valueNode.asText().trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    // Averages the teaser and trailer timing deltas (whichever dates are actually present) using
+    // the same short-window-penalty / optimal-window-bonus thresholds for both.
+    private Double timingDelta46(MovieBacktestRow row) {
+        Double trailerDelta = timingDelta(row.trailerReleaseDate(), row.releaseDate(),
+                SHORT_WINDOW_DAYS, SHORT_WINDOW_PENALTY, OPTIMAL_MIN_DAYS_46, OPTIMAL_MAX_DAYS_46, OPTIMAL_BONUS_46);
+        Double teaserDelta = timingDelta(row.teaserReleaseDate(), row.releaseDate(),
+                SHORT_WINDOW_DAYS, SHORT_WINDOW_PENALTY, OPTIMAL_MIN_DAYS_46, OPTIMAL_MAX_DAYS_46, OPTIMAL_BONUS_46);
+        if (trailerDelta == null && teaserDelta == null) {
+            return null;
+        }
+        if (trailerDelta == null) {
+            return teaserDelta;
+        }
+        if (teaserDelta == null) {
+            return trailerDelta;
+        }
+        return (trailerDelta + teaserDelta) / 2.0;
+    }
+
+    private Double timingDelta47(MovieBacktestRow row) {
+        return timingDelta(row.firstSongReleaseDate(), row.releaseDate(),
+                -1, 0.0, OPTIMAL_MIN_DAYS_47, OPTIMAL_MAX_DAYS_47, OPTIMAL_BONUS_47);
+    }
+
+    // Returns null when either date is missing/unparseable (no basis to compute a timing delta),
+    // the short-window penalty when the event lands fewer than shortWindowDays before release
+    // (pass a negative shortWindowDays to disable the penalty band entirely, as factor 47 does -
+    // its catalog description defines no negative side), the optimal-window bonus when it lands in
+    // [optimalMinDays, optimalMaxDays] before release, and 0 (neutral) otherwise.
+    private Double timingDelta(String eventDateText, String releaseDateText, int shortWindowDays,
+                                double shortWindowPenalty, int optimalMinDays, int optimalMaxDays, double optimalBonus) {
+        LocalDate eventDate = parseLocalDate(eventDateText);
+        LocalDate releaseDate = parseLocalDate(releaseDateText);
+        if (eventDate == null || releaseDate == null) {
+            return null;
+        }
+        long daysBefore = ChronoUnit.DAYS.between(eventDate, releaseDate);
+        if (shortWindowDays >= 0 && daysBefore < shortWindowDays) {
+            return shortWindowPenalty;
+        }
+        if (daysBefore >= optimalMinDays && daysBefore <= optimalMaxDays) {
+            return optimalBonus;
+        }
+        return 0.0;
+    }
+
+    private LocalDate parseLocalDate(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text.trim());
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     private record ActualGross(double amountUsd, String source) {
     }
 
-    // Precedence follows what's actually populated in movies_data_collection for Indian rows
-    // (per docs/PREDICTIVE_FACTOR_DATA_AUDIT.md): global `revenue` is the most standard figure and
-    // maps most directly onto "Projected Global Gross"; the India/overseas split and domestic/
-    // overseas split are reasonable substitutes when revenue is zero; first_day_worldwide is kept
-    // only as a last-resort proxy since it's a single day, not a total gross.
     private ActualGross resolveActualGross(MovieBacktestRow row) {
         if (row.actualRevenue() != null && row.actualRevenue() > 0) {
             return new ActualGross(row.actualRevenue(), "revenue");
@@ -215,39 +429,6 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
 
     private static double nz(Double d) {
         return d == null ? 0 : d;
-    }
-
-    private double[] parseGrossRange(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        Matcher m = MONEY_PATTERN.matcher(raw);
-        List<Double> values = new ArrayList<>();
-        while (m.find() && values.size() < 2) {
-            if (m.group(1) == null) {
-                continue;
-            }
-            double number;
-            try {
-                number = Double.parseDouble(m.group(1).replace(",", ""));
-            } catch (NumberFormatException e) {
-                continue;
-            }
-            String unit = m.group(2) == null ? "" : m.group(2).toLowerCase();
-            double usd = switch (unit) {
-                case "billion", "bn", "b" -> number * 1_000_000_000d;
-                case "million", "mn", "m" -> number * 1_000_000d;
-                default -> number;
-            };
-            values.add(usd);
-        }
-        if (values.isEmpty()) {
-            return null;
-        }
-        if (values.size() == 1) {
-            return new double[]{values.get(0), values.get(0)};
-        }
-        return new double[]{Math.min(values.get(0), values.get(1)), Math.max(values.get(0), values.get(1))};
     }
 
     private String stripCodeFences(String raw) {
@@ -285,58 +466,36 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
         return (s == null || s.isBlank()) ? "Not Available" : s.trim();
     }
 
-    private String normalizeFactorLabel(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String trimmed = raw.trim();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-        Matcher m = FACTOR_PREFIX.matcher(trimmed);
-        if (m.matches() && !m.group(2).isBlank()) {
-            return m.group(1) + ". " + m.group(2).trim();
-        }
-        return trimmed;
-    }
-
-    // tally[factor] = [citedAsUpside, upsideConfirmed, citedAsDownside, downsideConfirmed]. See
-    // BoxOfficeFactorStat's javadoc for what "confirmed" means here — an outcome-direction check,
-    // not a causal isolation of that one factor.
-    private void tallyFactors(Map<String, int[]> tally, BoxOfficeBacktestResult result) {
-        boolean metLow = result.actualGrossUsd() >= result.predictedLowUsd();
-        boolean underHigh = result.actualGrossUsd() <= result.predictedHighUsd();
-        for (String raw : result.upsideFactorsCited()) {
-            String key = normalizeFactorLabel(raw);
-            if (key == null) {
+    private void tallyFactors(Map<Integer, int[]> tally, Map<Integer, Double> deltaSumWhenRated, BoxOfficeBacktestResult result) {
+        for (Map.Entry<String, Double> entry : result.factorDeltas().entrySet()) {
+            Integer factorNumber = parseIntOrNull(entry.getKey());
+            if (factorNumber == null) {
                 continue;
             }
-            int[] counts = tally.computeIfAbsent(key, k -> new int[4]);
-            counts[0]++;
-            if (metLow) {
-                counts[1]++;
-            }
-        }
-        for (String raw : result.downsideFactorsCited()) {
-            String key = normalizeFactorLabel(raw);
-            if (key == null) {
-                continue;
-            }
-            int[] counts = tally.computeIfAbsent(key, k -> new int[4]);
-            counts[2]++;
-            if (underHigh) {
-                counts[3]++;
+            int[] counts = tally.computeIfAbsent(factorNumber, k -> new int[2]);
+            if (entry.getValue() != 0.0) {
+                counts[0]++; // rated (non-zero delta implies the LLM gave a non-neutral rating, or
+                             // it's a server-computed factor that actually applied)
+                deltaSumWhenRated.merge(factorNumber, entry.getValue(), Double::sum);
+            } else {
+                counts[1]++; // NA / neutral
             }
         }
     }
 
-    private List<BoxOfficeFactorStat> buildFactorStats(Map<String, int[]> tally) {
-        return tally.entrySet().stream()
-                .map(e -> new BoxOfficeFactorStat(e.getKey(), e.getValue()[0], e.getValue()[1], e.getValue()[2], e.getValue()[3]))
-                .sorted((a, b) -> Integer.compare(
-                        b.citedAsUpsideCount() + b.citedAsDownsideCount(),
-                        a.citedAsUpsideCount() + a.citedAsDownsideCount()))
-                .collect(Collectors.toList());
+    private List<BoxOfficeFactorStat> buildFactorStats(Map<Integer, int[]> tally, Map<Integer, Double> deltaSumWhenRated) {
+        List<BoxOfficeFactorStat> stats = new ArrayList<>();
+        for (Map.Entry<Integer, int[]> entry : tally.entrySet()) {
+            int factorNumber = entry.getKey();
+            int ratedCount = entry.getValue()[0];
+            int naCount = entry.getValue()[1];
+            double avgDelta = ratedCount == 0 ? 0.0 : deltaSumWhenRated.getOrDefault(factorNumber, 0.0) / ratedCount;
+            BoxOfficeFactorCatalog.FactorDefinition def = BoxOfficeFactorCatalog.byNumber(factorNumber);
+            String name = def == null ? ("Factor " + factorNumber) : def.name();
+            stats.add(new BoxOfficeFactorStat(factorNumber, name, ratedCount, naCount, avgDelta));
+        }
+        stats.sort((a, b) -> Integer.compare(b.ratedCount(), a.ratedCount()));
+        return stats;
     }
 
     private void appendLogLine(Path logPath, BoxOfficeBacktestResult result) {
@@ -349,33 +508,23 @@ public class BoxOfficeBacktestWorkerImpl implements BoxOfficeBacktestWorker {
         }
     }
 
-    // Written once, at the end of the run: per-factor citation counts vs. how often the outcome
-    // actually matched the cited direction. This is the "average impact score" report a human can
-    // use to decide whether a factor's stated range in the prompt catalog needs adjusting — no
-    // range is changed automatically.
     private void appendSummary(Path logPath, String runId, BacktestRunStatus status, List<BoxOfficeFactorStat> factorStats) {
         StringBuilder sb = new StringBuilder();
         sb.append("=== SUMMARY runId=").append(runId)
                 .append(" completedAt=").append(Instant.now())
                 .append(" ===").append(System.lineSeparator());
         sb.append(String.format(
-                "Processed %d, validated %d, within predicted range %d (%.1f%% of validated)%n",
-                status.getProcessedCount(), status.getValidatedCount(), status.getWithinRangeCount(),
+                "Processed %d, validated %d, within %.0f%% tolerance %d (%.1f%% of validated)%n",
+                status.getProcessedCount(), status.getValidatedCount(), TOLERANCE_PCT * 100,
+                status.getWithinRangeCount(),
                 status.getValidatedCount() == 0 ? 0.0
                         : status.getWithinRangeCount() * 100.0 / status.getValidatedCount()));
-        sb.append("Per-factor citation vs. outcome (for review - impact ranges are not auto-adjusted):")
+        sb.append("Per-factor rating frequency (for review - roles/ranges are not auto-adjusted):")
                 .append(System.lineSeparator());
         for (BoxOfficeFactorStat stat : factorStats) {
-            if (stat.citedAsUpsideCount() > 0) {
-                sb.append(String.format("  [UPSIDE]   %-70s cited %3d, confirmed %3d (%.0f%%)%n",
-                        stat.factor(), stat.citedAsUpsideCount(), stat.upsideConfirmedCount(),
-                        stat.upsideConfirmationRate() * 100));
-            }
-            if (stat.citedAsDownsideCount() > 0) {
-                sb.append(String.format("  [DOWNSIDE] %-70s cited %3d, confirmed %3d (%.0f%%)%n",
-                        stat.factor(), stat.citedAsDownsideCount(), stat.downsideConfirmedCount(),
-                        stat.downsideConfirmationRate() * 100));
-            }
+            sb.append(String.format("  %3d. %-55s rated %3d, NA %3d, avg delta when rated %+6.1f%%%n",
+                    stat.factorNumber(), stat.factorName(), stat.ratedCount(), stat.naCount(),
+                    stat.avgDeltaWhenRated() * 100));
         }
         sb.append("=== END SUMMARY ===").append(System.lineSeparator());
         try {

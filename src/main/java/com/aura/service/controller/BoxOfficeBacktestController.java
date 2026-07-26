@@ -1,6 +1,7 @@
 package com.aura.service.controller;
 
 import com.aura.service.dto.BacktestRunStatus;
+import com.aura.service.dto.MovieIdentifier;
 import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.service.BoxOfficeBacktestService;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,6 +45,30 @@ public class BoxOfficeBacktestController {
         if (status == null) {
             throw new ResourceNotFoundException("No backtest run found with id: " + runId);
         }
+        return ResponseEntity.ok(toResponse(status));
+    }
+
+    /**
+     * Re-runs the prompt over exactly the same movies as run {@code runId} - use this after
+     * editing the prompt catalog's impact ranges to check whether the change actually helped,
+     * on a like-for-like movie set rather than a fresh (possibly different) sample.
+     */
+    @PostMapping("/{runId}/rerun")
+    @PreAuthorize("hasAuthority('ROLE_ADMIN')")
+    public ResponseEntity<Map<String, Object>> rerun(@PathVariable String runId) {
+        BacktestRunStatus status = backtestService.rerun(runId);
+        return ResponseEntity.ok(toResponse(status));
+    }
+
+    /**
+     * Same as {@code /{runId}/rerun}, but takes the movie set explicitly - for validating a
+     * prompt-catalog change against a specific movie list captured before the app restarted to
+     * load that change (run state is in-memory only and doesn't survive a restart).
+     */
+    @PostMapping("/rerun-movies")
+    @PreAuthorize("hasAuthority('ROLE_ADMIN')")
+    public ResponseEntity<Map<String, Object>> rerunMovies(@RequestBody List<MovieIdentifier> movies) {
+        BacktestRunStatus status = backtestService.rerunMovies(movies);
         return ResponseEntity.ok(toResponse(status));
     }
 
