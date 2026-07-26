@@ -40,6 +40,27 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
     // Legacy rows from before ownership existed; assigned to the seeded admin by the startup backfill.
     List<ManagedEntity> findByOwnerIsNull();
 
+    // ---- Movie audience/budget-comparison lookups (see MovieAudienceServiceImpl) ----
+
+    List<ManagedEntity> findByTypeAndLanguageIgnoreCase(String type, String language);
+
+    List<ManagedEntity> findByTypeAndLanguageIgnoreCaseAndOwnerId(String type, String language, Long ownerId);
+
+    List<ManagedEntity> findByTypeAndNameIgnoreCase(String type, String name);
+
+    List<ManagedEntity> findByTypeAndNameIgnoreCaseAndOwnerId(String type, String name, Long ownerId);
+
+    List<ManagedEntity> findByTypeAndNameIgnoreCaseAndLanguageIgnoreCase(String type, String name, String language);
+
+    List<ManagedEntity> findByTypeAndNameIgnoreCaseAndLanguageIgnoreCaseAndOwnerId(
+            String type, String name, String language, Long ownerId);
+
+    // budget range is [min, max] inclusive; excludes the target movie itself via idNot.
+    List<ManagedEntity> findByTypeAndBudgetBetweenAndIdNot(String type, Double min, Double max, Long idNot);
+
+    List<ManagedEntity> findByTypeAndBudgetBetweenAndIdNotAndOwnerId(
+            String type, Double min, Double max, Long idNot, Long ownerId);
+
     // language/industry/state are stored verbatim in whatever case the entity was
     // created with (e.g. "Kannada", "Tollywood"), but callers filter in any case, so
     // compare case-insensitively — same convention as the genre filter below. Only the

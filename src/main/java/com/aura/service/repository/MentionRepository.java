@@ -339,4 +339,44 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             @Param("industry") String industry,
             @Param("state") String state
     );
+
+    // ---- Movie audience/budget-comparison queries (see MovieAudienceServiceImpl) ----
+    // All three restrict to mentions with a non-zero sentiment score, per the "only count posts
+    // with a non-zero sentiment score" requirement - NULL and 0 are both excluded.
+
+    /**
+     * Total unique posters across ALL of the given entities combined (a user posting about two of
+     * the entities is still counted once) - used for the language-wide audience count, where
+     * {@code entityIds} is every movie in that language.
+     */
+    @Query("SELECT COUNT(DISTINCT m.author) FROM Mention m " +
+            "WHERE m.author IS NOT NULL AND m.sentimentScore IS NOT NULL AND m.sentimentScore <> 0 " +
+            "AND EXISTS (SELECT e FROM m.managedEntities e WHERE e.id IN :entityIds)")
+    long countDistinctAuthorsByEntityIdsNonZeroSentiment(@Param("entityIds") List<Long> entityIds);
+
+    /**
+     * Per-user engagement for one movie (or several entity rows representing the same movie, e.g.
+     * duplicate tracked entities with the same name/language): post count, average sentiment score,
+     * and how many of that user's posts were POSITIVE. {@code EXISTS} (not a join) so a mention
+     * attributed to more than one of {@code entityIds} is still only counted once per author.
+     */
+    @Query("SELECT m.author, COUNT(m), AVG(m.sentimentScore), " +
+            "SUM(CASE WHEN m.sentiment = com.aura.service.enums.Sentiment.POSITIVE THEN 1L ELSE 0L END) " +
+            "FROM Mention m " +
+            "WHERE m.author IS NOT NULL AND m.sentimentScore IS NOT NULL AND m.sentimentScore <> 0 " +
+            "AND EXISTS (SELECT e FROM m.managedEntities e WHERE e.id IN :entityIds) " +
+            "GROUP BY m.author")
+    List<Object[]> findAuthorEngagementStats(@Param("entityIds") List<Long> entityIds);
+
+    /**
+     * Unique poster count and total qualifying post count per entity, for a set of distinct movies
+     * (e.g. the target movie plus every budget-comparable movie). Uses a JOIN rather than EXISTS,
+     * deliberately: a post shared across two of the requested entities must count toward BOTH of
+     * their totals here, since each row in the result is a separate movie's own metadata.
+     */
+    @Query("SELECT e.id, COUNT(DISTINCT m.author), COUNT(m) FROM Mention m JOIN m.managedEntities e " +
+            "WHERE e.id IN :entityIds " +
+            "AND m.author IS NOT NULL AND m.sentimentScore IS NOT NULL AND m.sentimentScore <> 0 " +
+            "GROUP BY e.id")
+    List<Object[]> countAudienceAndPostsPerEntity(@Param("entityIds") List<Long> entityIds);
 }
