@@ -155,7 +155,7 @@ class EntityServiceLimitTest {
 
     @Test
     void diamondUserGetsHigherCaps_createAllowedAtCountThatLowerTiersWouldReject() {
-        // 15 owned entities would breach Bronze (5), but Diamond allows 20 — so the create proceeds.
+        // 15 owned entities would breach Bronze (5), but Diamond allows 100 — so the create proceeds.
         when(licenseService.currentMaxEntities()).thenReturn(LicenseTier.DIAMOND.getMaxEntities());
         when(licenseService.currentMaxKeywords()).thenReturn(LicenseTier.DIAMOND.getMaxKeywords());
         when(entityRepository.countByOwnerId(USER_ID)).thenReturn(15L);

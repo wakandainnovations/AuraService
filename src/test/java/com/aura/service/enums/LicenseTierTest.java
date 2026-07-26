@@ -38,8 +38,8 @@ class LicenseTierTest {
 
     @Test
     void diamondLimits() {
-        assertThat(LicenseTier.DIAMOND.getMaxKeywords()).isEqualTo(25);
-        assertThat(LicenseTier.DIAMOND.getMaxEntities()).isEqualTo(20);
+        assertThat(LicenseTier.DIAMOND.getMaxKeywords()).isEqualTo(100);
+        assertThat(LicenseTier.DIAMOND.getMaxEntities()).isEqualTo(100);
         assertThat(LicenseTier.DIAMOND.getMaxMentionsPerMonth()).isEqualTo(100_000);
         assertThat(LicenseTier.DIAMOND.getCollectionFrequency()).isEqualTo(Duration.ofMinutes(10));
     }

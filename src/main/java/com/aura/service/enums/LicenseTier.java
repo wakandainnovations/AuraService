@@ -17,7 +17,7 @@ public enum LicenseTier {
     BRONZE(5, 5, 2_000, Duration.ofHours(24)),
     SILVER(10, 10, 10_000, Duration.ofHours(12)),
     GOLD(15, 15, 40_000, Duration.ofHours(1)),
-    DIAMOND(25, 20, 100_000, Duration.ofMinutes(10));
+    DIAMOND(100, 100, 100_000, Duration.ofMinutes(10));
 
     /** Maximum number of keywords a user on this tier may track across their entities. */
     private final int maxKeywords;
