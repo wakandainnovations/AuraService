@@ -211,6 +211,34 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
            nativeQuery = true)
     List<Object[]> findXPostViewsCounts(@Param("postIds") Collection<String> postIds);
 
+    // ---- Per-platform engagement counts for the graph USER-node weight (see GraphSyncServiceImpl) ----
+    // Each ingestion table names its like/comment columns differently; every query below is
+    // normalized to (id, likes, comments). None of the four tables track a shares/retweet count —
+    // GraphSyncServiceImpl reuses its RETWEETED "RT" detection as the shares proxy instead.
+
+    @Query(value = "SELECT x.id, x.likes_count, x.comment_count FROM x_posts x WHERE x.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findXPostEngagement(@Param("postIds") Collection<String> postIds);
+
+    @Query(value = "SELECT y.id, y.likes_count, y.reply_count FROM youtube_comments y WHERE y.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findYoutubeCommentEngagement(@Param("postIds") Collection<String> postIds);
+
+    @Query(value = "SELECT r.id, r.score, r.num_comments FROM reddit_posts r WHERE r.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findRedditPostEngagement(@Param("postIds") Collection<String> postIds);
+
+    @Query(value = "SELECT i.id, i.like_count, i.comments_count FROM instagram_posts i WHERE i.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findInstagramPostEngagement(@Param("postIds") Collection<String> postIds);
+
+    // Every mention this author has posted that's linked to at least one MOVIE entity — the same
+    // scope GraphSyncServiceImpl uses to build edges, so the USER node's weight only reflects
+    // movie-related activity.
+    @Query("SELECT m FROM Mention m WHERE m.author = :author AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.type = 'MOVIE')")
+    List<Mention> findMovieLinkedMentionsByAuthor(@Param("author") String author);
+
     @Query(value = "SELECT DISTINCT m.* FROM mentions m " +
            "LEFT JOIN mention_entities me ON me.mention_id = m.id WHERE " +
            "(:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
