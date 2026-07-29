@@ -36,9 +36,11 @@ import static org.mockito.Mockito.when;
  * since it needs semantic reading of free text, and the USER node's weight is
  * {@code comments*3 + shares*2 + likes*1} summed across the author's movie-linked mentions (shares
  * reusing the RETWEETED "RT" detection, since none of the platform ingestion tables track a real share
- * count). Also covers the find-or-create node dedup and the edge-exists idempotency guard. Collaborators
- * are mocked as interfaces ({@link GraphNodeRepository}, {@link GraphEdgeRepository},
- * {@link MentionRepository}, {@link LLMService}) — never concrete classes.
+ * count). Also covers the user-node find-or-create dedup and the edge-exists idempotency guard. MOVIE
+ * node dedup/upsert is delegated to {@link GraphNodeFactory} (see {@link MovieGraphNodeAdapterTest} for
+ * that behavior) — here it's mocked as a collaborator, not re-tested. Collaborators are mocked as
+ * interfaces ({@link GraphNodeRepository}, {@link GraphEdgeRepository}, {@link MentionRepository},
+ * {@link GraphNodeFactory}, {@link LLMService}) — never concrete classes.
  */
 class GraphSyncServiceImplTest {
 
@@ -50,6 +52,7 @@ class GraphSyncServiceImplTest {
     private GraphNodeRepository graphNodeRepository;
     private GraphEdgeRepository graphEdgeRepository;
     private MentionRepository mentionRepository;
+    private GraphNodeFactory graphNodeFactory;
     private LLMService llmService;
     private GraphSyncServiceImpl service;
 
@@ -58,9 +61,11 @@ class GraphSyncServiceImplTest {
         graphNodeRepository = mock(GraphNodeRepository.class);
         graphEdgeRepository = mock(GraphEdgeRepository.class);
         mentionRepository = mock(MentionRepository.class);
+        graphNodeFactory = mock(GraphNodeFactory.class);
         llmService = mock(LLMService.class);
         service = new GraphSyncServiceImpl(
-                graphNodeRepository, graphEdgeRepository, mentionRepository, llmService, new ObjectMapper());
+                graphNodeRepository, graphEdgeRepository, mentionRepository, graphNodeFactory,
+                llmService, new ObjectMapper());
         ReflectionTestUtils.setField(service, "watchedClassificationPrompt", PROMPT_TEMPLATE);
 
         when(llmService.generateReply(any())).thenReturn("{\"watched\": false, \"rationale\": \"no signal\"}");
@@ -143,20 +148,20 @@ class GraphSyncServiceImplTest {
     }
 
     @Test
-    void reusesExistingUserAndMovieNodesInsteadOfCreatingDuplicates() {
+    void reusesExistingUserNodeAndWiresEdgeToFactoryReturnedMovieNode() {
         // The USER node still gets saved once, to persist its refreshed weight — dedup means no NEW
-        // node is created (the movie node, which has no weight, is never re-saved) and the edge is
-        // written against the pre-existing ids rather than freshly generated ones.
+        // node is created, and the edge is written against the pre-existing user id and whatever movie
+        // node id GraphNodeFactory hands back (its own dedup/upsert is covered by MovieGraphNodeAdapterTest).
         Mention mention = mentionOf("fan1", "great movie");
         GraphNode existingUser = nodeWithId(USER_NODE_ID, GraphNodeType.USER);
-        GraphNode existingMovie = nodeWithId(MOVIE_NODE_ID, GraphNodeType.MOVIE);
+        GraphNode movieNode = nodeWithId(MOVIE_NODE_ID, GraphNodeType.MOVIE);
         when(graphNodeRepository.findUserNodeByAuthor("fan1")).thenReturn(Optional.of(existingUser));
-        when(graphNodeRepository.findMovieNodeByManagedEntityId(MOVIE_ENTITY_ID)).thenReturn(Optional.of(existingMovie));
         when(graphNodeRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(graphNodeFactory.materializeMovie(any())).thenReturn(movieNode);
 
         service.syncMention(mention);
 
-        verify(graphNodeRepository, never()).save(argThat(node -> node.getType() == GraphNodeType.MOVIE));
+        verify(graphNodeRepository, never()).save(argThat(node -> node != existingUser));
         verify(graphEdgeRepository).save(argThat(edge ->
                 edge.getRelationType() == GraphRelationType.POSTED_ABOUT
                         && edge.getFromNodeId().equals(USER_NODE_ID)
@@ -169,9 +174,9 @@ class GraphSyncServiceImplTest {
         // attributes null; refreshUserNodeWeight must not NPE trying to copy it.
         Mention mention = mentionOf("fan1", "great movie");
         GraphNode existingUser = nodeWithId(USER_NODE_ID, GraphNodeType.USER);
-        GraphNode existingMovie = nodeWithId(MOVIE_NODE_ID, GraphNodeType.MOVIE);
+        GraphNode movieNode = nodeWithId(MOVIE_NODE_ID, GraphNodeType.MOVIE);
         when(graphNodeRepository.findUserNodeByAuthor("fan1")).thenReturn(Optional.of(existingUser));
-        when(graphNodeRepository.findMovieNodeByManagedEntityId(MOVIE_ENTITY_ID)).thenReturn(Optional.of(existingMovie));
+        when(graphNodeFactory.materializeMovie(any())).thenReturn(movieNode);
 
         service.syncMention(mention);
 
@@ -309,10 +314,15 @@ class GraphSyncServiceImplTest {
 
     private void mockNoExistingNodes() {
         when(graphNodeRepository.findUserNodeByAuthor(any())).thenReturn(Optional.empty());
-        when(graphNodeRepository.findMovieNodeByManagedEntityId(any())).thenReturn(Optional.empty());
         when(graphNodeRepository.save(any())).thenAnswer(invocation -> {
             GraphNode node = invocation.getArgument(0);
-            node.setId(node.getType() == GraphNodeType.USER ? USER_NODE_ID : MOVIE_NODE_ID);
+            node.setId(USER_NODE_ID);
+            return node;
+        });
+        when(graphNodeFactory.materializeMovie(any())).thenAnswer(invocation -> {
+            GraphNode node = new GraphNode();
+            node.setType(GraphNodeType.MOVIE);
+            node.setId(MOVIE_NODE_ID);
             return node;
         });
     }

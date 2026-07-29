@@ -47,8 +47,6 @@ public class GraphSyncServiceImpl implements GraphSyncService {
 
     private static final String MOVIE_TYPE = "MOVIE";
     private static final String ATTR_AUTHOR = "author";
-    private static final String ATTR_MANAGED_ENTITY_ID = "managedEntityId";
-    private static final String ATTR_NAME = "name";
     private static final String ATTR_WEIGHT = "weight";
     private static final String MOVIE_NAME_PLACEHOLDER = "[Movie Name]";
     private static final String POST_CONTENT_PLACEHOLDER = "[Post Content]";
@@ -65,6 +63,7 @@ public class GraphSyncServiceImpl implements GraphSyncService {
     private final GraphNodeRepository graphNodeRepository;
     private final GraphEdgeRepository graphEdgeRepository;
     private final MentionRepository mentionRepository;
+    private final GraphNodeFactory graphNodeFactory;
     private final LLMService llmService;
     private final ObjectMapper objectMapper;
 
@@ -75,11 +74,13 @@ public class GraphSyncServiceImpl implements GraphSyncService {
             GraphNodeRepository graphNodeRepository,
             GraphEdgeRepository graphEdgeRepository,
             MentionRepository mentionRepository,
+            GraphNodeFactory graphNodeFactory,
             LLMService llmService,
             ObjectMapper objectMapper) {
         this.graphNodeRepository = graphNodeRepository;
         this.graphEdgeRepository = graphEdgeRepository;
         this.mentionRepository = mentionRepository;
+        this.graphNodeFactory = graphNodeFactory;
         this.llmService = llmService;
         this.objectMapper = objectMapper;
     }
@@ -103,7 +104,7 @@ public class GraphSyncServiceImpl implements GraphSyncService {
         boolean isRetweet = isRetweet(mention.getContent());
 
         for (ManagedEntity movie : movies) {
-            GraphNode movieNode = findOrCreateMovieNode(movie);
+            GraphNode movieNode = graphNodeFactory.materializeMovie(movie);
 
             createEdgeIfAbsent(userNode.getId(), movieNode.getId(),
                     GraphRelationType.POSTED_ABOUT, mention.getPostDate());
@@ -131,20 +132,6 @@ public class GraphSyncServiceImpl implements GraphSyncService {
                     GraphNode node = new GraphNode();
                     node.setType(GraphNodeType.USER);
                     node.setAttributes(Map.of(ATTR_AUTHOR, author));
-                    return graphNodeRepository.save(node);
-                });
-    }
-
-    private GraphNode findOrCreateMovieNode(ManagedEntity movie) {
-        return graphNodeRepository.findMovieNodeByManagedEntityId(movie.getId())
-                .orElseGet(() -> {
-                    GraphNode node = new GraphNode();
-                    node.setType(GraphNodeType.MOVIE);
-                    node.setOwner(movie.getOwner());
-                    Map<String, Object> attributes = new HashMap<>();
-                    attributes.put(ATTR_MANAGED_ENTITY_ID, movie.getId());
-                    attributes.put(ATTR_NAME, movie.getName());
-                    node.setAttributes(attributes);
                     return graphNodeRepository.save(node);
                 });
     }

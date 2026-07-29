@@ -32,4 +32,14 @@ public interface GraphNodeRepository extends JpaRepository<GraphNode, Long> {
             "AND (attributes ->> 'managedEntityId')::bigint = :entityId LIMIT 1",
             nativeQuery = true)
     Optional<GraphNode> findMovieNodeByManagedEntityId(@Param("entityId") Long entityId);
+
+    @Query(value = "SELECT * FROM graph_nodes WHERE type = 'ACTOR' " +
+            "AND (attributes ->> 'managedEntityId')::bigint = :entityId LIMIT 1",
+            nativeQuery = true)
+    Optional<GraphNode> findActorNodeByManagedEntityId(@Param("entityId") Long entityId);
+
+    @Query(value = "SELECT * FROM graph_nodes WHERE type = 'CHECKPOINT' " +
+            "AND (attributes ->> 'checkpointId')::bigint = :checkpointId LIMIT 1",
+            nativeQuery = true)
+    Optional<GraphNode> findCheckpointNodeByCheckpointId(@Param("checkpointId") Long checkpointId);
 }
