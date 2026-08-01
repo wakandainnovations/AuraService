@@ -407,4 +407,19 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "AND m.author IS NOT NULL AND m.sentimentScore IS NOT NULL AND m.sentimentScore <> 0 " +
             "GROUP BY e.id")
     List<Object[]> countAudienceAndPostsPerEntity(@Param("entityIds") List<Long> entityIds);
+
+    /**
+     * One row per (entity, mention) attribution for {@code entityIds} within the date range - used by
+     * {@code AudiencePatternServiceImpl}'s industry/language cohort comparison. A JOIN (not EXISTS), like
+     * {@link #countAudienceAndPostsPerEntity}: a mention shared across two requested entities in the same
+     * cohort must count toward that cohort's totals twice, once per movie it's attributed to. Returns just
+     * enough of each row to bucket by cohort and resolve engagement: author, platform, postId, sentiment.
+     */
+    @Query("SELECT e.id, m.author, m.platform, m.postId, m.sentimentScore, m.sentiment " +
+            "FROM Mention m JOIN m.managedEntities e " +
+            "WHERE e.id IN :entityIds AND m.postDate >= :startDate AND m.postDate <= :endDate")
+    List<Object[]> findMentionEngagementInputsForEntities(
+            @Param("entityIds") List<Long> entityIds,
+            @Param("startDate") Instant startDate,
+            @Param("endDate") Instant endDate);
 }

@@ -66,6 +66,22 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
     // compare case-insensitively — same convention as the genre filter below. Only the
     // column is wrapped in LOWER(); the caller pre-lower-cases the bind value, because
     // Postgres can't infer the type of an arg inside lower(?) and errors on lower(bytea).
+    // ---- Audience-pattern lookups (see AudiencePatternServiceImpl) ----
+    // Every filter is optional except type. As with findKeywordsByFilters below, only the column
+    // side is wrapped in LOWER() - the caller pre-lower-cases the bind values - because Postgres
+    // can't infer the type of an arg inside lower(?) and errors on lower(bytea).
+    @Query("SELECT e FROM ManagedEntity e WHERE LOWER(e.type) = :type " +
+           "AND (:language IS NULL OR LOWER(e.language) = :language) " +
+           "AND (:industry IS NULL OR LOWER(e.industry) = :industry) " +
+           "AND (:name IS NULL OR LOWER(e.name) = :name) " +
+           "AND (:ownerId IS NULL OR e.owner.id = :ownerId)")
+    List<ManagedEntity> findMoviesByFilters(
+            @Param("type") String type,
+            @Param("language") String language,
+            @Param("industry") String industry,
+            @Param("name") String name,
+            @Param("ownerId") Long ownerId);
+
     @Query("SELECT ek FROM ManagedEntity e JOIN e.keywords ek WHERE " +
            "(:language IS NULL OR LOWER(ek.language) = :language) AND " +
            "(:industry IS NULL OR LOWER(ek.industry) = :industry) AND " +

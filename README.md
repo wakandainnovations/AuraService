@@ -810,7 +810,7 @@ the feature's minimum); holders of `ROLE_ADMIN` are always entitled regardless o
 |---------|-------------|:---:|
 | Checkpoints | `/api/checkpoints/**` | SILVER |
 | Crisis Management | `/api/crisis/**` | GOLD |
-| Aggregated Intel | `/api/marketing/aggregate/**` | DIAMOND |
+| Aggregated Intel | `/api/marketing/aggregate/**`, `/api/marketing/audience-patterns/**` | DIAMOND |
 | Intelligence Report | `/api/entities/{entityType}/{id}/marketing-report[/pdf]` | DIAMOND |
 | Audience & Content | `/api/audience-content` *(stub — module not yet implemented)* | DIAMOND |
 
@@ -4464,6 +4464,186 @@ GET /api/marketing/aggregate/genre/channel-strategy?entityId=1
   "message": "subType must be one of: potential-viewers, super-spreaders, channel-strategy"
 }
 ```
+
+---
+
+### 36a. Get Audience Timing Pattern
+
+**Endpoint:** `GET /api/marketing/audience-patterns/timing`
+
+**Description:** Post volume, unique-author, and engagement (likes + comments) totals for every tracked `MOVIE` entity matching the given filters, bucketed by **UTC hour-of-day** (0-23) and **day-of-week**, plus the top 10 highest-engagement `(day, hour)` slots — the concrete "post here for maximum reach" recommendation for the marketing team. Engagement is pulled from the per-platform ingestion tables (`x_posts`, `youtube_comments`, `reddit_posts`, `instagram_posts`); a mention whose post no longer resolves in its platform table still counts toward `postCount` but contributes zero engagement.
+
+Mounted alongside the [Marketing Aggregation APIs](#marketing-aggregation-apis) and shares the same **DIAMOND** tier gate — see [Premium Feature Tier Gating](#premium-feature-tier-gating).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `language` | String | Filter to movies in this language (e.g. `Tamil`, `Kannada`) |
+| `industry` | String | Filter to movies in this industry (e.g. `Kollywood`, `Sandalwood`) |
+| `movieName` | String | Filter to a single movie by name |
+| `from` | ISO-8601 datetime | Only mentions posted on/after this instant. Defaults to the full history. |
+| `to` | ISO-8601 datetime | Only mentions posted on/before this instant. Defaults to now. |
+| `ownerId` | Long | Admin-only: scope to a specific user's movies. Non-admins may not pass this. |
+
+At least one of `language`, `industry`, or `movieName` is required — otherwise `400 Bad Request`.
+
+**Example Requests:**
+```bash
+# Every Kannada movie
+GET /api/marketing/audience-patterns/timing?language=Kannada
+
+# A specific movie
+GET /api/marketing/audience-patterns/timing?movieName=Karuppu
+
+# Kollywood, narrowed to a date range
+GET /api/marketing/audience-patterns/timing?industry=Kollywood&from=2026-06-01T00:00:00Z&to=2026-08-01T00:00:00Z
+```
+
+**Response (entitled, truncated for readability):**
+```json
+{
+  "entitled": true,
+  "requiredTier": "DIAMOND",
+  "preview": null,
+  "data": {
+    "scope": "language=Kannada",
+    "movieCount": 16,
+    "totalPosts": 6378,
+    "uniqueAuthors": 4384,
+    "totalEngagement": 27144,
+    "byHourOfDay": [
+      { "hourUtc": 0, "postCount": 190, "uniqueAuthors": 173, "totalLikes": 130, "totalComments": 1, "totalEngagement": 131, "avgEngagementPerPost": 0.689 },
+      { "hourUtc": "...", "postCount": "...", "uniqueAuthors": "...", "totalLikes": "...", "totalComments": "...", "totalEngagement": "...", "avgEngagementPerPost": "..." },
+      { "hourUtc": 21, "postCount": 452, "uniqueAuthors": 382, "totalLikes": 4247, "totalComments": 23, "totalEngagement": 4270, "avgEngagementPerPost": 9.447 },
+      { "hourUtc": 23, "postCount": 342, "uniqueAuthors": 294, "totalLikes": 1227, "totalComments": 5, "totalEngagement": 1232, "avgEngagementPerPost": 3.602 }
+    ],
+    "byDayOfWeek": [
+      { "dayOfWeek": "MONDAY", "postCount": 1071, "uniqueAuthors": 845, "totalLikes": 4347, "totalComments": 56, "totalEngagement": 4403, "avgEngagementPerPost": 4.111 },
+      { "dayOfWeek": "...", "postCount": "...", "uniqueAuthors": "...", "totalLikes": "...", "totalComments": "...", "totalEngagement": "...", "avgEngagementPerPost": "..." },
+      { "dayOfWeek": "SUNDAY", "postCount": 740, "uniqueAuthors": 599, "totalLikes": 4691, "totalComments": 52, "totalEngagement": 4743, "avgEngagementPerPost": 6.409 }
+    ],
+    "topTimeSlots": [
+      { "dayOfWeek": "SATURDAY", "hourUtc": 21, "postCount": 58, "totalEngagement": 1522, "avgEngagementPerPost": 26.241 },
+      { "dayOfWeek": "TUESDAY", "hourUtc": 19, "postCount": 154, "totalEngagement": 1477, "avgEngagementPerPost": 9.591 },
+      { "dayOfWeek": "...", "hourUtc": "...", "postCount": "...", "totalEngagement": "...", "avgEngagementPerPost": "..." }
+    ]
+  }
+}
+```
+
+**Response (under-tier, locked preview):**
+```json
+{ "entitled": false, "requiredTier": "DIAMOND", "data": null,
+  "preview": { "scope": "★★★★★", "movieCount": "★★★★★", "byHourOfDay": "★★★★★" } }
+```
+
+**Response fields:**
+- `byHourOfDay` — always a complete 24-entry array (hours 0-23, UTC), even hours with zero posts.
+- `byDayOfWeek` — always a complete 7-entry array (`MONDAY`-`SUNDAY`).
+- `topTimeSlots` — up to 10 `(dayOfWeek, hourUtc)` combinations ranked by `totalEngagement` descending; slots with zero engagement are omitted entirely rather than padded in.
+- `uniqueAuthors` (top-level) counts a poster once across the whole scope, even if they posted about several matching movies or at several different times.
+
+**Status Codes:**
+- `200 OK`
+- `400 Bad Request` — none of `language`/`industry`/`movieName` provided
+- `404 Not Found` — no movies match the given filters (within the caller's ownership scope)
+
+---
+
+### 36b. Get Audience Cohort Pattern
+
+**Endpoint:** `GET /api/marketing/audience-patterns/cohorts`
+
+**Description:** Post volume, unique-author, engagement, and sentiment totals for **every tracked `MOVIE` entity**, grouped into industry or language cohorts and sorted by `totalEngagement` descending — lets the marketing team compare, e.g., Kollywood vs. Bollywood engagement before allocating spend across industries or languages. A mention attributed to two movies in the same cohort counts toward that cohort's `totalPosts` twice (once per movie), the same convention used elsewhere for multi-entity aggregation (see [Get Budget Comparison](#29c-get-budget-comparison)), while `uniqueAuthors` counts a poster in the cohort only once no matter how many of the cohort's movies they posted about.
+
+Mounted alongside the [Marketing Aggregation APIs](#marketing-aggregation-apis) and shares the same **DIAMOND** tier gate — see [Premium Feature Tier Gating](#premium-feature-tier-gating).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `groupBy` | `INDUSTRY` \| `LANGUAGE` | **Required.** How to bucket movies. |
+| `from` | ISO-8601 datetime | Only mentions posted on/after this instant. Defaults to the full history. |
+| `to` | ISO-8601 datetime | Only mentions posted on/before this instant. Defaults to now. |
+| `ownerId` | Long | Admin-only: scope to a specific user's movies. Non-admins may not pass this. |
+
+**Example Requests:**
+```bash
+GET /api/marketing/audience-patterns/cohorts?groupBy=INDUSTRY
+
+GET /api/marketing/audience-patterns/cohorts?groupBy=LANGUAGE&from=2026-01-01T00:00:00Z
+```
+
+**Response (entitled):**
+```json
+{
+  "entitled": true,
+  "requiredTier": "DIAMOND",
+  "preview": null,
+  "data": {
+    "groupBy": "INDUSTRY",
+    "cohortCount": 5,
+    "cohorts": [
+      {
+        "cohort": "Kollywood",
+        "movieCount": 18,
+        "totalPosts": 25717,
+        "uniqueAuthors": 15423,
+        "totalLikes": 281946,
+        "totalComments": 5738,
+        "totalEngagement": 287684,
+        "avgEngagementPerPost": 11.187,
+        "avgSentimentScore": 74.423,
+        "positiveSentimentRatio": 0.700
+      },
+      {
+        "cohort": "Sandalwood",
+        "movieCount": 16,
+        "totalPosts": 9699,
+        "uniqueAuthors": 4384,
+        "totalLikes": 40200,
+        "totalComments": 462,
+        "totalEngagement": 40662,
+        "avgEngagementPerPost": 4.192,
+        "avgSentimentScore": 73.255,
+        "positiveSentimentRatio": 0.798
+      },
+      {
+        "cohort": "Bollywood",
+        "movieCount": 4,
+        "totalPosts": 2796,
+        "uniqueAuthors": 2065,
+        "totalLikes": 782,
+        "totalComments": 74,
+        "totalEngagement": 856,
+        "avgEngagementPerPost": 0.306,
+        "avgSentimentScore": 66.401,
+        "positiveSentimentRatio": 0.474
+      }
+    ]
+  }
+}
+```
+
+**Response fields:**
+- `cohort` — the industry or language value, exactly as stored on the movie; movies with no industry/language recorded are grouped under `"Unspecified"` rather than dropped.
+- `movieCount` — every tracked movie in the cohort, regardless of whether it has any mentions yet.
+- `avgSentimentScore` / `positiveSentimentRatio` — averaged only over mentions with a non-null sentiment score / sentiment.
+
+**Status Codes:**
+- `200 OK`
+- `404 Not Found` — no movies exist within the caller's ownership scope
 
 ---
 
