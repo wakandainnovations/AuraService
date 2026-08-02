@@ -104,6 +104,20 @@ class AuraMathProxyControllerTest {
     }
 
     // ------------------------------------------------------------------
+    // 2a. /v1/aspect-drivers?entityId= — entity-scoped variant
+    // ------------------------------------------------------------------
+    @Test
+    void aspectDriversByEntity_happyPath() throws Exception {
+        enqueueJson("{\"entityId\":\"29\",\"name\":\"Madhavan\"}");
+
+        mvc.perform(get("/v1/aspect-drivers").param("entityId", "29"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entityId").value("29"));
+
+        assertThat(takeRequest().getPath()).isEqualTo("/api/marketing/aspect-drivers?entityId=29");
+    }
+
+    // ------------------------------------------------------------------
     // 3. /v1/top-spreaders/{keyword}
     // ------------------------------------------------------------------
     @Test
@@ -154,6 +168,35 @@ class AuraMathProxyControllerTest {
                 .andExpect(status().isBadRequest());
 
         assertThat(upstream.getRequestCount()).isZero();
+    }
+
+    // ------------------------------------------------------------------
+    // 4a. GET /v1/find-lookalikes/diff — happy path, limit omitted
+    // ------------------------------------------------------------------
+    @Test
+    void findLookalikesDiff_happyPath_omitsLimitWhenNotProvided() throws Exception {
+        enqueueJson("{\"seedAuthorId\":\"alice\",\"overlap_count\":3}");
+
+        mvc.perform(get("/v1/find-lookalikes/diff").param("seedAuthorId", "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overlap_count").value(3));
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).isEqualTo("/api/marketing/find-lookalikes/diff?seedAuthorId=alice");
+    }
+
+    @Test
+    void findLookalikesDiff_withLimit_passesThroughQueryParam() throws Exception {
+        enqueueJson("{\"seedAuthorId\":\"alice\",\"limit\":10}");
+
+        mvc.perform(get("/v1/find-lookalikes/diff")
+                        .param("seedAuthorId", "alice")
+                        .param("limit", "10"))
+                .andExpect(status().isOk());
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).contains("seedAuthorId=alice");
+        assertThat(req.getPath()).contains("limit=10");
     }
 
     // ------------------------------------------------------------------

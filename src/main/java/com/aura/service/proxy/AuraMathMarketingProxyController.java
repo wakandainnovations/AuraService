@@ -1,6 +1,7 @@
 package com.aura.service.proxy;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -9,10 +10,15 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -176,6 +182,72 @@ public class AuraMathMarketingProxyController {
     }
 
     // ------------------------------------------------------------------
+    // Language-affinity audiences
+    // ------------------------------------------------------------------
+
+    @Operation(summary = "List users with an affinity for a language's movies (cacheable, 60s)")
+    @GetMapping(value = "/language/{language}/users", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> languageUsers(@PathVariable("language") String language) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/language/{language}/users",
+                "/api/marketing/language/" + encodeSegment(language) + "/users",
+                defaultTtlSeconds()
+        );
+    }
+
+    @Operation(summary = "List users with an affinity for one movie within a language (cacheable, 60s)")
+    @GetMapping(value = "/language/{language}/movie/{movieName}/users", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> languageMovieUsers(@PathVariable("language") String language,
+                                                     @PathVariable("movieName") String movieName) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/language/{language}/movie/{movieName}/users",
+                "/api/marketing/language/" + encodeSegment(language) + "/movie/" + encodeSegment(movieName) + "/users",
+                defaultTtlSeconds()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Brand evangelists
+    // ------------------------------------------------------------------
+
+    @Operation(summary = "List brand evangelists who have posted about a keyword (cacheable, 60s)")
+    @GetMapping(value = "/brand-evangelists/{keyword}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> brandEvangelists(@PathVariable("keyword") String keyword) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/brand-evangelists/{keyword}",
+                "/api/marketing/brand-evangelists/" + encodeSegment(keyword),
+                defaultTtlSeconds()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Narrative novelty scoring
+    // ------------------------------------------------------------------
+
+    @Operation(summary = "Score an arbitrary synopsis for narrative novelty (not cached; body forwarded verbatim)")
+    @PostMapping(value = "/narrative-novelty/score",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> narrativeNoveltyScore(@RequestBody(required = false) JsonNode body) {
+        return proxy.forwardMarketingPost(
+                "/v1/marketing/narrative-novelty/score",
+                "/api/marketing/narrative-novelty/score",
+                body,
+                true
+        );
+    }
+
+    @Operation(summary = "Score a movie already in the corpus by name (cacheable, 60s)")
+    @GetMapping(value = "/narrative-novelty/lookup", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> narrativeNoveltyLookup(@RequestParam("movieName") String movieName) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/narrative-novelty/lookup",
+                "/api/marketing/narrative-novelty/lookup?movieName=" + encodeQueryValue(movieName),
+                defaultTtlSeconds()
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Entity intelligence reports
     //
     // Two upstream report surfaces with different shapes:
@@ -232,6 +304,11 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/channel-strategy", "/api/marketing/celebrity/{celebrity}/channel-strategy"));
         routes.add(route("GET", "/v1/marketing/entity-report/{entityId}", "/api/marketing/entity-report/{entityId}/pdf"));
         routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
+        routes.add(route("GET", "/v1/marketing/language/{language}/users", "/api/marketing/language/{language}/users"));
+        routes.add(route("GET", "/v1/marketing/language/{language}/movie/{movieName}/users", "/api/marketing/language/{language}/movie/{movieName}/users"));
+        routes.add(route("GET", "/v1/marketing/brand-evangelists/{keyword}", "/api/marketing/brand-evangelists/{keyword}"));
+        routes.add(route("POST", "/v1/marketing/narrative-novelty/score", "/api/marketing/narrative-novelty/score"));
+        routes.add(route("GET", "/v1/marketing/narrative-novelty/lookup", "/api/marketing/narrative-novelty/lookup"));
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("upstreamBaseUrl", props.getBaseUrl());
@@ -278,5 +355,10 @@ public class AuraMathMarketingProxyController {
     private static String encodeSegment(String segment) {
         return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
+    }
+
+    /** Query param values (unlike path segments) go through {@link URLEncoder} as-is: '+' for spaces is valid here. */
+    private static String encodeQueryValue(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 }

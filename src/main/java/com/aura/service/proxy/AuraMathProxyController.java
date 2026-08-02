@@ -55,6 +55,20 @@ public class AuraMathProxyController {
         );
     }
 
+    @Operation(summary = "Get aspect drivers aggregated across an entity's tracked keywords (cacheable)")
+    @GetMapping(value = "/aspect-drivers", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> aspectDriversByEntity(@RequestParam("entityId") String entityId) {
+        Map<String, Object> q = new LinkedHashMap<>();
+        q.put("entityId", entityId);
+        return proxy.forwardGet(
+                "/v1/aspect-drivers",
+                "/api/marketing/aspect-drivers",
+                q,
+                true,
+                null
+        );
+    }
+
     @Operation(summary = "Get top spreaders for a keyword (cacheable)")
     @GetMapping(value = "/top-spreaders/{keyword}", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> topSpreaders(@PathVariable("keyword") String keyword) {
@@ -82,6 +96,24 @@ public class AuraMathProxyController {
                 "/api/marketing/find-lookalikes",
                 body,
                 false
+        );
+    }
+
+    @Operation(summary = "Diagnostic: compare legacy vs. current lookalike ranking for a seed author (not cached)")
+    @GetMapping(value = "/find-lookalikes/diff", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> findLookalikesDiff(
+            @RequestParam("seedAuthorId") String seedAuthorId,
+            @RequestParam(value = "limit", required = false) Integer limit
+    ) {
+        Map<String, Object> q = new LinkedHashMap<>();
+        q.put("seedAuthorId", seedAuthorId);
+        if (limit != null) q.put("limit", limit);
+        return proxy.forwardGet(
+                "/v1/find-lookalikes/diff",
+                "/api/marketing/find-lookalikes/diff",
+                q,
+                false,
+                null
         );
     }
 

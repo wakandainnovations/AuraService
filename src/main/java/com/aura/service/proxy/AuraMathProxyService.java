@@ -402,6 +402,29 @@ public class AuraMathProxyService {
                                                           long ttlSeconds,
                                                           String wrapperPath,
                                                           String upstreamPath) {
+        if (upstreamEntity != null) {
+            int status = upstreamEntity.getStatusCode().value();
+            if (status >= 200 && status < 300) {
+                String body = upstreamEntity.getBody();
+                MediaType ct = upstreamEntity.getHeaders().getContentType();
+                String contentType = ct != null ? ct.toString() : MediaType.APPLICATION_JSON_VALUE;
+                cache.put(cacheKey, new CachedResponse(status, body, contentType),
+                        Duration.ofSeconds(ttlSeconds).toNanos());
+            }
+        }
+        return passthroughNon5xxOrSanitize(upstreamEntity, wrapperPath, upstreamPath);
+    }
+
+    /**
+     * Shared tail for the "marketing" forwarding contract: 2xx and other non-5xx statuses are
+     * relayed verbatim (body + content type untouched — this is what preserves rich upstream
+     * error contracts like the Ask engine's {@code clarificationNeeded} 400 body), while 5xx is
+     * logged and replaced with the sanitized {@code {error: upstream_failure, upstream_path}}
+     * envelope so SQL/stack fragments never reach the caller.
+     */
+    private ResponseEntity<String> passthroughNon5xxOrSanitize(ResponseEntity<String> upstreamEntity,
+                                                               String wrapperPath,
+                                                               String upstreamPath) {
         if (upstreamEntity == null) {
             return upstreamUnavailable(wrapperPath);
         }
@@ -409,14 +432,6 @@ public class AuraMathProxyService {
         String body = upstreamEntity.getBody();
         MediaType ct = upstreamEntity.getHeaders().getContentType();
         String contentType = ct != null ? ct.toString() : MediaType.APPLICATION_JSON_VALUE;
-
-        if (status >= 200 && status < 300) {
-            cache.put(cacheKey, new CachedResponse(status, body, contentType),
-                    Duration.ofSeconds(ttlSeconds).toNanos());
-            HttpHeaders out = new HttpHeaders();
-            out.add(HttpHeaders.CONTENT_TYPE, contentType);
-            return ResponseEntity.status(status).headers(out).body(body);
-        }
 
         if (status >= 500) {
             logUpstream5xx(body, upstreamPath);
@@ -426,6 +441,76 @@ public class AuraMathProxyService {
         HttpHeaders out = new HttpHeaders();
         out.add(HttpHeaders.CONTENT_TYPE, contentType);
         return ResponseEntity.status(status).headers(out).body(body);
+    }
+
+    /**
+     * Forward a GET with the same non-5xx-passthrough contract as {@link #forwardMarketingGet}
+     * but never cached — for endpoints whose response reflects live, fast-changing state
+     * (e.g. the Ask engine's in-memory metrics counters).
+     */
+    public ResponseEntity<String> forwardMarketingGetUncached(String wrapperPath, String upstreamPath) {
+        String fullUrl = props.getBaseUrl() + upstreamPath;
+        URI absoluteUri = URI.create(fullUrl);
+
+        long start = System.currentTimeMillis();
+        try {
+            ResponseEntity<String> entity = client.method(HttpMethod.GET)
+                    .uri(absoluteUri)
+                    .retrieve()
+                    .onStatus(s -> true, r -> Mono.empty())
+                    .toEntity(String.class)
+                    .block(Duration.ofMillis(props.getMarketingTimeoutMs()));
+
+            long duration = System.currentTimeMillis() - start;
+            int status = entity == null ? 502 : entity.getStatusCode().value();
+            log.info("proxy wrapper_path={} upstream_path={} status={} duration_ms={}",
+                    wrapperPath, upstreamPath, status, duration);
+
+            return passthroughNon5xxOrSanitize(entity, wrapperPath, upstreamPath);
+        } catch (Exception ex) {
+            return handleException(ex, wrapperPath, upstreamPath, start);
+        }
+    }
+
+    /**
+     * Forward a POST with the same non-5xx-passthrough contract as {@link #forwardMarketingGet}:
+     * never cached (POST is not idempotent), upstream 5xx sanitized, everything else (including
+     * rich 4xx contracts such as the Ask engine's clarification/validation bodies) relayed
+     * verbatim. {@code useSyncClient} selects the long-timeout client for operations whose
+     * latency can vary widely (LLM calls, local embedding inference).
+     */
+    public ResponseEntity<String> forwardMarketingPost(String wrapperPath,
+                                                       String upstreamPath,
+                                                       Object body,
+                                                       boolean useSyncClient) {
+        WebClient chosen = useSyncClient ? syncClient : client;
+        long start = System.currentTimeMillis();
+        try {
+            WebClient.RequestBodySpec spec = chosen.post()
+                    .uri(b -> b.path(upstreamPath).build())
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+
+            WebClient.RequestHeadersSpec<?> headersSpec = body == null
+                    ? spec
+                    : spec.bodyValue(body);
+
+            ResponseEntity<String> entity = headersSpec
+                    .retrieve()
+                    .onStatus(s -> true, r -> Mono.empty())
+                    .toEntity(String.class)
+                    .block(useSyncClient
+                            ? Duration.ofMillis((long) props.getSyncReadTimeoutMs() + props.getConnectTimeoutMs() + 5_000L)
+                            : Duration.ofMillis(props.getMarketingTimeoutMs()));
+
+            long duration = System.currentTimeMillis() - start;
+            int status = entity == null ? 502 : entity.getStatusCode().value();
+            log.info("proxy wrapper_path={} upstream_path={} status={} duration_ms={}",
+                    wrapperPath, upstreamPath, status, duration);
+
+            return passthroughNon5xxOrSanitize(entity, wrapperPath, upstreamPath);
+        } catch (Exception ex) {
+            return handleException(ex, wrapperPath, upstreamPath, start);
+        }
     }
 
     private void logUpstream5xx(String body, String upstreamPath) {

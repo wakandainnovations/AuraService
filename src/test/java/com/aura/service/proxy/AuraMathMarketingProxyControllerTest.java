@@ -7,6 +7,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -15,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -302,12 +304,103 @@ class AuraMathMarketingProxyControllerTest {
     void catalog_listsAllRoutes_withoutCallingUpstream() throws Exception {
         mvc.perform(get("/v1/marketing/_catalog"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRoutes").value(14))
+                .andExpect(jsonPath("$.totalRoutes").value(19))
                 .andExpect(jsonPath("$.routes[0].wrapperPath").value("/v1/marketing/genre"))
                 .andExpect(jsonPath("$.routes[0].upstreamPath").value("/api/marketing/genre"))
                 .andExpect(jsonPath("$.routes[12].wrapperPath").value("/v1/marketing/entity-report/{entityId}"))
-                .andExpect(jsonPath("$.routes[13].wrapperPath").value("/v1/marketing/entity/{entityId}/report"));
+                .andExpect(jsonPath("$.routes[13].wrapperPath").value("/v1/marketing/entity/{entityId}/report"))
+                .andExpect(jsonPath("$.routes[14].wrapperPath").value("/v1/marketing/language/{language}/users"))
+                .andExpect(jsonPath("$.routes[15].wrapperPath").value("/v1/marketing/language/{language}/movie/{movieName}/users"))
+                .andExpect(jsonPath("$.routes[16].wrapperPath").value("/v1/marketing/brand-evangelists/{keyword}"))
+                .andExpect(jsonPath("$.routes[17].wrapperPath").value("/v1/marketing/narrative-novelty/score"))
+                .andExpect(jsonPath("$.routes[18].wrapperPath").value("/v1/marketing/narrative-novelty/lookup"));
 
         assertThat(upstream.getRequestCount()).isZero();
+    }
+
+    // ==================================================================
+    // Language-affinity audiences
+    // ==================================================================
+
+    @Test
+    void languageUsers_happyPath() throws Exception {
+        enqueueJson("{\"language\":\"Tamil\",\"totalUsers\":1,\"users\":[{}]}");
+
+        mvc.perform(get("/v1/marketing/language/{l}/users", "Tamil"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalUsers").value(1));
+
+        assertThat(takeRequest().getPath()).isEqualTo("/api/marketing/language/Tamil/users");
+    }
+
+    @Test
+    void languageMovieUsers_happyPath_urlEncodesMovieName() throws Exception {
+        enqueueJson("{\"language\":\"Tamil\",\"movie\":\"Vikram\",\"totalUsers\":0,\"users\":[]}");
+
+        mvc.perform(get("/v1/marketing/language/{l}/movie/{m}/users", "Tamil", "Vikram 2"))
+                .andExpect(status().isOk());
+
+        assertThat(takeRequest().getPath())
+                .isEqualTo("/api/marketing/language/Tamil/movie/Vikram%202/users");
+    }
+
+    // ==================================================================
+    // Brand evangelists
+    // ==================================================================
+
+    @Test
+    void brandEvangelists_happyPath() throws Exception {
+        enqueueJson("{\"keyword\":\"Avengers\",\"totalEvangelists\":0,\"evangelists\":[]}");
+
+        mvc.perform(get("/v1/marketing/brand-evangelists/{k}", "Avengers"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalEvangelists").value(0));
+
+        assertThat(takeRequest().getPath()).isEqualTo("/api/marketing/brand-evangelists/Avengers");
+    }
+
+    // ==================================================================
+    // Narrative novelty
+    // ==================================================================
+
+    @Test
+    void narrativeNoveltyScore_happyPath_forwardsBody() throws Exception {
+        enqueueJson("{\"movieName\":\"Untitled\",\"score\":0.4}");
+
+        mvc.perform(post("/v1/marketing/narrative-novelty/score")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"synopsis\":\"A detective races to...\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score").value(0.4));
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getMethod()).isEqualTo("POST");
+        assertThat(req.getPath()).isEqualTo("/api/marketing/narrative-novelty/score");
+        assertThat(req.getBody().readUtf8()).contains("A detective races to");
+    }
+
+    @Test
+    void narrativeNoveltyScore_upstream400_isRelayedVerbatim() throws Exception {
+        upstream.enqueue(new MockResponse()
+                .setResponseCode(400)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"error\":\"synopsis is required\"}"));
+
+        mvc.perform(post("/v1/marketing/narrative-novelty/score")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("synopsis is required"));
+    }
+
+    @Test
+    void narrativeNoveltyLookup_happyPath_encodesMovieNameQueryParam() throws Exception {
+        enqueueJson("{\"movieName\":\"The Silent Ledger\",\"score\":0.4}");
+
+        mvc.perform(get("/v1/marketing/narrative-novelty/lookup").param("movieName", "The Silent Ledger"))
+                .andExpect(status().isOk());
+
+        assertThat(takeRequest().getPath())
+                .isEqualTo("/api/marketing/narrative-novelty/lookup?movieName=The+Silent+Ledger");
     }
 }

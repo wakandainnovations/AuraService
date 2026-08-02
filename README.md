@@ -4715,6 +4715,28 @@ GET /v1/aspect-drivers/fantasy
 
 ---
 
+### Aspect Drivers by Entity
+
+**Endpoint:** `GET /v1/aspect-drivers?entityId={id}`
+
+**Description:** Entity-scoped variant of [#38](#38-get-aspect-drivers): aggregates aspect drivers across **all** of an entity's tracked keywords instead of a single keyword. Forwards to upstream `GET /api/marketing/aspect-drivers?entityId={id}`.
+
+**Authentication:** Not required
+
+**Query Parameters:**
+- `entityId` (required) - The `managed_entities` id (opaque string, not assumed numeric)
+
+**Example Request:**
+```
+GET /v1/aspect-drivers?entityId=29
+```
+
+**Cache:** 60-second TTL
+
+**Status Code:** `200 OK` (upstream status preserved)
+
+---
+
 ### 39. Get Top Spreaders
 
 **Endpoint:** `GET /v1/top-spreaders/{keyword}`
@@ -4768,6 +4790,29 @@ Content-Type: application/json
 ```json
 { "error": "seedAuthorId is required and must be non-blank" }
 ```
+
+---
+
+### Lookalike Ranking Diagnostic
+
+**Endpoint:** `GET /v1/find-lookalikes/diff?seedAuthorId={id}&limit={n}`
+
+**Description:** Diagnostic comparison harness (not for production consumption): forwards to upstream `GET /api/marketing/find-lookalikes/diff`, which runs both the legacy and current production lookalike-ranking methods for the same seed and returns them side by side with rank movement. Used for similarity-weight tuning.
+
+**Authentication:** Not required
+
+**Query Parameters:**
+- `seedAuthorId` (required) - The seed author to compare rankings for
+- `limit` (optional) - Max candidates per method; upstream defaults to `25` when omitted
+
+**Example Request:**
+```
+GET /v1/find-lookalikes/diff?seedAuthorId=u_182374&limit=25
+```
+
+**Cache:** Not cached
+
+**Status Code:** `200 OK` (upstream status preserved)
 
 ---
 
@@ -5094,6 +5139,61 @@ Two additional GET wrappers expose the upstream "entity intelligence report" pay
 - Upstream `5xx` / connection failure / timeout (or any other unexpected status) → **`502`** with a small envelope `{ "error":"…", "entityId":"…", "upstreamStatus":<code or null> }` (`upstreamStatus` is the upstream code for a 5xx, or `null` for a connection failure/timeout). Upstream error bodies are logged but never leaked to the caller.
 
 Both routes also appear in `/v1/marketing/_catalog`. Integration tests live in `AuraMathEntityReportProxyControllerTest` (full report, 404 translation, no-history pass-through, upstream-500 → 502 envelope, connection-refused → 502 with null `upstreamStatus`, verbatim/encoded entityId, blank-id 400).
+
+### Language-affinity audiences, brand evangelists, and narrative novelty
+
+Five more routes on the same marketing proxy surface (same non-5xx-passthrough / 5xx-sanitized contract, same TTL cache):
+
+- `GET /v1/marketing/language/{language}/users` → upstream `GET /api/marketing/language/{language}/users`. Users with an affinity for a language's movies. 60s TTL.
+- `GET /v1/marketing/language/{language}/movie/{movieName}/users` → upstream `GET /api/marketing/language/{language}/movie/{movieName}/users`. Same join, scoped to one movie. Both path segments are URL-encoded. 60s TTL.
+- `GET /v1/marketing/brand-evangelists/{keyword}` → upstream `GET /api/marketing/brand-evangelists/{keyword}`. Categorised "Brand Evangelist" authors who have also posted about `{keyword}`. 60s TTL.
+- `POST /v1/marketing/narrative-novelty/score` → upstream `POST /api/marketing/narrative-novelty/score`. Scores an arbitrary synopsis (including titles not yet in the database). Request body forwarded verbatim (Jackson `JsonNode`, no server-side validation — upstream's `400 {"error":"synopsis is required"}` is relayed unchanged). Routed through the long-timeout sync client since scoring involves a local embedding-model call. **Not cached.**
+- `GET /v1/marketing/narrative-novelty/lookup?movieName={name}` → upstream `GET /api/marketing/narrative-novelty/lookup?movieName={name}`. Scores a title already in `movies_data_collection`. `movieName` is URL-encoded as a query value (space → `+`). 60s TTL.
+
+All five appear in `/v1/marketing/_catalog` (`totalRoutes: 19`).
+
+---
+
+## AuraMath Admin Proxy (`/v1/admin/**`)
+
+Thin POST-only proxy over the upstream **AuraMath** `/api/admin/**` recompute triggers. Every route is routed through the long-timeout sync client (`auramath.sync-read-timeout-ms`, 10 min) and **never cached** — these are synchronous, long-running rebuilds upstream, meant to be called from a job runner or admin tool rather than request-path code. Bodies are ignored on both sides; the upstream response (JSON summary, or a bare `"done"` / `"inserted=<n>"` plain-text body) is forwarded verbatim on success, with the shared `{upstreamStatus, upstreamBody}` envelope on any non-2xx (same convention as the base [AuraMath Proxy](#auramath-proxy-v1-healthz)).
+
+| Wrapper | Upstream | Recomputes |
+| --- | --- | --- |
+| `POST /v1/admin/run-enrichment` | `POST /api/admin/run-enrichment` | `marketing_target_profiles` (Hawkes α, MOI, tribes, genres). |
+| `POST /v1/admin/run-engagement-rating` | `POST /api/admin/run-engagement-rating` | Corpus-relative `engagement_score_raw`/`engagement_rating`. |
+| `POST /v1/admin/run-graph-population` | `POST /api/admin/run-graph-population` | AuraMath's `graph_nodes`/`graph_edges` (MOVIE/USER, POSTED_ABOUT/RETWEETED). |
+| `POST /v1/admin/resolve-identities` | `POST /api/admin/resolve-identities` | `user_identity_link` from every distinct author across source tables. |
+| `POST /v1/admin/recompute-narrative-novelty` | `POST /api/admin/recompute-narrative-novelty` | Synopsis embedding corpus; persists `narrative_novelty_score_v2`/`_raw_v2`. |
+| `POST /v1/admin/recompute-narrative-novelty-v1` | `POST /api/admin/recompute-narrative-novelty-v1` | Same algorithm, persists into the legacy `narrative_novelty_score` column. |
+| `POST /v1/admin/recompute-conflict-balance` | `POST /api/admin/recompute-conflict-balance` | Corpus-relative `conflict_balance_score` from per-sentence sentiment balance. |
+
+Integration tests live in `AuraMathAdminProxyControllerTest`.
+
+---
+
+## AuraMath Graph Proxy (`/v1/graph/**`)
+
+`GET /v1/graph/users?language={language}&movie={movieName}` forwards to upstream `GET /api/graph/users`, a filterable read API over **AuraMath's own** precomputed graph tables (populated by its `GraphPopulationService`, refreshed via [`POST /v1/admin/run-graph-population`](#auramath-admin-proxy-v1admin)). `language` is required (missing → `400` before any upstream call, same as other required-query-param wrappers); `movie` is optional. Both are URL-encoded as query values. Returns the `{nodes, edges, summary}` shape directly, cached for 60s (`auramath.cache.default-ttl-seconds`); a `language` matching zero MOVIE nodes upstream returns a real `404` relayed unchanged.
+
+**This is distinct from AuraService's own native `GET /api/graph/movies/{movieId}` subgraph endpoint** (`GraphController`), which reads AuraService's own `graph_nodes`/`graph_edges` tables populated by `GraphSyncService` — the two graphs are separate data models under separate path prefixes (`/v1/graph/**` proxy vs. `/api/graph/**` native).
+
+Integration tests live in `AuraMathGraphProxyControllerTest`.
+
+---
+
+## AuraMath Ask Engine Proxy (`/v1/ask/**`)
+
+Thin proxy over the upstream **AuraMath** Ask engine (`/api/ask/**` — natural-language question answering against a target database, read-only, see AuraMath's own docs for the full pipeline). Request/response bodies — including any per-request target-DB `connection`/`password` in `POST /v1/ask` and `POST /v1/ask/test-connection` — are forwarded verbatim over the existing outbound WebClient; AuraService never inspects, logs, or persists them. Unlike the base proxy's blanket `{upstreamStatus, upstreamBody}` wrapping, this surface uses the marketing-style contract: upstream's rich 4xx bodies (clarification, validation, unsafe-SQL) are relayed **unmodified** so callers see the exact `clarificationNeeded`/`requestId`/`error` fields upstream returns; only `5xx` (including a `503` "engine disabled") is sanitized to a generic `502`, consistent with every other proxy surface in this service.
+
+| Wrapper | Upstream | Notes |
+| --- | --- | --- |
+| `GET /v1/ask/databases` | `GET /api/ask/databases` | Registered target databases (name/driver/host only, no credentials). Cached 5 min (list TTL). |
+| `POST /v1/ask/test-connection` | `POST /api/ask/test-connection` | Read-only connectivity probe for a target DB. Not cached. |
+| `POST /v1/ask` | `POST /api/ask` | Answer a question against the registry or an explicit target. Not cached; routed through the long-timeout sync client (LLM latency). |
+| `GET /v1/ask/admin/metrics` | `GET /api/ask/admin/metrics` | In-memory operational counters. Never cached (live, monotonic counts). |
+
+Integration tests live in `AuraMathAskProxyControllerTest`.
 
 ---
 
@@ -6038,7 +6138,7 @@ curl -s http://localhost:8080/healthz
 
 ### Endpoint reference
 
-The 16 wrapper endpoints are documented in detail as APIs #37–#52 in the [AuraMath Proxy APIs](#auramath-proxy-apis) section above.
+The wrapper endpoints are documented in detail as APIs #37–#52b in the [AuraMath Proxy APIs](#auramath-proxy-apis) section above, plus two unnumbered additions inserted alongside their siblings: **Aspect Drivers by Entity** (`GET /v1/aspect-drivers?entityId={id}`) and the **Lookalike Ranking Diagnostic** (`GET /v1/find-lookalikes/diff`).
 
 ### Tests
 
