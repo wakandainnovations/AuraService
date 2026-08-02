@@ -240,10 +240,14 @@ public class AuraMathMarketingProxyController {
     @Operation(summary = "Score a movie already in the corpus by name (cacheable, 60s)")
     @GetMapping(value = "/narrative-novelty/lookup", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> narrativeNoveltyLookup(@RequestParam("movieName") String movieName) {
+        // Routed through the sync (long-timeout) client like narrative-novelty/score: both hit the
+        // same cold-start-prone local embedding pipeline, and the short marketing timeout budget
+        // was observed to 504 on the first call after an AuraMath restart.
         return proxy.forwardMarketingGet(
                 "/v1/marketing/narrative-novelty/lookup",
                 "/api/marketing/narrative-novelty/lookup?movieName=" + encodeQueryValue(movieName),
-                defaultTtlSeconds()
+                defaultTtlSeconds(),
+                true
         );
     }
 

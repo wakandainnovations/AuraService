@@ -3,12 +3,14 @@ package com.aura.service.controller;
 import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.EntityBasicInfo;
 import com.aura.service.dto.EntityDetailResponse;
+import com.aura.service.dto.EntityImage;
 import com.aura.service.dto.UpdateCompetitorsRequest;
 import com.aura.service.dto.UpdateEntityRequest;
 import com.aura.service.dto.UpdateKeywordsRequest;
 import com.aura.service.service.EntityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -70,6 +72,15 @@ public class EntityController {
     ) {
         EntityDetailResponse response = entityService.updateKeywords(entityType.toUpperCase(), id, request);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{id}/image")
+    public ResponseEntity<byte[]> getEntityImage(@PathVariable String entityType, @PathVariable Long id) {
+        EntityImage image = entityService.getEntityImage(entityType.toUpperCase(), id);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, image.contentType())
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=86400")
+                .body(image.content());
     }
 
     @DeleteMapping("/{id}")

@@ -22,6 +22,7 @@ public class EntityBasicInfo {
     private String language;
     private String industry;
     private List<String> genre = new ArrayList<>();
+    private String imageUrl;
 
     public EntityBasicInfo(Long id, String name, String type) {
         this.id = id;

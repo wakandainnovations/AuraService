@@ -91,4 +91,11 @@ public class ManagedEntity {
 
     @Column(name = "inflation_rate_pct")
     private Double inflationRatePct;
+
+    // Filename (not a full path) of this entity's poster image, resolved against the configured
+    // entity.images.base-path at read time — see EntityImageBackfill for how it's populated and
+    // EntityController's /image endpoint for how it's served. Kept as a bare filename rather than an
+    // absolute path so the images directory can move (or differ per environment) without touching data.
+    @Column(name = "image_path")
+    private String imagePath;
 }

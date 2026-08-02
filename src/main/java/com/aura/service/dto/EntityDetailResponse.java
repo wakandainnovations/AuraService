@@ -30,4 +30,5 @@ public class EntityDetailResponse {
     private String releaseDay;
     private Double gdpUsdBillions;
     private Double inflationRatePct;
+    private String imageUrl;
 }

@@ -143,6 +143,20 @@ public class AuraMathProxyService {
     public ResponseEntity<String> forwardMarketingGet(String wrapperPath,
                                                       String upstreamPath,
                                                       long ttlSeconds) {
+        return forwardMarketingGet(wrapperPath, upstreamPath, ttlSeconds, false);
+    }
+
+    /**
+     * Same contract as {@link #forwardMarketingGet(String, String, long)}, with an explicit
+     * choice of client budget. {@code useSyncClient} selects the long-timeout client for GET
+     * endpoints backed by cold-start-prone upstream work (e.g. a local embedding model that pays
+     * a one-time warm-up cost on the first call after AuraMath boots) — the same reasoning that
+     * routes {@link #forwardMarketingPost} operations through the sync client.
+     */
+    public ResponseEntity<String> forwardMarketingGet(String wrapperPath,
+                                                      String upstreamPath,
+                                                      long ttlSeconds,
+                                                      boolean useSyncClient) {
         // Concatenate rather than going through UriComponentsBuilder: the controller has
         // already percent-encoded each path segment, and a second pass would turn '%' into
         // '%25'. The string is used both as the actual request URI and the cache key.
@@ -162,15 +176,18 @@ public class AuraMathProxyService {
         // Passing an absolute URI keeps those bytes intact; UriBuilder.path() would otherwise
         // percent-encode the existing '%' characters and produce %25xx.
         URI absoluteUri = URI.create(fullUrl);
+        WebClient chosen = useSyncClient ? syncClient : client;
 
         long start = System.currentTimeMillis();
         try {
-            ResponseEntity<String> entity = client.method(HttpMethod.GET)
+            ResponseEntity<String> entity = chosen.method(HttpMethod.GET)
                     .uri(absoluteUri)
                     .retrieve()
                     .onStatus(s -> true, r -> Mono.empty())
                     .toEntity(String.class)
-                    .block(Duration.ofMillis(props.getMarketingTimeoutMs()));
+                    .block(useSyncClient
+                            ? Duration.ofMillis((long) props.getSyncReadTimeoutMs() + props.getConnectTimeoutMs() + 5_000L)
+                            : Duration.ofMillis(props.getMarketingTimeoutMs()));
 
             long duration = System.currentTimeMillis() - start;
             int status = entity == null ? 502 : entity.getStatusCode().value();

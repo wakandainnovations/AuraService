@@ -40,6 +40,10 @@ public interface ManagedEntityRepository extends JpaRepository<ManagedEntity, Lo
     // Legacy rows from before ownership existed; assigned to the seeded admin by the startup backfill.
     List<ManagedEntity> findByOwnerIsNull();
 
+    // Rows with no poster image yet; matched against the configured images directory by the startup
+    // backfill (see EntityImageBackfill).
+    List<ManagedEntity> findByImagePathIsNull();
+
     // ---- Movie audience/budget-comparison lookups (see MovieAudienceServiceImpl) ----
 
     List<ManagedEntity> findByTypeAndLanguageIgnoreCase(String type, String language);

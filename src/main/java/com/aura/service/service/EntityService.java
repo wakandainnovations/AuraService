@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.EntityBasicInfo;
 import com.aura.service.dto.EntityDetailResponse;
+import com.aura.service.dto.EntityImage;
 import com.aura.service.dto.IndianMacroSnapshot;
 import com.aura.service.dto.KeywordDto;
 import com.aura.service.dto.UpdateCompetitorsRequest;
@@ -15,13 +16,18 @@ import com.aura.service.entity.User;
 import com.aura.service.enums.LicenseTier;
 import com.aura.service.enums.MovieIndustry;
 import com.aura.service.exception.LimitException;
+import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
@@ -32,13 +38,16 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class EntityService {
-    
+
     private final ManagedEntityRepository entityRepository;
     private final CheckpointRepository checkpointRepository;
     private final MentionRepository mentionRepository;
     private final EntityAccessService entityAccessService;
     private final LicenseService licenseService;
     private final IndianMacroEconomicDataService macroEconomicDataService;
+
+    @Value("${entity.images.base-path}")
+    private String imagesBasePath;
 
     @Transactional
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
@@ -176,6 +185,43 @@ public class EntityService {
         resyncMentionLinks(entity.getId());
 
         return mapToDetailResponse(entity);
+    }
+
+    /**
+     * Reads the poster image file for an entity off disk, resolved against the configured
+     * {@code entity.images.base-path}. 404s (via {@link ResourceNotFoundException}) if the entity has
+     * no matched image yet, or if the resolved file is missing — including when it would resolve
+     * outside the configured directory, since {@code imagePath} is only ever a bare filename.
+     */
+    public EntityImage getEntityImage(String entityType, Long id) {
+        ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
+        if (!entity.getType().equalsIgnoreCase(entityType)) {
+            throw new ResourceNotFoundException("Entity with id " + id + " is not of type " + entityType);
+        }
+        if (entity.getImagePath() == null) {
+            throw new ResourceNotFoundException("Entity with id " + id + " has no image");
+        }
+
+        Path baseDir = Path.of(imagesBasePath).normalize();
+        Path imageFile = baseDir.resolve(entity.getImagePath()).normalize();
+        if (!imageFile.startsWith(baseDir) || !Files.isRegularFile(imageFile)) {
+            throw new ResourceNotFoundException("Image file for entity " + id + " is missing");
+        }
+
+        try {
+            return new EntityImage(Files.readAllBytes(imageFile), contentTypeFor(entity.getImagePath()));
+        } catch (IOException e) {
+            throw new ResourceNotFoundException("Failed to read image file for entity " + id);
+        }
+    }
+
+    private String contentTypeFor(String filename) {
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".avif")) return "image/avif";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".gif")) return "image/gif";
+        return "image/jpeg";
     }
 
     @Transactional
@@ -371,8 +417,21 @@ public class EntityService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * The URL the frontend fetches this entity's poster from (see EntityController's
+     * {@code /image} endpoint), or null if no image has been matched for it yet. Built here rather
+     * than stored, so it always reflects the entity's current id/type/imagePath.
+     */
+    private String imageUrlFor(ManagedEntity entity) {
+        if (entity.getImagePath() == null) {
+            return null;
+        }
+        return "/entities/" + entity.getType().toLowerCase() + "/" + entity.getId() + "/image";
+    }
+
     private EntityBasicInfo mapToBasicInfo(ManagedEntity entity) {
         EntityBasicInfo basicInfo = new EntityBasicInfo(entity.getId(), entity.getName(), entity.getType());
+        basicInfo.setImageUrl(imageUrlFor(entity));
         if ("MOVIE".equalsIgnoreCase(entity.getType())) {
             basicInfo.setDirector(entity.getDirector());
             basicInfo.setReleaseDate(entity.getReleaseDate());
@@ -390,6 +449,7 @@ public class EntityService {
         response.setId(entity.getId());
         response.setName(entity.getName());
         response.setType(entity.getType());
+        response.setImageUrl(imageUrlFor(entity));
         response.setDirector(entity.getDirector());
         response.setActors(entity.getActors());
         response.setKeywords(toKeywordDtos(entity.getKeywords()));
