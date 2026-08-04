@@ -449,7 +449,9 @@ public class EntityService {
         response.setId(entity.getId());
         response.setName(entity.getName());
         response.setType(entity.getType());
+        response.setOwnerId(ownerIdOf(entity));
         response.setImageUrl(imageUrlFor(entity));
+        response.setImagePath(entity.getImagePath());
         response.setDirector(entity.getDirector());
         response.setActors(entity.getActors());
         response.setKeywords(toKeywordDtos(entity.getKeywords()));

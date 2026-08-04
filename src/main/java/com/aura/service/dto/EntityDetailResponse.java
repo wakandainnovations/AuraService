@@ -15,6 +15,7 @@ public class EntityDetailResponse {
     private Long id;
     private String name;
     private String type;
+    private Long ownerId;
     private String director;
     private List<String> actors = new ArrayList<>();
     private List<KeywordDto> keywords = new ArrayList<>();
@@ -31,4 +32,5 @@ public class EntityDetailResponse {
     private Double gdpUsdBillions;
     private Double inflationRatePct;
     private String imageUrl;
+    private String imagePath;
 }
