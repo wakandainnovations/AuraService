@@ -397,6 +397,7 @@ Authorization: Bearer {jwt_token}
   "id": 1,
   "name": "The Quantum Paradox",
   "type": "MOVIE",
+  "ownerId": 2,
   "director": "Christopher Nolan",
   "actors": ["Leonardo DiCaprio", "Emma Stone", "Tom Hardy"],
   "keywords": ["sci-fi", "thriller", "mind-bending"],
@@ -411,9 +412,30 @@ Authorization: Bearer {jwt_token}
       "name": "Interstellar Reloaded",
       "type": "MOVIE"
     }
-  ]
+  ],
+  "releaseDate": "2026-07-01",
+  "language": "English",
+  "industry": "Hollywood",
+  "genre": ["Science Fiction", "Thriller"],
+  "synopsis": "A physicist's discovery threatens to unravel reality itself.",
+  "budget": 200000000.0,
+  "productionCompany": "Legendary Pictures",
+  "runtime": 148,
+  "releaseDay": "Wednesday",
+  "gdpUsdBillions": 3346.11,
+  "inflationRatePct": 6.7,
+  "imageUrl": "/entities/movie/1/image",
+  "imagePath": "the-quantum-paradox.jpg"
 }
 ```
+
+This is the full set of columns stored on the entity — every field in `EntityDetailResponse` is returned regardless of `entityType` (fields not applicable to `celebrity` entities, e.g. `releaseDate`/`budget`/`runtime`, are simply `null`).
+
+**Response fields (beyond the obvious):**
+- `ownerId` — the id of the user who owns the entity (see **Entity ownership** above); never another user's, since access is owner-scoped.
+- `imageUrl` — the path the UI fetches the poster image from (`GET /api/entities/{entityType}/{id}/image`), or `null` if no image has been matched for this entity yet.
+- `imagePath` — the raw stored filename the image is resolved from on disk; `null` under the same condition as `imageUrl`. Most UIs should use `imageUrl` rather than constructing a path from this field.
+- `releaseDay`, `gdpUsdBillions`, `inflationRatePct` — derived server-side from `releaseDate` (movies only); never client-supplied and `null` when there is no `releaseDate`.
 
 **Status Code:** `200 OK`
 
