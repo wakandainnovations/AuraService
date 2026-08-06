@@ -263,6 +263,110 @@ public class DashboardService {
         };
     }
     
+    public SentimentOverTimeResponse getSentimentOverTimeForRange(
+            LocalDate startDate,
+            LocalDate endDate,
+            List<Long> entityIds
+    ) {
+        List<EntitySentimentData> entitySentiments = new ArrayList<>();
+
+        Instant rangeStartInstant = startDate.atStartOfDay(ZoneId.systemDefault()).toInstant();
+        Instant rangeEndInstant = endDate.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().minusNanos(1);
+
+        Granularity granularity = resolveGranularity(startDate, endDate);
+        DateTimeFormatter formatter = getFormatterForGranularity(granularity);
+
+        for (Long currentEntityId : entityIds) {
+            ManagedEntity entity = entityRepository.findById(currentEntityId)
+                    .orElseThrow(() -> new RuntimeException("Entity not found with id: " + currentEntityId));
+
+            List<Mention> mentions = mentionRepository.findByEntityIdsAndDateRange(
+                    Collections.singletonList(currentEntityId),
+                    rangeStartInstant,
+                    rangeEndInstant
+            );
+
+            List<TimeSeriesData> timeSeriesData = aggregateMentionsByGranularity(
+                    mentions, granularity, rangeStartInstant, rangeEndInstant);
+
+            List<CheckpointMarker> markers = checkpointRepository
+                    .findByManagedEntityIdAndCheckpointDateBetweenOrderByCheckpointDateAsc(
+                            currentEntityId, startDate, endDate)
+                    .stream()
+                    .map(cp -> new CheckpointMarker(
+                            cp.getCheckpointDate().format(formatter),
+                            cp.getDescription()))
+                    .toList();
+
+            entitySentiments.add(new EntitySentimentData(entity.getName(), timeSeriesData, markers));
+        }
+
+        return new SentimentOverTimeResponse(entitySentiments);
+    }
+
+    private enum Granularity { DAILY, WEEKLY, MONTHLY }
+
+    private Granularity resolveGranularity(LocalDate startDate, LocalDate endDate) {
+        long days = ChronoUnit.DAYS.between(startDate, endDate);
+        if (days <= 90) {
+            return Granularity.DAILY;
+        } else if (days <= 365) {
+            return Granularity.WEEKLY;
+        }
+        return Granularity.MONTHLY;
+    }
+
+    private DateTimeFormatter getFormatterForGranularity(Granularity granularity) {
+        return switch (granularity) {
+            case DAILY -> DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            case WEEKLY -> DateTimeFormatter.ofPattern("yyyy-'W'ww");
+            case MONTHLY -> DateTimeFormatter.ofPattern("yyyy-MM");
+        };
+    }
+
+    private List<TimeSeriesData> aggregateMentionsByGranularity(
+            List<Mention> mentions,
+            Granularity granularity,
+            Instant startDate,
+            Instant endDate
+    ) {
+        Map<String, TimeSeriesData> dataMap = new LinkedHashMap<>();
+
+        Instant current = startDate;
+        DateTimeFormatter formatter = getFormatterForGranularity(granularity);
+
+        while (current.isBefore(endDate) || current.equals(endDate)) {
+            String dateKey = formatDate(current, formatter);
+            dataMap.put(dateKey, new TimeSeriesData(dateKey, 0, 0, 0, 0));
+            current = incrementByGranularity(current, granularity);
+        }
+
+        for (Mention mention : mentions) {
+            String dateKey = formatDate(mention.getPostDate(), formatter);
+            TimeSeriesData data = dataMap.get(dateKey);
+            if (data != null) {
+                data.setTotal(data.getTotal() + 1);
+
+                switch (mention.getSentiment()) {
+                    case POSITIVE -> data.setPositive(data.getPositive() + 1);
+                    case NEGATIVE -> data.setNegative(data.getNegative() + 1);
+                    case NEUTRAL -> data.setNeutral(data.getNeutral() + 1);
+                }
+            }
+        }
+
+        return new ArrayList<>(dataMap.values());
+    }
+
+    private Instant incrementByGranularity(Instant instant, Granularity granularity) {
+        ZonedDateTime zonedDateTime = instant.atZone(ZoneId.systemDefault());
+        return switch (granularity) {
+            case DAILY -> instant.plus(1, ChronoUnit.DAYS);
+            case WEEKLY -> zonedDateTime.plusWeeks(1).toInstant();
+            case MONTHLY -> zonedDateTime.plusMonths(1).toInstant();
+        };
+    }
+
     public SentimentDeltaResponse getSentimentDelta(
             Long entityId, LocalDate fromDate, LocalDate toDate, int windowDays
     ) {

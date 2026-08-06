@@ -175,6 +175,21 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
     
+    @GetMapping("/sentiment-over-time-range")
+    public ResponseEntity<SentimentOverTimeResponse> getSentimentOverTimeForRange(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam List<Long> entityIds
+    ) {
+        if (startDate.isAfter(endDate)) {
+            return ResponseEntity.badRequest().build();
+        }
+        assertOwned(entityIds);
+        SentimentOverTimeResponse response = dashboardService.getSentimentOverTimeForRange(
+                startDate, endDate, entityIds);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{entityId}/platform-mentions")
     public ResponseEntity<Map<String, Map<String, Long>>> getPlatformMentions(@PathVariable Long entityId) {
         assertOwned(entityId);

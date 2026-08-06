@@ -1774,6 +1774,38 @@ GET /api/dashboard/sentiment-over-time?period=WEEK&entityIds=1,3
 
 ---
 
+### 13a. Get Sentiment Over Time (Date Range)
+
+**Endpoint:** `GET /api/dashboard/sentiment-over-time-range`
+
+**Description:** Get time-series sentiment data for an explicit `startDate`/`endDate` window, instead of the fixed lookback windows used by `period` in [Get Sentiment Over Time](#13-get-sentiment-over-time). The bucket size is chosen automatically from the length of the range:
+- Up to 90 days → daily buckets
+- Up to 365 days → weekly buckets
+- Longer than 365 days → monthly buckets
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Query Parameters:**
+- `startDate` - Start of the range, inclusive (ISO date, e.g. `2025-10-01`)
+- `endDate` - End of the range, inclusive (ISO date, e.g. `2025-12-31`)
+- `entityIds` - Comma-separated list of entity IDs to compare (e.g., 1,3,4)
+
+**Example Request:**
+```
+GET /api/dashboard/sentiment-over-time-range?startDate=2025-10-01&endDate=2025-12-31&entityIds=1,3
+```
+
+**Response:** Same shape as [Get Sentiment Over Time](#13-get-sentiment-over-time) — a `SentimentOverTimeResponse` with per-entity `sentiments` (bucketed by the inferred granularity) and `checkpoints` (dates formatted to match that same granularity, e.g. `"2025-11-03"` for daily buckets, `"2025-W45"` for weekly, `"2025-11"` for monthly).
+
+**Validation:** Returns `400 Bad Request` if `startDate` is after `endDate`.
+
+**Status Code:** `200 OK`
+
+---
+
 ### 14. Get Platform Mentions
 
 **Endpoint:** `GET /api/dashboard/{entityId}/platform-mentions`
