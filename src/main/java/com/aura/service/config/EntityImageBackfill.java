@@ -2,20 +2,15 @@ package com.aura.service.config;
 
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.service.EntityImageMatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,9 +34,7 @@ import java.util.Map;
 public class EntityImageBackfill implements ApplicationRunner {
 
     private final ManagedEntityRepository entityRepository;
-
-    @Value("${entity.images.base-path}")
-    private String imagesBasePath;
+    private final EntityImageMatcher imageMatcher;
 
     @Override
     @Transactional
@@ -51,16 +44,15 @@ public class EntityImageBackfill implements ApplicationRunner {
             return;
         }
 
-        Map<String, String> filesByNormalizedName = listImageFilesByNormalizedName();
+        Map<String, String> filesByNormalizedName = imageMatcher.listImageFilesByNormalizedName();
         if (filesByNormalizedName.isEmpty()) {
-            log.warn("Skipping image backfill for {} entity(ies): no readable image files under {}",
-                    unmatched.size(), imagesBasePath);
+            log.warn("Skipping image backfill for {} entity(ies): no readable image files", unmatched.size());
             return;
         }
 
         int matched = 0;
         for (ManagedEntity entity : unmatched) {
-            String file = filesByNormalizedName.get(normalize(entity.getName()));
+            String file = filesByNormalizedName.get(imageMatcher.normalize(entity.getName()));
             if (file != null) {
                 entity.setImagePath(file);
                 matched++;
@@ -69,36 +61,6 @@ public class EntityImageBackfill implements ApplicationRunner {
         if (matched > 0) {
             entityRepository.saveAll(unmatched);
         }
-        log.info("Backfilled poster image for {}/{} managed entity(ies) from {}",
-                matched, unmatched.size(), imagesBasePath);
-    }
-
-    private Map<String, String> listImageFilesByNormalizedName() {
-        Map<String, String> byName = new HashMap<>();
-        Path dir = Path.of(imagesBasePath);
-        if (!Files.isDirectory(dir)) {
-            return byName;
-        }
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(dir)) {
-            for (Path file : files) {
-                if (Files.isDirectory(file)) {
-                    continue;
-                }
-                String filename = file.getFileName().toString();
-                String baseName = filename.contains(".")
-                        ? filename.substring(0, filename.lastIndexOf('.'))
-                        : filename;
-                byName.put(normalize(baseName), filename);
-            }
-        } catch (IOException e) {
-            log.warn("Failed to list image files under {}: {}", imagesBasePath, e.getMessage());
-        }
-        return byName;
-    }
-
-    /** Lowercases and strips everything but letters/digits, so naming variants (spaces, underscores,
-     *  punctuation like the colon in "Balan: The Boy") all collapse to the same key. */
-    private String normalize(String name) {
-        return name == null ? "" : name.toLowerCase().replaceAll("[^a-z0-9]", "");
+        log.info("Backfilled poster image for {}/{} managed entity(ies)", matched, unmatched.size());
     }
 }

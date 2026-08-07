@@ -45,6 +45,7 @@ public class EntityService {
     private final EntityAccessService entityAccessService;
     private final LicenseService licenseService;
     private final IndianMacroEconomicDataService macroEconomicDataService;
+    private final EntityImageMatcher imageMatcher;
 
     @Value("${entity.images.base-path}")
     private String imagesBasePath;
@@ -97,6 +98,13 @@ public class EntityService {
         ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(id);
         if (!entity.getType().equalsIgnoreCase(entityType)) {
             throw new RuntimeException("Entity with id " + id + " is not of type " + entityType);
+        }
+
+        // A renamed entity's previously-matched poster (if any) almost certainly belongs to the old
+        // name, so re-match against the images directory rather than leaving the stale file in place —
+        // this is what let a renamed movie keep showing another movie's poster indefinitely.
+        if (!java.util.Objects.equals(entity.getName(), request.getName())) {
+            entity.setImagePath(imageMatcher.matchFile(request.getName()));
         }
 
         entity.setName(request.getName());
