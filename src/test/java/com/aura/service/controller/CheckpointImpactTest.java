@@ -58,7 +58,7 @@ class CheckpointImpactTest {
                 new ImpressionsResolver(mentionRepository));
 
         DashboardController controller = new DashboardController(
-                dashboardService, null, null, null, mock(EntityAccessService.class));
+                dashboardService, null, null, null, mock(EntityAccessService.class), null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

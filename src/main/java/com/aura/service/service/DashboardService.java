@@ -711,6 +711,122 @@ public class DashboardService {
         );
     }
 
+    public AudiencePulseResponse getAudiencePulse(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Object[]> rows = mentionRepository.findRegionBuzzForEntity(entityId);
+
+        long totalMentions = 0;
+        for (Object[] row : rows) {
+            totalMentions += ((Number) row[1]).longValue();
+        }
+
+        List<RegionBuzz> regions = new ArrayList<>();
+        int rank = 1;
+        for (Object[] row : rows) {
+            String region = (String) row[0];
+            long mentionCount = ((Number) row[1]).longValue();
+            double sharePct = totalMentions > 0 ? (double) mentionCount / totalMentions * 100.0 : 0.0;
+            regions.add(new RegionBuzz(rank++, region, mentionCount, sharePct));
+        }
+
+        return new AudiencePulseResponse(entityId, entity.getName(), totalMentions, regions);
+    }
+
+    public PromotionalMixResponse getPromotionalMix(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Object[]> rows = mentionRepository.findPromotionalMixForEntity(entityId);
+
+        long promotionalCount = 0;
+        long organicCount = 0;
+        for (Object[] row : rows) {
+            long count = ((Number) row[1]).longValue();
+            if (Boolean.TRUE.equals(row[0])) {
+                promotionalCount += count;
+            } else {
+                organicCount += count;
+            }
+        }
+
+        long totalPosts = promotionalCount + organicCount;
+        double promotionalSharePct = totalPosts > 0 ? (double) promotionalCount / totalPosts * 100.0 : 0.0;
+
+        return new PromotionalMixResponse(
+                entityId, entity.getName(), totalPosts, promotionalCount, organicCount, promotionalSharePct);
+    }
+
+    public AuthorTypeBreakdownResponse getAuthorTypeBreakdown(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Object[]> rows = mentionRepository.findAuthorTypeBreakdownForEntity(entityId);
+
+        long totalClassifiedPosts = 0;
+        for (Object[] row : rows) {
+            totalClassifiedPosts += ((Number) row[1]).longValue();
+        }
+
+        List<AuthorTypeCount> authorTypes = new ArrayList<>();
+        int rank = 1;
+        for (Object[] row : rows) {
+            String authorType = (String) row[0];
+            long count = ((Number) row[1]).longValue();
+            double sharePct = totalClassifiedPosts > 0 ? (double) count / totalClassifiedPosts * 100.0 : 0.0;
+            authorTypes.add(new AuthorTypeCount(rank++, authorType, count, sharePct));
+        }
+
+        return new AuthorTypeBreakdownResponse(entityId, entity.getName(), totalClassifiedPosts, authorTypes);
+    }
+
+    public ContentIntentBreakdownResponse getContentIntentBreakdown(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Object[]> rows = mentionRepository.findContentIntentBreakdownForEntity(entityId);
+
+        long totalClassifiedPosts = 0;
+        for (Object[] row : rows) {
+            totalClassifiedPosts += ((Number) row[1]).longValue();
+        }
+
+        List<ContentIntentCount> intents = new ArrayList<>();
+        int rank = 1;
+        for (Object[] row : rows) {
+            String contentIntent = (String) row[0];
+            long count = ((Number) row[1]).longValue();
+            double sharePct = totalClassifiedPosts > 0 ? (double) count / totalClassifiedPosts * 100.0 : 0.0;
+            intents.add(new ContentIntentCount(rank++, contentIntent, count, sharePct));
+        }
+
+        return new ContentIntentBreakdownResponse(entityId, entity.getName(), totalClassifiedPosts, intents);
+    }
+
+    public TopicCategoryBreakdownResponse getTopicCategoryBreakdown(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<Object[]> rows = mentionRepository.findTopicCategoryBreakdownForEntity(entityId);
+
+        long totalClassifiedPosts = 0;
+        for (Object[] row : rows) {
+            totalClassifiedPosts += ((Number) row[1]).longValue();
+        }
+
+        List<TopicCategoryCount> topics = new ArrayList<>();
+        int rank = 1;
+        for (Object[] row : rows) {
+            String topicCategory = (String) row[0];
+            long count = ((Number) row[1]).longValue();
+            double sharePct = totalClassifiedPosts > 0 ? (double) count / totalClassifiedPosts * 100.0 : 0.0;
+            topics.add(new TopicCategoryCount(rank++, topicCategory, count, sharePct));
+        }
+
+        return new TopicCategoryBreakdownResponse(entityId, entity.getName(), totalClassifiedPosts, topics);
+    }
+
     private MentionResponse mapToMentionResponseWithActions(
             Mention mention,
             Map<Long, ActionHistorySummary> summaries,

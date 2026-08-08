@@ -422,4 +422,171 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             @Param("entityIds") List<Long> entityIds,
             @Param("startDate") Instant startDate,
             @Param("endDate") Instant endDate);
+
+    /**
+     * Buzz (post count) per {@code predicted_region}, for the Audience Pulse panel. Like
+     * {@link #linkExistingMentionsByKeyword}, {@code predicted_region} only lives on the raw
+     * per-platform tables, so each is joined back to {@code mentions}/{@code mention_entities} via
+     * {@code post_id} + {@code platform} rather than through a JPA relation. Rows the ingestion
+     * pipeline predicted as {@code 'irrelevant'} (case-insensitive) or left {@code NULL} are excluded
+     * before grouping. Ordered by buzz descending so the caller can rank without re-sorting.
+     */
+    @Query(value = "SELECT region, COUNT(*) AS buzz FROM ( " +
+            "  SELECT x.predicted_region AS region FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT y.predicted_region FROM youtube_comments y " +
+            "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT r.predicted_region FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT i.predicted_region FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            ") regions " +
+            "WHERE region IS NOT NULL AND LOWER(region) <> 'irrelevant' " +
+            "GROUP BY region " +
+            "ORDER BY buzz DESC",
+            nativeQuery = true)
+    List<Object[]> findRegionBuzzForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Promotional vs. organic post count, for the Promotional Mix panel. {@code is_promotional} is a
+     * not-null boolean on every raw platform table (default {@code false}), unlike the other
+     * classification columns, so there is no NULL/'irrelevant' row to exclude here. Same
+     * join-back-via-{@code post_id}+{@code platform} pattern as {@link #findRegionBuzzForEntity}.
+     */
+    @Query(value = "SELECT is_promotional, COUNT(*) AS cnt FROM ( " +
+            "  SELECT x.is_promotional FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT y.is_promotional FROM youtube_comments y " +
+            "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT r.is_promotional FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT i.is_promotional FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            ") flags " +
+            "GROUP BY is_promotional",
+            nativeQuery = true)
+    List<Object[]> findPromotionalMixForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Post count per {@code author_type} ({@code general_public}, {@code fan_page},
+     * {@code media_press}, {@code official_studio}, {@code verified_celebrity_influencer},
+     * {@code bot_spam}, ...), for the "who's talking" panel. Rows the pipeline classified as
+     * {@code 'irrelevant'} (case-insensitive) or left {@code NULL} (not yet enriched) are excluded,
+     * same as {@link #findRegionBuzzForEntity}. Ordered by count descending.
+     */
+    @Query(value = "SELECT author_type, COUNT(*) AS cnt FROM ( " +
+            "  SELECT x.author_type FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT y.author_type FROM youtube_comments y " +
+            "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT r.author_type FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT i.author_type FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            ") types " +
+            "WHERE author_type IS NOT NULL AND LOWER(author_type) <> 'irrelevant' " +
+            "GROUP BY author_type " +
+            "ORDER BY cnt DESC",
+            nativeQuery = true)
+    List<Object[]> findAuthorTypeBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Post count per {@code content_intent} ({@code official_promo}, {@code fan_amplified_promo},
+     * {@code organic_opinion}, {@code news_press_coverage}, {@code trade_box_office_update},
+     * {@code ticket_merch_marketplace}, ...), for the "what kind of buzz" panel. Same
+     * NULL/'irrelevant' exclusion and join pattern as {@link #findRegionBuzzForEntity}.
+     */
+    @Query(value = "SELECT content_intent, COUNT(*) AS cnt FROM ( " +
+            "  SELECT x.content_intent FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT y.content_intent FROM youtube_comments y " +
+            "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT r.content_intent FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT i.content_intent FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            ") intents " +
+            "WHERE content_intent IS NOT NULL AND LOWER(content_intent) <> 'irrelevant' " +
+            "GROUP BY content_intent " +
+            "ORDER BY cnt DESC",
+            nativeQuery = true)
+    List<Object[]> findContentIntentBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Post count per {@code topic_category} ({@code cast_performance}, {@code music_songs},
+     * {@code story_screenplay}, {@code direction_technical_craft}, {@code box_office_commercial},
+     * {@code politics_personal_life_crossover}, {@code general}, ...), for the "what aspects
+     * resonate" panel. Same NULL/'irrelevant' exclusion and join pattern as
+     * {@link #findRegionBuzzForEntity}.
+     */
+    @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
+            "  SELECT x.topic_category FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT y.topic_category FROM youtube_comments y " +
+            "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT r.topic_category FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            "  UNION ALL " +
+            "  SELECT i.topic_category FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId " +
+            ") topics " +
+            "WHERE topic_category IS NOT NULL AND LOWER(topic_category) <> 'irrelevant' " +
+            "GROUP BY topic_category " +
+            "ORDER BY cnt DESC",
+            nativeQuery = true)
+    List<Object[]> findTopicCategoryBreakdownForEntity(@Param("entityId") Long entityId);
 }

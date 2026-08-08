@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.service.CommandCenterSummaryService;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.UserEntityViewService;
@@ -35,6 +36,7 @@ public class DashboardController {
     private final WhatsChangedService whatsChangedService;
     private final WhatsNewService whatsNewService;
     private final EntityAccessService entityAccessService;
+    private final CommandCenterSummaryService commandCenterSummaryService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -216,6 +218,59 @@ public class DashboardController {
         HourlyActivityResponse response = dashboardService.getHourlyActivity(
                 entityId, period, language, industry, state
         );
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/audience-pulse")
+    public ResponseEntity<AudiencePulseResponse> getAudiencePulse(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        AudiencePulseResponse response = dashboardService.getAudiencePulse(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/promotional-mix")
+    public ResponseEntity<PromotionalMixResponse> getPromotionalMix(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        PromotionalMixResponse response = dashboardService.getPromotionalMix(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/author-type-breakdown")
+    public ResponseEntity<AuthorTypeBreakdownResponse> getAuthorTypeBreakdown(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        AuthorTypeBreakdownResponse response = dashboardService.getAuthorTypeBreakdown(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/content-intent-breakdown")
+    public ResponseEntity<ContentIntentBreakdownResponse> getContentIntentBreakdown(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        ContentIntentBreakdownResponse response = dashboardService.getContentIntentBreakdown(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/topic-category-breakdown")
+    public ResponseEntity<TopicCategoryBreakdownResponse> getTopicCategoryBreakdown(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        TopicCategoryBreakdownResponse response = dashboardService.getTopicCategoryBreakdown(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/ai-summary")
+    public ResponseEntity<AiSummaryResponse> getAiSummary(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        assertOwned(entityId);
+        AiSummaryResponse response = commandCenterSummaryService.getAiSummary(entityId, refresh);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/todays-highlights")
+    public ResponseEntity<TodaysHighlightsResponse> getTodaysHighlights(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        assertOwned(entityId);
+        TodaysHighlightsResponse response = commandCenterSummaryService.getTodaysHighlights(entityId, refresh);
         return ResponseEntity.ok(response);
     }
 

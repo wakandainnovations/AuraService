@@ -2316,6 +2316,350 @@ GET /api/dashboard/1/checkpoint-trend
 
 ---
 
+### 18d. Get Audience Pulse (Top Regions by Buzz)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/audience-pulse`
+
+**Description:** Rank the regions an entity is being talked about in, by buzz (raw post/comment count). Backs the "Audience Pulse — Top Regions by Buzz" panel on the Command Center UI.
+
+The region for each post/comment comes from the `predicted_region` column the ingestion pipeline stamps on the raw platform tables (`x_posts`, `youtube_comments`, `reddit_posts`, `instagram_posts`) — there is no separate region table. Each of the four tables is joined back to the entity through `mentions`/`mention_entities` (the same linkage every other mention-scoped dashboard query uses), unioned together, and grouped by region. Rows the pipeline predicted as **`irrelevant`** (case-insensitive), or left with a `null` region, are excluded before ranking — they never count toward `totalMentions` or appear in `regions`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/audience-pulse
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalMentions": 187,
+  "regions": [
+    { "rank": 1, "region": "Tamil Nadu", "mentionCount": 96, "sharePct": 51.34 },
+    { "rank": 2, "region": "Karnataka", "mentionCount": 54, "sharePct": 28.88 },
+    { "rank": 3, "region": "Maharashtra", "mentionCount": 37, "sharePct": 19.78 }
+  ]
+}
+```
+
+**Response fields:**
+- `totalMentions` — sum of `mentionCount` across all returned regions (i.e. every non-`irrelevant`, non-null-region post/comment linked to the entity, across all four platforms).
+- `regions` — ranked highest-buzz-first; empty when the entity has no region-tagged posts yet.
+- `regions[].rank` — 1-based position after sorting by `mentionCount` descending.
+- `regions[].mentionCount` — raw post/comment count for that region (buzz), summed across all four platforms.
+- `regions[].sharePct` — `mentionCount` as a percentage of `totalMentions` (0 when `totalMentions` is 0).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18e. Get Promotional Mix (Organic vs. Promotional Buzz)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/promotional-mix`
+
+**Description:** Splits an entity's buzz into promotional (`is_promotional = true`) vs. organic posts/comments. Tells the marketing team how much of the current conversation is being driven by paid/official promotion versus genuine word-of-mouth — a high organic share means the campaign has real pull and paid spend can be redirected; a low one means visibility is still manufactured and needs more push.
+
+`is_promotional` is a not-null boolean stamped by the ingestion pipeline on all four raw platform tables (`x_posts`, `youtube_comments`, `reddit_posts`, `instagram_posts`), joined back to the entity via `mentions`/`mention_entities` the same way `audience-pulse` joins `predicted_region`. Unlike the other classification columns there is no NULL/`irrelevant` value to exclude — every post counts as either promotional or organic.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/promotional-mix
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalPosts": 412,
+  "promotionalCount": 47,
+  "organicCount": 365,
+  "promotionalSharePct": 11.41
+}
+```
+
+**Response fields:**
+- `totalPosts` — every post/comment linked to the entity across all four platforms (`promotionalCount + organicCount`).
+- `promotionalSharePct` — `promotionalCount` as a percentage of `totalPosts` (0 when `totalPosts` is 0).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18f. Get Author Type Breakdown (Who's Talking)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/author-type-breakdown`
+
+**Description:** Ranks the entity's buzz by `author_type` — `general_public`, `fan_page`, `media_press`, `official_studio`, `verified_celebrity_influencer`, `bot_spam`, etc. Tells the marketing team the composition of voices driving conversation, so they can decide whether to invest in press/PR outreach, influencer partnerships, or fan-community activation — and how much of the volume is noise (`bot_spam`) that shouldn't be read as real signal.
+
+Same join pattern as `audience-pulse`/`promotional-mix`: `author_type` lives only on the raw per-platform tables, joined back to `mentions`/`mention_entities` via `post_id` + `platform`. Rows classified `irrelevant` (case-insensitive) or left `NULL` (not yet enriched by the classification pipeline) are excluded before ranking.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/author-type-breakdown
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalClassifiedPosts": 298,
+  "authorTypes": [
+    { "rank": 1, "authorType": "general_public", "count": 201, "sharePct": 67.45 },
+    { "rank": 2, "authorType": "fan_page", "count": 48, "sharePct": 16.11 },
+    { "rank": 3, "authorType": "media_press", "count": 27, "sharePct": 9.06 },
+    { "rank": 4, "authorType": "verified_celebrity_influencer", "count": 14, "sharePct": 4.70 },
+    { "rank": 5, "authorType": "bot_spam", "count": 8, "sharePct": 2.68 }
+  ]
+}
+```
+
+**Response fields:**
+- `totalClassifiedPosts` — sum of `count` across all returned author types (i.e. every non-`irrelevant`, non-null-`author_type` post/comment linked to the entity). Excludes not-yet-classified rows, so this can be smaller than the entity's total mention count.
+- `authorTypes` — ranked highest-count-first; empty when the entity has no classified posts yet.
+- `authorTypes[].sharePct` — `count` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18g. Get Content Intent Breakdown (What Kind of Buzz)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/content-intent-breakdown`
+
+**Description:** Ranks the entity's buzz by `content_intent` — `official_promo`, `fan_amplified_promo`, `organic_opinion`, `news_press_coverage`, `trade_box_office_update`, `ticket_merch_marketplace`, etc. Tells the marketing team what the conversation is actually *for*: a high `fan_amplified_promo` share means organic fan advocacy is doing the campaign's work; heavy `trade_box_office_update`/`news_press_coverage` means the buzz is industry chatter rather than audience excitement; a rising `ticket_merch_marketplace` share signals purchase-intent worth capitalizing on with a booking-link push.
+
+Same join pattern and NULL/`irrelevant` exclusion as `author-type-breakdown`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/content-intent-breakdown
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalClassifiedPosts": 298,
+  "intents": [
+    { "rank": 1, "contentIntent": "organic_opinion", "count": 152, "sharePct": 51.01 },
+    { "rank": 2, "contentIntent": "fan_amplified_promo", "count": 61, "sharePct": 20.47 },
+    { "rank": 3, "contentIntent": "official_promo", "count": 39, "sharePct": 13.09 },
+    { "rank": 4, "contentIntent": "news_press_coverage", "count": 28, "sharePct": 9.40 },
+    { "rank": 5, "contentIntent": "trade_box_office_update", "count": 18, "sharePct": 6.04 }
+  ]
+}
+```
+
+**Response fields:**
+- `totalClassifiedPosts` — sum of `count` across all returned intents (every non-`irrelevant`, non-null-`content_intent` post/comment linked to the entity).
+- `intents` — ranked highest-count-first; empty when the entity has no classified posts yet.
+- `intents[].sharePct` — `count` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18h. Get Topic Category Breakdown (What Aspects Resonate)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/topic-category-breakdown`
+
+**Description:** Ranks the entity's buzz by `topic_category` — `cast_performance`, `music_songs`, `story_screenplay`, `direction_technical_craft`, `box_office_commercial`, `politics_personal_life_crossover`, `general`, etc. Tells the marketing team which aspect of the movie the audience is actually discussing, so creative/spend can lean into what's resonating (e.g. push music promo when `music_songs` dominates, cast interviews when `cast_performance` does) instead of guessing.
+
+Same join pattern and NULL/`irrelevant` exclusion as `author-type-breakdown`/`content-intent-breakdown`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/topic-category-breakdown
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalClassifiedPosts": 298,
+  "topics": [
+    { "rank": 1, "topicCategory": "cast_performance", "count": 118, "sharePct": 39.60 },
+    { "rank": 2, "topicCategory": "music_songs", "count": 74, "sharePct": 24.83 },
+    { "rank": 3, "topicCategory": "story_screenplay", "count": 51, "sharePct": 17.11 },
+    { "rank": 4, "topicCategory": "box_office_commercial", "count": 33, "sharePct": 11.07 },
+    { "rank": 5, "topicCategory": "direction_technical_craft", "count": 22, "sharePct": 7.38 }
+  ]
+}
+```
+
+**Response fields:**
+- `totalClassifiedPosts` — sum of `count` across all returned topics (every non-`irrelevant`, non-null-`topic_category` post/comment linked to the entity).
+- `topics` — ranked highest-count-first; empty when the entity has no classified posts yet.
+- `topics[].sharePct` — `count` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18i. Get AI Summary (Command Center "AI Summary" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/ai-summary`
+
+**Description:** Backs the "AI Summary" panel on the movie Command Center — a short plain-English momentum summary. Exposed as its own endpoint (separate from Today's Highlights, §18j) since the UI loads and refreshes the two panels independently; under the hood both endpoints share a single generation per entity (see below), so they never tell contradictory stories even though they're fetched separately.
+
+This does **not** let the LLM free-associate about the movie. Every number the model can reference is pre-computed server-side from real data — the same sources as their own dedicated endpoints — and handed to it as a JSON "facts" block:
+- Current totals (`/stats`) and day-over-day sentiment delta (`/sentiment-delta`, 1-day window)
+- Top 3 regions by buzz (`/audience-pulse`)
+- Promotional vs. organic split (`/promotional-mix`)
+- Top 3 author types, content intents, and topic categories (`/author-type-breakdown`, `/content-intent-breakdown`, `/topic-category-breakdown`)
+- Checkpoint impact for any checkpoint in the last 14 days (`/checkpoint-impact`)
+- Competitor snapshot (`/competitor-snapshot`), excluding the entity itself
+
+The prompt explicitly instructs the model to use *only* facts present in that JSON and to say nothing about a topic rather than invent a plausible-sounding fact — the same grounding discipline as `conflict-balance`/`narrative-novelty`, just applied to real-time audience data instead of a synopsis. The underlying summary+highlights generation happens at most once every 15 minutes per entity (in-memory cache, shared with §18j — whichever of the two endpoints is called first pays the generation cost); pass `refresh=true` to force regeneration.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `refresh` (optional, default `false`) - bypass the 15-minute cache and regenerate immediately (also refreshes the cache used by §18j)
+
+**Example Request:**
+```
+GET /api/dashboard/21/ai-summary
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "summary": "Momentum is building, with buzz up and Tamil Nadu leading regional conversation. Sentiment remains strong, driven largely by organic fan discussion of the cast rather than official promotion.",
+  "generatedAt": "2026-08-08T10:15:00Z"
+}
+```
+
+**Response fields:**
+- `summary` — 2-4 sentence plain-English momentum summary.
+- `generatedAt` — when the underlying summary was generated (reflects the cached generation time, not necessarily the request time; shared with §18j).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` — The LLM response could not be parsed as JSON (transient upstream issue; retry, or pass `refresh=true` on the next call).
+
+---
+
+### 18j. Get Today's Highlights (Command Center "Today's Highlights" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/todays-highlights`
+
+**Description:** Backs the "Today's Highlights" panel on the movie Command Center — a short list of individually-typed bullet points. Shares the exact same grounded facts-block generation and 15-minute cache as `ai-summary` (§18i); calling either endpoint alone still produces both a summary and a highlights list internally, but each endpoint only returns its own slice.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `refresh` (optional, default `false`) - bypass the 15-minute cache and regenerate immediately (also refreshes the cache used by §18i)
+
+**Example Request:**
+```
+GET /api/dashboard/21/todays-highlights
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "highlights": [
+    { "type": "POSITIVE", "text": "Total mentions rose vs. yesterday, led by a jump in positive-sentiment posts" },
+    { "type": "POSITIVE", "text": "Tamil Nadu drives the largest share of regional buzz" },
+    { "type": "NEUTRAL", "text": "Only a small share of posts are promotional — most buzz is organic" },
+    { "type": "POSITIVE", "text": "Cast performance is the most-discussed topic among fans" }
+  ],
+  "generatedAt": "2026-08-08T10:15:00Z"
+}
+```
+
+**Response fields:**
+- `highlights` — 3-6 short, individually-typed highlight bullets; can be shorter if the underlying data is sparse (the prompt is instructed to prefer fewer grounded highlights over padding).
+- `highlights[].type` — `POSITIVE`, `NEGATIVE`, or `NEUTRAL`.
+- `generatedAt` — when the underlying highlights were generated (reflects the cached generation time, not necessarily the request time; shared with §18i).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` — The LLM response could not be parsed as JSON (transient upstream issue; retry, or pass `refresh=true` on the next call).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
