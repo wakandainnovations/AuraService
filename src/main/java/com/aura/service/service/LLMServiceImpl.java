@@ -53,6 +53,7 @@ public class LLMServiceImpl implements LLMService {
 
         try {
             String response = restTemplate.postForObject(llmUrl, entity, String.class);
+            String reply;
             try {
                 JsonNode root = objectMapper.readTree(response);
                 JsonNode replyNode = root.path("reply");
@@ -62,14 +63,36 @@ public class LLMServiceImpl implements LLMService {
                 if (replyNode.isMissingNode()) {
                     replyNode = root.path("generated_text");
                 }
-                return replyNode.isMissingNode() ? response : replyNode.asText();
+                reply = replyNode.isMissingNode() ? response : replyNode.asText();
             } catch (JsonProcessingException e) {
                 // Not a JSON response, return as is.
-                return response;
+                reply = response;
             }
+            return stripMarkdownJsonFence(reply);
         } catch (Exception e) {
             System.err.println("Error calling LLM service: " + e.getMessage());
             return "Error generating reply from LLM.";
         }
+    }
+
+    // Models routinely ignore "output strictly JSON, no other text" instructions and wrap their
+    // reply in a ```json ... ``` fence anyway. Callers that objectMapper.readTree() this text need
+    // the fence gone first, or parsing fails on the leading backtick. Left untouched (returned as-is)
+    // for any reply that isn't fenced, so plain-text replies (e.g. generateReply's normal use) are unaffected.
+    private static String stripMarkdownJsonFence(String text) {
+        String trimmed = text.strip();
+        if (!trimmed.startsWith("```")) {
+            return text;
+        }
+        int firstNewline = trimmed.indexOf('\n');
+        if (firstNewline == -1) {
+            return text;
+        }
+        String withoutOpeningFence = trimmed.substring(firstNewline + 1);
+        int closingFence = withoutOpeningFence.lastIndexOf("```");
+        if (closingFence == -1) {
+            return text;
+        }
+        return withoutOpeningFence.substring(0, closingFence).strip();
     }
 }
