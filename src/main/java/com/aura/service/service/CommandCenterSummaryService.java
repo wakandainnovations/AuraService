@@ -154,12 +154,14 @@ public class CommandCenterSummaryService {
         facts.put("movie", entity.getName());
 
         EntityStatsResponse stats = dashboardService.getEntityStats(entityId);
+        double positiveSentimentPct = pct(stats.getPositiveSentiment());
+        double netSentimentRatio = round1(stats.getNetSentimentScore());
         ObjectNode totals = facts.putObject("totals");
         totals.put("totalMentions", stats.getTotalMentions());
-        totals.put("positiveSentimentPct", pct(stats.getPositiveSentiment()));
+        totals.put("positiveSentimentPct", positiveSentimentPct);
         totals.put("negativeSentimentPct", pct(stats.getNegativeSentiment()));
         totals.put("overallSentimentScore", round1(stats.getOverallSentiment()));
-        totals.put("netSentimentRatio", round1(stats.getNetSentimentScore()));
+        totals.put("netSentimentRatio", netSentimentRatio);
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         SentimentDeltaResponse delta = dashboardService.getSentimentDelta(entityId, today.minusDays(1), today, 1);
@@ -230,11 +232,26 @@ public class CommandCenterSummaryService {
                     ObjectNode n = competitors.addObject();
                     n.put("name", c.getEntityName());
                     n.put("totalMentions", c.getTotalMentions());
-                    n.put("positiveRatioPct", pct(c.getPositiveRatio()));
-                    n.put("netSentimentRatio", round1(c.getNetSentimentScore()));
+                    double competitorPositiveRatioPct = pct(c.getPositiveRatio());
+                    double competitorNetSentimentRatio = round1(c.getNetSentimentScore());
+                    n.put("positiveRatioPct", competitorPositiveRatioPct);
+                    n.put("netSentimentRatio", competitorNetSentimentRatio);
+                    // Pre-computed so the LLM never has to (and never gets to mis-)judge which side a
+                    // percentage comparison favors — see the movie-vs-competitor sentiment mixup this replaced.
+                    n.put("positiveSentimentVsThisMovie", compareLabel(positiveSentimentPct, competitorPositiveRatioPct));
+                    n.put("netSentimentVsThisMovie", compareLabel(netSentimentRatio, competitorNetSentimentRatio));
                 });
 
         return facts;
+    }
+
+    private static String compareLabel(double thisMovieValue, double competitorValue) {
+        if (thisMovieValue > competitorValue) {
+            return "THIS_MOVIE_HIGHER";
+        } else if (thisMovieValue < competitorValue) {
+            return "THIS_MOVIE_LOWER";
+        }
+        return "EQUAL";
     }
 
     private static double pct(double fraction) {
