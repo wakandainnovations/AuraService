@@ -228,6 +228,29 @@ output blindly). As a cheap defensive check, you may scan the returned reason te
 sequences and log a warning if one doesn't appear anywhere in that candidate's own facts — not a
 hard requirement, but worth adding given how central "no invented numbers" is to this feature.
 
+(c) Precedent framing: when a candidate's supporting facts already carry comparable-movie evidence
+(the genre+language+budget comps from "Historical grounding" above, or the ally-mobilization-lift
+comps from "Evangelists, reach, and audience-timing"), the reason should read as precedent —
+"comparable [genre]/[language] releases have shown..." — not a generic platitude. This is the
+feature's one legitimate form of "real movie precedent": grounded entirely in the app's own query
+results already sitting in the candidate's facts, never a specific movie title recalled from the
+LLM's training data. The LLM must not name, describe, or attribute an outcome to any specific movie
+that isn't itself one of the entity's own tracked competitors/comps as given in the facts blob — a
+named-but-ungrounded movie claim is exactly the invented fact the hard constraint at the top of this
+document rules out, so do not add a "cite real movie examples" instruction to the prompt beyond this
+aggregate-comps framing.
+
+Marketing-concept coverage: don't restrict the panel's language to generic action categories. Where
+a selected candidate's underlying factor is Organic Word-of-Mouth (Post-Day 1), Social Media
+Discourse and Meme Trends, Micro-Video Social Media Campaigns, or Influencer-Driven Promotions, the
+LLM may phrase the title/reason using concrete marketing-strategy language — e.g. "lean into a
+high-concept campaign hook," "seed a community-led word-of-mouth push," "run a concept-driven teaser
+built around the film's premise" — as long as the phrasing doesn't add a new number or fact beyond
+that candidate's own supporting data. This is phrasing latitude only, not a new candidate-generation
+pathway: "concept-driven marketing" is never itself a standalone factor or candidate unless it's
+backed by one of the already-eligible, already-numeric factors above — do not have the LLM invent a
+"high-concept gimmick" candidate that Phase 1 never produced.
+
 ## Data model
 
 - New entity RecommendedActionsCache (uniqueConstraint on entity_id, mirroring
@@ -302,6 +325,14 @@ be merged back onto the full server-computed record; and it should select a real
 actions (roughly 8-15) spanning pre-release, release-week, and post-release, not just front-load
 everything at T-8-weeks. State outright, the same way CommandCenterSummaryService's prompt does,
 that it must not invent any fact, number, or statistic beyond what's in the candidate list.
+Additionally instruct it: when a candidate's facts include comparable-movie/precedent data, frame
+the reason in precedent terms ("comparable movies in this genre/language have shown...") using only
+the aggregate comps figures already provided — it must never name a specific movie title unless that
+title is itself one of the entity's own listed competitors in the facts blob; and where the
+candidate's factor is word-of-mouth, social-discourse, or influencer/micro-video driven, it may
+describe the action using concrete marketing-strategy language such as a concept-driven campaign, a
+high-concept hook, or a community-led word-of-mouth push, without treating that language as license
+to add any number or claim beyond the candidate's own facts.
 
 ## Testing
 

@@ -26,7 +26,15 @@ tier, days to release). Ask it to:
     realistic), capping at a sensible ~8-15 selected actions across all phases;
 (b) write a natural, specific one-to-two sentence "reason" for each selected candidate, using ONLY
     the numbers already present in that candidate's own supporting facts (it may restate them in
-    prose, it must not add, alter, round creatively, or introduce any new figure).
+    prose, it must not add, alter, round creatively, or introduce any new figure);
+(c) when a candidate's facts already carry comparable-movie evidence (genre+language+budget comps,
+    or ally-mobilization-lift comps), phrase the reason as precedent — "comparable [genre]/
+    [language] releases have shown..." — using only those aggregate figures. This is the feature's
+    one legitimate form of "real movie precedent": grounded in the app's own query results already
+    in the facts, never a specific movie title recalled from the LLM's training data. The LLM must
+    not name or attribute an outcome to any movie that isn't itself one of the entity's own tracked
+    competitors/comps in the facts blob — that would be exactly the invented fact the hard
+    constraint above rules out.
 
 The requested output JSON is an array of {candidateId, reason} (optionally {candidateId, title} if
 you want the LLM to sharpen the title too) — it must NOT include confidencePct, category, or any
@@ -37,11 +45,20 @@ check, scan the returned reason text for digit sequences and log a warning if on
 anywhere in that candidate's own supporting facts — not a hard requirement, but worth adding given
 how central "no invented numbers" is to this feature.
 
+Marketing-concept coverage: where a selected candidate's factor is Organic Word-of-Mouth (Post-Day
+1), Social Media Discourse and Meme Trends, Micro-Video Social Media Campaigns, or Influencer-Driven
+Promotions, the LLM may phrase the title/reason using concrete marketing-strategy language — a
+high-concept campaign hook, a concept-driven teaser, a community-led word-of-mouth push — as long as
+it adds no new number or fact. This is phrasing latitude only; it is never a standalone candidate
+factor Phase 1 didn't already produce.
+
 Add llm.prompt.generate.recommended.actions to application.properties next to the other
 llm.prompt.* entries, following their multi-line backslash-continuation string style. State
 outright, the same way CommandCenterSummaryService's prompt does, that the model must not invent
 any fact, number, or statistic beyond what's in the candidate list, and that it must return each
-candidateId unchanged so the response can be merged back onto the full server-computed record.
+candidateId unchanged so the response can be merged back onto the full server-computed record. Carry
+over the same precedent-framing and marketing-concept-language instructions from above into the
+actual prompt text.
 
 ## Data model
 
