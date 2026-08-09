@@ -10,6 +10,7 @@ import com.aura.service.dto.ContentIntentBreakdownResponse;
 import com.aura.service.dto.EntityStatsResponse;
 import com.aura.service.dto.HighlightItem;
 import com.aura.service.dto.PromotionalMixResponse;
+import com.aura.service.dto.RegionBuzz;
 import com.aura.service.dto.SentimentDeltaResponse;
 import com.aura.service.dto.TodaysHighlightsResponse;
 import com.aura.service.dto.TopicCategoryBreakdownResponse;
@@ -221,10 +222,10 @@ public class CommandCenterSummaryService {
         facts.put("movie", entity.getName());
 
         EntityStatsResponse stats = dashboardService.getEntityStats(entityId);
+        long thisMovieTotalMentions = stats.getTotalMentions();
         double positiveSentimentPct = pct(stats.getPositiveSentiment());
         double netSentimentRatio = round1(stats.getNetSentimentScore());
         ObjectNode totals = facts.putObject("totals");
-        totals.put("totalMentions", stats.getTotalMentions());
         totals.put("positiveSentimentPct", positiveSentimentPct);
         totals.put("negativeSentimentPct", pct(stats.getNegativeSentiment()));
         totals.put("overallSentimentScore", round1(stats.getOverallSentiment()));
@@ -237,12 +238,29 @@ public class CommandCenterSummaryService {
         vsYesterday.put("positiveRatioDeltaPct", pct(delta.getPositiveRatioDelta()));
         vsYesterday.put("netSentimentRatioDelta", round1(delta.getNetSentimentDelta()));
 
+        // Region shares are re-based to exclude the 'unknown'/unclassified bucket before reaching the
+        // LLM: the pipeline can't place every post, and those unplaced posts presumably split across
+        // regions in roughly the same proportions as the posts it could classify, so folding them into
+        // the denominator would understate every real region's share. sharePct here is mentionCount /
+        // (total minus unknown), not mentionCount / total.
         AudiencePulseResponse pulse = dashboardService.getAudiencePulse(entityId);
+        List<RegionBuzz> knownRegions = new ArrayList<>();
+        long knownRegionTotal = 0;
+        for (RegionBuzz r : pulse.getRegions()) {
+            if (isUnknownRegion(r.getRegion())) {
+                continue;
+            }
+            knownRegions.add(r);
+            knownRegionTotal += r.getMentionCount();
+        }
+        final long knownRegionMentionsTotal = knownRegionTotal;
         ArrayNode topRegions = facts.putArray("topRegions");
-        pulse.getRegions().stream().limit(TOP_N).forEach(r -> {
+        knownRegions.stream().limit(TOP_N).forEach(r -> {
             ObjectNode n = topRegions.addObject();
             n.put("region", r.getRegion());
-            n.put("sharePct", round1(r.getSharePct()));
+            double sharePct = knownRegionMentionsTotal > 0
+                    ? (double) r.getMentionCount() / knownRegionMentionsTotal * 100.0 : 0.0;
+            n.put("sharePct", round1(sharePct));
         });
 
         PromotionalMixResponse promo = dashboardService.getPromotionalMix(entityId);
@@ -298,7 +316,6 @@ public class CommandCenterSummaryService {
                 .forEach(c -> {
                     ObjectNode n = competitors.addObject();
                     n.put("name", c.getEntityName());
-                    n.put("totalMentions", c.getTotalMentions());
                     double competitorPositiveRatioPct = pct(c.getPositiveRatio());
                     double competitorNetSentimentRatio = round1(c.getNetSentimentScore());
                     n.put("positiveRatioPct", competitorPositiveRatioPct);
@@ -307,9 +324,28 @@ public class CommandCenterSummaryService {
                     // percentage comparison favors — see the movie-vs-competitor sentiment mixup this replaced.
                     n.put("positiveSentimentVsThisMovie", compareLabel(positiveSentimentPct, competitorPositiveRatioPct));
                     n.put("netSentimentVsThisMovie", compareLabel(netSentimentRatio, competitorNetSentimentRatio));
+                    // Raw mention totals are never sent to the LLM (they're meaningless without context);
+                    // instead, this is how much bigger/smaller this movie's mention volume is than the
+                    // competitor's, as a percentage of THIS MOVIE's own total — positive means this movie
+                    // has more buzz, negative means less.
+                    Double mentionsPctDiffVsCompetitor = mentionsPctDiffVsCompetitor(thisMovieTotalMentions, c.getTotalMentions());
+                    if (mentionsPctDiffVsCompetitor != null) {
+                        n.put("mentionsPctDiffVsCompetitor", mentionsPctDiffVsCompetitor);
+                    }
                 });
 
         return facts;
+    }
+
+    private static boolean isUnknownRegion(String region) {
+        return region == null || "unknown".equalsIgnoreCase(region.trim());
+    }
+
+    private static Double mentionsPctDiffVsCompetitor(long thisMovieMentions, long competitorMentions) {
+        if (thisMovieMentions == 0) {
+            return null;
+        }
+        return round1(((double) (thisMovieMentions - competitorMentions) / thisMovieMentions) * 100.0);
     }
 
     private static String compareLabel(double thisMovieValue, double competitorValue) {
