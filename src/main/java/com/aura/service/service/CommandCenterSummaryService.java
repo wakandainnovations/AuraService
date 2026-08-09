@@ -66,6 +66,7 @@ public class CommandCenterSummaryService {
     private static final int CHECKPOINT_WINDOW_DAYS = 3;
     private static final int RECENT_CHECKPOINT_LOOKBACK_DAYS = 14;
     private static final int TOP_N = 3;
+    private static final long MIN_MENTIONS_FOR_DAILY_DELTA = 5;
     private static final TypeReference<List<HighlightItem>> HIGHLIGHT_LIST_TYPE = new TypeReference<>() {
     };
 
@@ -233,10 +234,17 @@ public class CommandCenterSummaryService {
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         SentimentDeltaResponse delta = dashboardService.getSentimentDelta(entityId, today.minusDays(1), today, 1);
-        ObjectNode vsYesterday = facts.putObject("vsYesterday");
-        vsYesterday.put("mentionsDelta", delta.getMentionsDelta());
-        vsYesterday.put("positiveRatioDeltaPct", pct(delta.getPositiveRatioDelta()));
-        vsYesterday.put("netSentimentRatioDelta", round1(delta.getNetSentimentDelta()));
+        // Both days need a minimum volume of mentions or the positive/net-sentiment ratios are noise —
+        // e.g. a day with 1 mention swings between 0% and 100% and a day with 0 mentions defaults to 0%,
+        // producing huge "drops" that reflect sparse data, not a real sentiment shift. Omit the whole
+        // section rather than hand the LLM a ratio it can't tell is unreliable.
+        if (delta.getFromTotalMentions() >= MIN_MENTIONS_FOR_DAILY_DELTA
+                && delta.getToTotalMentions() >= MIN_MENTIONS_FOR_DAILY_DELTA) {
+            ObjectNode vsYesterday = facts.putObject("vsYesterday");
+            vsYesterday.put("mentionsDelta", delta.getMentionsDelta());
+            vsYesterday.put("positiveRatioDeltaPct", pct(delta.getPositiveRatioDelta()));
+            vsYesterday.put("netSentimentRatioDelta", round1(delta.getNetSentimentDelta()));
+        }
 
         // Region shares are re-based to exclude the 'unknown'/unclassified bucket before reaching the
         // LLM: the pipeline can't place every post, and those unplaced posts presumably split across
