@@ -12,5 +12,10 @@ public interface MobilizeActionRepository extends JpaRepository<MobilizeAction, 
 
     List<MobilizeAction> findByUserId(Long userId);
 
+    // Historical mobilize events across a set of comparable entities (same budget tier + language/
+    // genre), used by RecommendedActionCandidateServiceImpl to measure the mention-volume lift those
+    // events correlated with.
+    List<MobilizeAction> findByEntityIdIn(List<Long> entityIds);
+
     void deleteByMentionId(Long mentionId);
 }

@@ -1,0 +1,572 @@
+package com.aura.service.service;
+
+import com.aura.service.dto.RecommendedActionCandidate;
+import com.aura.service.entity.EntityKeyword;
+import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.MobilizeAction;
+import com.aura.service.enums.RecommendedActionCategory;
+import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.CheckpointRepository;
+import com.aura.service.repository.CrisisPlanRepository;
+import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.repository.MentionRepository;
+import com.aura.service.repository.MobilizeActionRepository;
+import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+/**
+ * Covers {@link RecommendedActionCandidateServiceImpl}: category/confidence tier boundaries, the
+ * minimum-sample-size omission rule, the calibrated factor 46/47 calendar windows, the evangelist
+ * positive-sentiment filter/tier ranking, the genre-gated candidates, and the well-formedness of
+ * every produced candidate. Collaborator repositories are mocked as interfaces (never concrete
+ * classes, per this project's Java 25 / Mockito constraint); {@link DashboardService} and
+ * {@link TopSpreaderLookupService} are concrete classes, so per project convention they are
+ * constructed for real and driven through their own (interface) dependencies - the spreader cache is
+ * seeded directly via reflection to avoid needing to mock the network proxy layer underneath it.
+ * {@code movies_data_collection} native queries are reached through the mockable
+ * {@link MoviesDataCollectionQueryService} interface rather than a mocked
+ * {@code jakarta.persistence.EntityManager}, which this project's Java 25 toolchain cannot mock (it
+ * extends {@code java.lang.AutoCloseable}, a JDK-module class Mockito's inline mock maker can't
+ * instrument).
+ */
+class RecommendedActionCandidateServiceImplTest {
+
+    private static final Long ENTITY_ID = 1L;
+
+    private ManagedEntityRepository entityRepository;
+    private MentionRepository mentionRepository;
+    private MobilizeActionRepository mobilizeActionRepository;
+    private TopSpreaderLookupService spreaderLookup;
+    private MoviesDataCollectionQueryService moviesDataQueryService;
+    private RecommendedActionCandidateServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        entityRepository = mock(ManagedEntityRepository.class);
+        mentionRepository = mock(MentionRepository.class);
+        mobilizeActionRepository = mock(MobilizeActionRepository.class);
+        spreaderLookup = new TopSpreaderLookupService(null, new ObjectMapper());
+        DashboardService dashboardService = new DashboardService(
+                mentionRepository, entityRepository,
+                mock(ReplyDraftRepository.class), mock(CrisisPlanRepository.class),
+                mock(CheckpointRepository.class), null);
+        moviesDataQueryService = mock(MoviesDataCollectionQueryService.class);
+
+        service = new RecommendedActionCandidateServiceImpl(
+                entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
+                moviesDataQueryService);
+
+        // Defaults so a test that doesn't care about a given generator isn't polluted by it.
+        stubHourlyActivity(0, List.of());
+        stubReleaseDayStats(List.of());
+        stubBudgetComps(List.of());
+        when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(List.of());
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(any(), any(), any(), any()))
+                .thenReturn(List.of());
+    }
+
+    // ==================== Category threshold boundaries ====================
+
+    @Test
+    void categoryIsHighImpactExactlyAtThreshold() {
+        var def = new BoxOfficeFactorCatalog.FactorDefinition(
+                1, "Synthetic", BoxOfficeFactorCatalog.Direction.POSITIVE, 0.25, 0.25, BoxOfficeFactorCatalog.Role.COMPOUNDING);
+        assertThat(RecommendedActionCandidateServiceImpl.categorize(def)).isEqualTo(RecommendedActionCategory.HIGH_IMPACT);
+    }
+
+    @Test
+    void categoryIsMediumImpactJustBelowHighThreshold() {
+        var def = new BoxOfficeFactorCatalog.FactorDefinition(
+                1, "Synthetic", BoxOfficeFactorCatalog.Direction.POSITIVE, 0.249, 0.249, BoxOfficeFactorCatalog.Role.COMPOUNDING);
+        assertThat(RecommendedActionCandidateServiceImpl.categorize(def)).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+    }
+
+    @Test
+    void categoryIsMediumImpactExactlyAtThreshold() {
+        var def = new BoxOfficeFactorCatalog.FactorDefinition(
+                1, "Synthetic", BoxOfficeFactorCatalog.Direction.POSITIVE, 0.12, 0.12, BoxOfficeFactorCatalog.Role.COMPOUNDING);
+        assertThat(RecommendedActionCandidateServiceImpl.categorize(def)).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+    }
+
+    @Test
+    void categoryIsLowImpactJustBelowMediumThreshold() {
+        var def = new BoxOfficeFactorCatalog.FactorDefinition(
+                1, "Synthetic", BoxOfficeFactorCatalog.Direction.POSITIVE, 0.119, 0.119, BoxOfficeFactorCatalog.Role.COMPOUNDING);
+        assertThat(RecommendedActionCandidateServiceImpl.categorize(def)).isEqualTo(RecommendedActionCategory.LOW_IMPACT);
+    }
+
+    // ==================== Comps confidence tier boundaries ====================
+
+    @Test
+    void compsConfidenceBelowMinSampleIsOmitted() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(4)).isNull();
+    }
+
+    @Test
+    void compsConfidenceAtMinSampleIsLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(5)).isEqualTo(55);
+    }
+
+    @Test
+    void compsConfidenceJustBelowMidTierStaysLow() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(14)).isEqualTo(55);
+    }
+
+    @Test
+    void compsConfidenceAtMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(15)).isEqualTo(70);
+    }
+
+    @Test
+    void compsConfidenceJustBelowHighTierStaysMid() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(29)).isEqualTo(70);
+    }
+
+    @Test
+    void compsConfidenceAtHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.compsConfidence(30)).isEqualTo(85);
+    }
+
+    // ==================== Evangelist confidence tier boundaries ====================
+
+    @Test
+    void evangelistConfidenceLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.evangelistConfidence(3)).isEqualTo(50);
+    }
+
+    @Test
+    void evangelistConfidenceMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.evangelistConfidence(4)).isEqualTo(65);
+    }
+
+    @Test
+    void evangelistConfidenceHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.evangelistConfidence(8)).isEqualTo(80);
+    }
+
+    // ==================== Peak-hour confidence tier boundaries ====================
+
+    @Test
+    void hourlyConfidenceBelowMinSampleIsOmitted() {
+        assertThat(RecommendedActionCandidateServiceImpl.hourlyConfidence(19)).isNull();
+    }
+
+    @Test
+    void hourlyConfidenceAtMinSampleIsLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.hourlyConfidence(20)).isEqualTo(50);
+    }
+
+    @Test
+    void hourlyConfidenceAtMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.hourlyConfidence(100)).isEqualTo(65);
+    }
+
+    @Test
+    void hourlyConfidenceAtHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.hourlyConfidence(500)).isEqualTo(80);
+    }
+
+    // ==================== Factor 46 / 47 calibrated calendar windows ====================
+
+    @Test
+    void trailerTeaserWindowMatchesCalibratedThresholdsExactly() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 1), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "factor-46-trailer-teaser-timing");
+
+        assertThat(candidate.windowStartDaysFromRelease()).isEqualTo(-45);
+        assertThat(candidate.windowEndDaysFromRelease()).isEqualTo(-30);
+        assertThat(candidate.confidencePct()).isEqualTo(90);
+        assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.HIGH_IMPACT);
+    }
+
+    @Test
+    void firstSingleWindowMatchesCalibratedThresholdsExactly() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 1), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "factor-47-first-single-timing");
+
+        assertThat(candidate.windowStartDaysFromRelease()).isEqualTo(-56);
+        assertThat(candidate.windowEndDaysFromRelease()).isEqualTo(-42);
+        assertThat(candidate.confidencePct()).isEqualTo(90);
+    }
+
+    @Test
+    void noReleaseDateOmitsCalendarCandidates() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("trailer-teaser"));
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("first-single"));
+    }
+
+    // ==================== Genre-gated candidates ====================
+
+    @Test
+    void blankGenreOmitsReleaseDayAndBudgetComps() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "", "Kannada", 1_000_000.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("release-day"));
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("screen-count"));
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("pa-commitments"));
+    }
+
+    @Test
+    void presentGenreProducesBudgetCompsCandidatesWhenSampleSufficient() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 1_000_000.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubBudgetComps(List.<Object[]>of(new Object[]{18L, 420_000_000.0}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate screenCount = findCandidate(candidates, "factor-87-screen-count-allocation");
+        RecommendedActionCandidate paCommitments = findCandidate(candidates, "factor-88-pa-commitments");
+        assertThat(screenCount.confidencePct()).isEqualTo(70); // 18 comps -> mid tier
+        assertThat(paCommitments.confidencePct()).isEqualTo(70);
+        assertThat(screenCount.supportingFacts()).anyMatch(f -> f.contains("18") && f.contains("420,000,000"));
+    }
+
+    @Test
+    void budgetCompsBelowMinSampleProducesNoCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 1_000_000.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubBudgetComps(List.<Object[]>of(new Object[]{4L, 100.0}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("screen-count"));
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("pa-commitments"));
+    }
+
+    @Test
+    void releaseDayCandidateUsesMatchingDayOfWeekBucket() {
+        // 2026-06-05 is a Friday -> Postgres DOW 5.
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubReleaseDayStats(List.of(
+                new Object[]{5, 20L, 500_000_000.0},
+                new Object[]{6, 99L, 999_000_000.0}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate releaseDay = findCandidate(candidates, "factor-61-release-day");
+        assertThat(releaseDay.confidencePct()).isEqualTo(70); // 20 comps -> mid tier (15-29)
+        assertThat(releaseDay.supportingFacts().get(0)).contains("Friday").contains("20").contains("500,000,000");
+    }
+
+    // ==================== Holiday proximity ====================
+
+    @Test
+    void releaseNearHolidayProducesHolidayCandidate() {
+        // Diwali 2026-11-08; release 3 days before.
+        ManagedEntity entity = movie(LocalDate.of(2026, 11, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate holiday = findCandidate(candidates, "factor-61-holiday-proximity");
+        assertThat(holiday.confidencePct()).isEqualTo(90);
+        assertThat(holiday.windowLabel()).isEqualTo("Release week");
+        assertThat(holiday.supportingFacts().get(0)).contains("Diwali");
+    }
+
+    @Test
+    void releaseFarFromAnyHolidayOmitsHolidayCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 2, 17), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("holiday-proximity"));
+    }
+
+    // ==================== Evangelist positive-sentiment filter and tier ranking ====================
+
+    @Test
+    void evangelistCandidateFiltersToPredominantlyPositiveAccountsOnly() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        seedSpreaders("MovieKeyword", List.of(
+                new SpreaderProfile("posUser", "X", "TIER_1"),      // pos>neg && pos>=neu -> qualifies
+                new SpreaderProfile("tiedUser", "X", "TIER_2"),     // pos==neu, pos>neg -> qualifies (>=)
+                new SpreaderProfile("negUser", "X", "TIER_3"),      // pos<neg -> excluded
+                new SpreaderProfile("neuHeavyUser", "X", "TIER_1"))); // pos<neu -> excluded
+
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.of(
+                new Object[]{"posUser", Sentiment.POSITIVE, 5L},
+                new Object[]{"posUser", Sentiment.NEGATIVE, 1L},
+                new Object[]{"tiedUser", Sentiment.POSITIVE, 2L},
+                new Object[]{"tiedUser", Sentiment.NEUTRAL, 2L},
+                new Object[]{"negUser", Sentiment.POSITIVE, 1L},
+                new Object[]{"negUser", Sentiment.NEGATIVE, 3L},
+                new Object[]{"neuHeavyUser", Sentiment.POSITIVE, 1L},
+                new Object[]{"neuHeavyUser", Sentiment.NEUTRAL, 4L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate evangelist = findCandidate(candidates, "factor-17-evangelist-mobilization");
+        assertThat(evangelist.confidencePct()).isEqualTo(50); // 2 qualifying accounts (posUser, tiedUser) -> low tier (1-3)
+        assertThat(evangelist.supportingFacts().get(0)).contains("2 positive-sentiment accounts");
+        assertThat(evangelist.supportingFacts()).anyMatch(f -> f.contains("Tier-1/2"));
+    }
+
+    @Test
+    void noQualifyingPositiveAccountsOmitsEvangelistCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("negUser", "X", "TIER_1")));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
+                new Object[]{"negUser", Sentiment.NEGATIVE, 5L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("evangelist-mobilization"));
+    }
+
+    @Test
+    void noKeywordsOmitsEvangelistCandidateWithoutCallingSpreaderLookup() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("evangelist-mobilization"));
+    }
+
+    @Test
+    void allyMobilizationLiftFactAppearsWithEnoughComparableHistory() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 1_000_000.0);
+        entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1")));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
+                new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
+
+        List<ManagedEntity> comparable = List.of(
+                movieWithId(101L, "Action", "Kannada", 1_100_000.0),
+                movieWithId(102L, "Action", "Kannada", 1_100_000.0),
+                movieWithId(103L, "Action", "Kannada", 1_100_000.0));
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), any(), any(), eq(ENTITY_ID)))
+                .thenReturn(comparable);
+
+        List<MobilizeAction> events = List.of(
+                mobilizeEvent(101L, Instant.parse("2025-01-01T00:00:00Z")),
+                mobilizeEvent(102L, Instant.parse("2025-02-01T00:00:00Z")),
+                mobilizeEvent(103L, Instant.parse("2025-03-01T00:00:00Z")));
+        when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(events);
+
+        for (MobilizeAction event : events) {
+            Instant t = event.getCreatedAt();
+            when(mentionRepository.countByManagedEntityIdAndPostDateBetween(
+                    event.getEntityId(), t.minus(7, ChronoUnit.DAYS), t)).thenReturn(10L);
+            when(mentionRepository.countByManagedEntityIdAndPostDateBetween(
+                    event.getEntityId(), t, t.plus(7, ChronoUnit.DAYS))).thenReturn(30L);
+        }
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate evangelist = findCandidate(candidates, "factor-17-evangelist-mobilization");
+        assertThat(evangelist.supportingFacts()).anyMatch(f -> f.contains("3.0x") && f.contains("3"));
+    }
+
+    // ==================== Peak engagement hours ====================
+
+    @Test
+    void peakHoursCandidateOmittedBelowMinActiveUserSample() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubHourlyActivity(19, List.<Object[]>of(new Object[]{18, 19L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("peak-engagement-hours"));
+    }
+
+    @Test
+    void peakHoursCandidateListsTopHoursByActiveUsers() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubHourlyActivity(150, List.of(
+                new Object[]{9, 50L},
+                new Object[]{20, 70L},
+                new Object[]{21, 30L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate peakHours = findCandidate(candidates, "factor-52-peak-engagement-hours");
+        assertThat(peakHours.confidencePct()).isEqualTo(65); // 150 active users -> mid tier
+        assertThat(peakHours.supportingFacts().get(0)).contains("20:00").contains("09:00").contains("21:00");
+    }
+
+    // ==================== Window label formatting ====================
+
+    @Test
+    void windowLabelStraddlingReleaseIsReleaseWeek() {
+        assertThat(RecommendedActionCandidateServiceImpl.buildWindowLabel(0, 0)).isEqualTo("Release week");
+        assertThat(RecommendedActionCandidateServiceImpl.buildWindowLabel(-3, 3)).isEqualTo("Release week");
+    }
+
+    @Test
+    void windowLabelBeforeReleaseInWholeWeeksFormatsAsWeeks() {
+        assertThat(RecommendedActionCandidateServiceImpl.buildWindowLabel(-56, -42)).isEqualTo("6-8 weeks before release");
+    }
+
+    @Test
+    void windowLabelBeforeReleaseInDaysFallsBackToDays() {
+        assertThat(RecommendedActionCandidateServiceImpl.buildWindowLabel(-45, -30)).isEqualTo("30-45 days before release");
+    }
+
+    @Test
+    void windowLabelAfterReleaseFormatsAsWeeks() {
+        assertThat(RecommendedActionCandidateServiceImpl.buildWindowLabel(14, 14)).isEqualTo("2 weeks after release");
+    }
+
+    // ==================== Well-formedness of every produced candidate ====================
+
+    @Test
+    void everyProducedCandidateHasNonNullFieldsAndAtLeastOneFact() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 11, 5), "Action", "Kannada", 1_000_000.0);
+        entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        stubBudgetComps(List.<Object[]>of(new Object[]{40L, 300_000_000.0}));
+        stubReleaseDayStats(List.<Object[]>of(
+                new Object[]{postgresDow(entity.getReleaseDate()), 40L, 300_000_000.0}));
+        stubHourlyActivity(600, List.<Object[]>of(new Object[]{10, 600L}));
+
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1")));
+        when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
+                new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).isNotEmpty();
+        for (RecommendedActionCandidate candidate : candidates) {
+            assertThat(candidate.candidateId()).isNotBlank();
+            assertThat(candidate.factorName()).isNotBlank();
+            assertThat(candidate.category()).isNotNull();
+            assertThat(candidate.confidencePct()).isBetween(0, 100);
+            assertThat(candidate.windowLabel()).isNotBlank();
+            assertThat(candidate.supportingFacts()).isNotEmpty();
+        }
+    }
+
+    // ==================== Missing entity ====================
+
+    @Test
+    void missingEntityThrows() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.buildCandidateActions(ENTITY_ID))
+                .isInstanceOf(com.aura.service.exception.ResourceNotFoundException.class);
+    }
+
+    // ==================== Helpers ====================
+
+    private static ManagedEntity movie(LocalDate releaseDate, String genre, String language, Double budget) {
+        ManagedEntity entity = new ManagedEntity();
+        entity.setId(ENTITY_ID);
+        entity.setType("MOVIE");
+        entity.setReleaseDate(releaseDate);
+        entity.setGenre(genre);
+        entity.setLanguage(language);
+        entity.setBudget(budget);
+        return entity;
+    }
+
+    private static ManagedEntity movieWithId(Long id, String genre, String language, Double budget) {
+        ManagedEntity entity = new ManagedEntity();
+        entity.setId(id);
+        entity.setType("MOVIE");
+        entity.setGenre(genre);
+        entity.setLanguage(language);
+        entity.setBudget(budget);
+        return entity;
+    }
+
+    private static MobilizeAction mobilizeEvent(Long entityId, Instant createdAt) {
+        return MobilizeAction.builder()
+                .id(entityId)
+                .mentionId(1L)
+                .entityId(entityId)
+                .userId(1L)
+                .allyCount(5)
+                .createdAt(createdAt)
+                .build();
+    }
+
+    private static int postgresDow(LocalDate date) {
+        return date.getDayOfWeek() == java.time.DayOfWeek.SUNDAY ? 0 : date.getDayOfWeek().getValue();
+    }
+
+    private void seedSpreaders(String keyword, List<SpreaderProfile> profiles) {
+        @SuppressWarnings("unchecked")
+        com.aura.service.proxy.TtlCache<List<SpreaderProfile>> cache =
+                (com.aura.service.proxy.TtlCache<List<SpreaderProfile>>)
+                        ReflectionTestUtils.getField(spreaderLookup, "profileCache");
+        cache.put(keyword, profiles, java.time.Duration.ofMinutes(10).toNanos());
+    }
+
+    private void stubHourlyActivity(long totalActiveUsers, List<Object[]> hourlyRows) {
+        when(mentionRepository.countActiveUsersByHour(
+                eq(ENTITY_ID), any(Instant.class), any(Instant.class), isNull(), isNull(), isNull()))
+                .thenReturn(hourlyRows);
+        when(mentionRepository.countDistinctActiveUsers(
+                eq(ENTITY_ID), any(Instant.class), any(Instant.class), isNull(), isNull(), isNull()))
+                .thenReturn(totalActiveUsers);
+        when(mentionRepository.countActiveUsersByDayAndHour(
+                eq(ENTITY_ID), any(Instant.class), any(Instant.class), isNull(), isNull(), isNull()))
+                .thenReturn(List.of());
+    }
+
+    private void stubReleaseDayStats(List<Object[]> rows) {
+        when(moviesDataQueryService.findReleaseDayOfWeekStats(any(), any())).thenReturn(rows);
+    }
+
+    private void stubBudgetComps(List<Object[]> rows) {
+        when(moviesDataQueryService.findGenreLanguageBudgetComps(any(), any(), anyDouble(), anyDouble()))
+                .thenReturn(rows);
+    }
+
+    private static RecommendedActionCandidate findCandidate(List<RecommendedActionCandidate> candidates, String candidateId) {
+        return candidates.stream()
+                .filter(c -> c.candidateId().equals(candidateId))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No candidate with id " + candidateId + " in " +
+                        candidates.stream().map(RecommendedActionCandidate::candidateId).toList()));
+    }
+}
