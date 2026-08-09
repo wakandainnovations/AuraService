@@ -13,34 +13,40 @@ import com.aura.service.dto.PromotionalMixResponse;
 import com.aura.service.dto.SentimentDeltaResponse;
 import com.aura.service.dto.TodaysHighlightsResponse;
 import com.aura.service.dto.TopicCategoryBreakdownResponse;
+import com.aura.service.entity.CommandCenterSummaryCache;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.repository.CommandCenterSummaryCacheRepository;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Builds the "AI Summary" and "Today's Highlights" panels shown on the movie Command Center. They are
  * exposed as two separate endpoints ({@link #getAiSummary}/{@link #getTodaysHighlights}) since the UI
  * loads and refreshes them independently, but both read from a single shared generation per entity
- * (one LLM call, one cache entry) so the two panels never tell contradictory stories — whichever
- * endpoint is called first pays the generation cost and the other rides the cache within
- * {@link #CACHE_TTL}.
+ * (one LLM call, one persisted row) so the two panels never tell contradictory stories. Generation is
+ * persisted to {@link CommandCenterSummaryCache} and refreshed for every entity by
+ * {@link #refreshAllSummaries()} every 6 hours, so the endpoints normally just read the cached row
+ * instead of waiting on the LLM; {@code refresh=true} or a not-yet-cached entity fall back to
+ * generating on request.
  *
  * <p>Rather than letting the LLM free-associate, every number it can reference is pre-computed here
  * from real data (the same {@link DashboardService} methods that back their own dedicated endpoints —
@@ -56,16 +62,18 @@ public class CommandCenterSummaryService {
 
     private static final String ANALYTICS_DATA_PLACEHOLDER = "[Analytics Data]";
     private static final Set<String> VALID_HIGHLIGHT_TYPES = Set.of("POSITIVE", "NEGATIVE", "NEUTRAL");
-    private static final Duration CACHE_TTL = Duration.ofMinutes(15);
     private static final int CHECKPOINT_WINDOW_DAYS = 3;
     private static final int RECENT_CHECKPOINT_LOOKBACK_DAYS = 14;
     private static final int TOP_N = 3;
+    private static final TypeReference<List<HighlightItem>> HIGHLIGHT_LIST_TYPE = new TypeReference<>() {
+    };
 
     private final DashboardService dashboardService;
     private final ManagedEntityRepository managedEntityRepository;
+    private final CommandCenterSummaryCacheRepository cacheRepository;
     private final LLMService llmService;
+    private final Clock clock;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ConcurrentHashMap<Long, GeneratedContent> cache = new ConcurrentHashMap<>();
 
     @Value("${llm.prompt.generate.command.center.summary}")
     private String llmPrompt;
@@ -73,32 +81,91 @@ public class CommandCenterSummaryService {
     public CommandCenterSummaryService(
             DashboardService dashboardService,
             ManagedEntityRepository managedEntityRepository,
-            LLMService llmService) {
+            CommandCenterSummaryCacheRepository cacheRepository,
+            LLMService llmService,
+            Clock clock) {
         this.dashboardService = dashboardService;
         this.managedEntityRepository = managedEntityRepository;
+        this.cacheRepository = cacheRepository;
         this.llmService = llmService;
+        this.clock = clock;
     }
 
     public AiSummaryResponse getAiSummary(Long entityId, boolean refresh) {
-        GeneratedContent content = getOrGenerate(entityId, refresh);
+        GeneratedContent content = getCachedOrGenerate(entityId, refresh);
         return new AiSummaryResponse(entityId, content.entityName(), content.summary(), content.generatedAt());
     }
 
     public TodaysHighlightsResponse getTodaysHighlights(Long entityId, boolean refresh) {
-        GeneratedContent content = getOrGenerate(entityId, refresh);
+        GeneratedContent content = getCachedOrGenerate(entityId, refresh);
         return new TodaysHighlightsResponse(entityId, content.entityName(), content.highlights(), content.generatedAt());
     }
 
-    private GeneratedContent getOrGenerate(Long entityId, boolean refresh) {
-        GeneratedContent cached = cache.get(entityId);
-        if (!refresh && cached != null
-                && Duration.between(cached.generatedAt(), Instant.now()).compareTo(CACHE_TTL) < 0) {
-            return cached;
+    /**
+     * Refreshes the cached summary/highlights for every managed entity so the endpoints above can
+     * always serve a persisted row instead of paying for an LLM call on request. Runs at startup and
+     * every 6 hours after that; one entity's failure is logged and skipped rather than aborting the run.
+     */
+    @Scheduled(fixedDelayString = "PT6H")
+    public void refreshAllSummaries() {
+        List<ManagedEntity> entities = managedEntityRepository.findAll();
+        log.info("Refreshing command center summaries for {} entities", entities.size());
+        for (ManagedEntity entity : entities) {
+            try {
+                regenerateAndStore(entity.getId());
+            } catch (Exception e) {
+                log.error("Failed to refresh command center summary for entity {}", entity.getId(), e);
+            }
         }
+    }
 
+    private GeneratedContent getCachedOrGenerate(Long entityId, boolean refresh) {
+        if (!refresh) {
+            var cached = cacheRepository.findByEntityId(entityId);
+            if (cached.isPresent()) {
+                return toGeneratedContent(cached.get());
+            }
+        }
+        return regenerateAndStore(entityId);
+    }
+
+    private GeneratedContent regenerateAndStore(Long entityId) {
         GeneratedContent generated = generate(entityId);
-        cache.put(entityId, generated);
+        persist(entityId, generated);
         return generated;
+    }
+
+    private void persist(Long entityId, GeneratedContent content) {
+        CommandCenterSummaryCache row = cacheRepository.findByEntityId(entityId)
+                .orElseGet(CommandCenterSummaryCache::new);
+        row.setEntityId(entityId);
+        row.setEntityName(content.entityName());
+        row.setSummary(content.summary());
+        row.setHighlightsJson(writeHighlightsJson(content.highlights(), entityId));
+        row.setGeneratedAt(content.generatedAt());
+        cacheRepository.save(row);
+    }
+
+    private GeneratedContent toGeneratedContent(CommandCenterSummaryCache row) {
+        return new GeneratedContent(row.getEntityName(), row.getSummary(), readHighlightsJson(row), row.getGeneratedAt());
+    }
+
+    private String writeHighlightsJson(List<HighlightItem> highlights, Long entityId) {
+        try {
+            return objectMapper.writeValueAsString(highlights);
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "Failed to serialize command center highlights for entity " + entityId, e);
+        }
+    }
+
+    private List<HighlightItem> readHighlightsJson(CommandCenterSummaryCache row) {
+        try {
+            return objectMapper.readValue(row.getHighlightsJson(), HIGHLIGHT_LIST_TYPE);
+        } catch (Exception e) {
+            log.error("Failed to deserialize cached command center highlights for entity {}", row.getEntityId(), e);
+            return Collections.emptyList();
+        }
     }
 
     private GeneratedContent generate(Long entityId) {
@@ -121,7 +188,7 @@ public class CommandCenterSummaryService {
         String summary = node.hasNonNull("summary") ? node.get("summary").asText() : "";
         List<HighlightItem> highlights = extractHighlights(node, entityId);
 
-        return new GeneratedContent(entity.getName(), summary, highlights, Instant.now());
+        return new GeneratedContent(entity.getName(), summary, highlights, clock.instant());
     }
 
     // LLMs are inconsistent about honoring the requested "type" enum (lowercase, missing, or an
