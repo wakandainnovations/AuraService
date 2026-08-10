@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -85,6 +86,17 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int HOURLY_CONFIDENCE_HIGH = 80;
     static final int TOP_PEAK_HOURS = 3;
 
+    // ---- Post-day-1 word-of-mouth confidence, tiered by real mention volume tracked in the
+    // factor's own [7,28]-days-post-release window. Fewer than WORD_OF_MOUTH_TIER_MIN mentions in
+    // that window means the candidate is not produced at all - this only fires once real
+    // post-release conversation actually exists to measure, not before. ----
+    static final long WORD_OF_MOUTH_TIER_MIN = 10;
+    static final long WORD_OF_MOUTH_TIER_MID = 50;
+    static final long WORD_OF_MOUTH_TIER_HIGH = 200;
+    static final int WORD_OF_MOUTH_CONFIDENCE_LOW = 55;
+    static final int WORD_OF_MOUTH_CONFIDENCE_MID = 70;
+    static final int WORD_OF_MOUTH_CONFIDENCE_HIGH = 85;
+
     // ---- Factor 46/47 calendar thresholds - mirror BoxOfficeBacktestWorkerImpl's constants exactly
     // (kept duplicated, not shared, since that class's constants are private); see that class for the
     // calibration rationale. ----
@@ -123,6 +135,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int FACTOR_HOLIDAY_RELEASE_WINDOWS = 61;
     static final int FACTOR_SCREEN_COUNT = 87;
     static final int FACTOR_PA_COMMITMENTS = 88;
+    static final int FACTOR_ORGANIC_WORD_OF_MOUTH = 91;
 
     private record WindowSpec(int startDays, int endDays) {
     }
@@ -247,6 +260,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         addIfPresent(candidates, evangelistMobilizationCandidate(entity));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
+        addIfPresent(candidates, organicWordOfMouthCandidate(entity));
         return candidates;
     }
 
@@ -609,6 +623,53 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return HOURLY_CONFIDENCE_MID;
         }
         return HOURLY_CONFIDENCE_LOW;
+    }
+
+    // ==================== Factor 91 - post-day-1 word-of-mouth (real post-release mention data) ====================
+
+    // Deliberately measures raw mention volume/sentiment, not a promotional-vs-organic-filtered
+    // subset - no date-scoped promotional/organic breakdown query exists in this codebase (see
+    // DashboardService.getPromotionalMix, which is all-time only), so the fact text below describes
+    // exactly what was measured rather than implying a distinction that wasn't actually made.
+    private RecommendedActionCandidate organicWordOfMouthCandidate(ManagedEntity entity) {
+        LocalDate releaseDate = entity.getReleaseDate();
+        if (releaseDate == null) {
+            return null;
+        }
+        WindowSpec window = WINDOW_BY_FACTOR.get(FACTOR_ORGANIC_WORD_OF_MOUTH);
+        Instant start = releaseDate.plusDays(window.startDays()).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant end = releaseDate.plusDays(window.endDays() + 1).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+
+        long totalMentions = mentionRepository.countByManagedEntityIdAndPostDateBetween(entity.getId(), start, end);
+        Integer confidence = wordOfMouthConfidence(totalMentions);
+        if (confidence == null) {
+            return null;
+        }
+        long positive = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entity.getId(), Sentiment.POSITIVE, start, end);
+        long negative = mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                entity.getId(), Sentiment.NEGATIVE, start, end);
+        double positivePct = (double) positive / totalMentions * 100.0;
+        double negativePct = (double) negative / totalMentions * 100.0;
+
+        String fact = String.format(Locale.ROOT,
+                "%d mentions were tracked in the day-%d-to-day-%d post-release word-of-mouth window (%.1f%% positive, " +
+                        "%.1f%% negative).",
+                totalMentions, window.startDays(), window.endDays(), positivePct, negativePct);
+        return factorCandidateFromWindowTable(FACTOR_ORGANIC_WORD_OF_MOUTH, "organic-word-of-mouth", confidence, fact);
+    }
+
+    static Integer wordOfMouthConfidence(long totalMentions) {
+        if (totalMentions < WORD_OF_MOUTH_TIER_MIN) {
+            return null;
+        }
+        if (totalMentions >= WORD_OF_MOUTH_TIER_HIGH) {
+            return WORD_OF_MOUTH_CONFIDENCE_HIGH;
+        }
+        if (totalMentions >= WORD_OF_MOUTH_TIER_MID) {
+            return WORD_OF_MOUTH_CONFIDENCE_MID;
+        }
+        return WORD_OF_MOUTH_CONFIDENCE_LOW;
     }
 
     // ==================== Genre resolution ====================

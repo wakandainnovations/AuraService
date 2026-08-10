@@ -20,6 +20,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -184,6 +187,28 @@ class RecommendedActionCandidateServiceImplTest {
     @Test
     void hourlyConfidenceAtHighTierBoundary() {
         assertThat(RecommendedActionCandidateServiceImpl.hourlyConfidence(500)).isEqualTo(80);
+    }
+
+    // ==================== Word-of-mouth confidence tier boundaries ====================
+
+    @Test
+    void wordOfMouthConfidenceBelowMinSampleIsOmitted() {
+        assertThat(RecommendedActionCandidateServiceImpl.wordOfMouthConfidence(9)).isNull();
+    }
+
+    @Test
+    void wordOfMouthConfidenceAtMinSampleIsLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.wordOfMouthConfidence(10)).isEqualTo(55);
+    }
+
+    @Test
+    void wordOfMouthConfidenceAtMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.wordOfMouthConfidence(50)).isEqualTo(70);
+    }
+
+    @Test
+    void wordOfMouthConfidenceAtHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.wordOfMouthConfidence(200)).isEqualTo(85);
     }
 
     // ==================== Factor 46 / 47 calibrated calendar windows ====================
@@ -432,6 +457,63 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(peakHours.supportingFacts().get(0)).contains("20:00").contains("09:00").contains("21:00");
     }
 
+    // ==================== Post-day-1 word-of-mouth (Factor 91) ====================
+
+    @Test
+    void wordOfMouthCandidateOmittedWhenNoReleaseDate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("organic-word-of-mouth"));
+        verify(mentionRepository, never()).countByManagedEntityIdAndPostDateBetween(any(), any(), any());
+    }
+
+    @Test
+    void wordOfMouthCandidateOmittedBelowMinMentionSample() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubWordOfMouth(9, 5, 2);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("organic-word-of-mouth"));
+    }
+
+    @Test
+    void wordOfMouthCandidateUsesFactor91WindowAndGroundedFacts() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubWordOfMouth(100, 70, 20);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate wordOfMouth = findCandidate(candidates, "factor-91-organic-word-of-mouth");
+        assertThat(wordOfMouth.confidencePct()).isEqualTo(70); // 100 mentions -> mid tier
+        assertThat(wordOfMouth.windowStartDaysFromRelease()).isEqualTo(7);
+        assertThat(wordOfMouth.windowEndDaysFromRelease()).isEqualTo(28);
+        assertThat(wordOfMouth.supportingFacts().get(0))
+                .contains("100 mentions")
+                .contains("day-7-to-day-28")
+                .contains("70.0% positive")
+                .contains("20.0% negative");
+    }
+
+    @Test
+    void wordOfMouthCandidateQueriesExactFactor91Window() {
+        LocalDate releaseDate = LocalDate.of(2026, 6, 5);
+        ManagedEntity entity = movie(releaseDate, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubWordOfMouth(50, 25, 25);
+
+        service.buildCandidateActions(ENTITY_ID);
+
+        Instant expectedStart = releaseDate.plusDays(7).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant expectedEnd = releaseDate.plusDays(29).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+        verify(mentionRepository).countByManagedEntityIdAndPostDateBetween(ENTITY_ID, expectedStart, expectedEnd);
+    }
+
     // ==================== Window label formatting ====================
 
     @Test
@@ -560,6 +642,17 @@ class RecommendedActionCandidateServiceImplTest {
     private void stubBudgetComps(List<Object[]> rows) {
         when(moviesDataQueryService.findGenreLanguageBudgetComps(any(), any(), anyDouble(), anyDouble()))
                 .thenReturn(rows);
+    }
+
+    private void stubWordOfMouth(long total, long positive, long negative) {
+        when(mentionRepository.countByManagedEntityIdAndPostDateBetween(eq(ENTITY_ID), any(Instant.class), any(Instant.class)))
+                .thenReturn(total);
+        when(mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                eq(ENTITY_ID), eq(Sentiment.POSITIVE), any(Instant.class), any(Instant.class)))
+                .thenReturn(positive);
+        when(mentionRepository.countByManagedEntityIdAndSentimentAndPostDateBetween(
+                eq(ENTITY_ID), eq(Sentiment.NEGATIVE), any(Instant.class), any(Instant.class)))
+                .thenReturn(negative);
     }
 
     private static RecommendedActionCandidate findCandidate(List<RecommendedActionCandidate> candidates, String candidateId) {
