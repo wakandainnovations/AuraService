@@ -2713,6 +2713,87 @@ GET /api/dashboard/21/audience-pulse-aspects
 
 ---
 
+### 18l. Get Recommended Actions (Command Center "Recommended Actions" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/recommended-actions`
+
+**Description:** Backs the "Recommended Actions" panel on the movie Command Center — a prioritized marketing action plan spanning the whole pre/post-release campaign. Built in two strictly separated phases:
+
+1. **Candidate generation (server-computed, no LLM).** Every candidate action's `category`, `confidencePct`, and execution window (`windowStartDaysFromRelease`/`windowEndDaysFromRelease`/`windowLabel`) is computed from real data — `movies_data_collection` genre/language/budget comps, this platform's own mention/spreader/hourly-activity data, or calibrated calendar math (trailer/teaser timing, holiday proximity, etc.). A factor with insufficient real backing data for this entity simply produces no candidate — never a placeholder or guessed number.
+2. **LLM select-and-phrase (this endpoint's only model call).** The full candidate list plus the movie's own facts (genre, language, industry, budget, days to release) are handed to the model as read-only context. The model's *only* output is which candidates are genuinely relevant to this specific movie and a short prose reason for each — it never sees a schema field for `category`, `confidencePct`, or either window offset, and never supplies one; those three numbers are merged back onto the selection from the original candidate record, untouched. The model may restate a number already present in that candidate's own `supportingFacts`, but is instructed never to invent, guess, estimate, or introduce a new one. Any `candidateId` the model returns that doesn't match a candidate it was sent is dropped (logged as a warning), and every returned reason is scanned for a digit sequence not found in that candidate's own supporting facts (also logged as a warning) as a cheap defensive check on top of the prompt-level constraint.
+
+If the LLM call fails, its response can't be parsed, or it selects nothing usable, the endpoint falls back to every server-computed candidate unfiltered, with a generic reason built only from that candidate's own supporting facts — the panel never renders empty just because of an LLM hiccup.
+
+Generation is cached per entity and refreshed for every entity once a day (`refresh=true` forces regeneration) — unlike the 6-hour cadence of `audience-pulse-aspects` (§18k), the underlying facts (genre, budget, historical comps) change rarely, so there's no value in re-running the LLM call more often. What *does* change daily is which phase of the plan is "current": by default this endpoint filters the cached plan down to only the actions whose window currently contains today (computed live against `entity.releaseDate` on every call, not baked into the cached plan); pass `allPhases=true` to see the entire campaign roadmap instead. An entity with no `releaseDate` can't have a "current" window computed, so it always returns the full, unfiltered plan regardless of `allPhases`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `refresh` (optional, default `false`) - bypass the daily cache and regenerate immediately
+- `allPhases` (optional, default `false`) - return the whole cached plan ungrouped/unfiltered (the full campaign roadmap) instead of only the actions whose window currently contains today
+
+**Example Request:**
+```
+GET /api/dashboard/21/recommended-actions?allPhases=true
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "daysToRelease": -12,
+  "actions": [
+    {
+      "category": "HIGH_IMPACT",
+      "title": "Kick Off Teaser/Trailer Push",
+      "reason": "This platform's timing model calibrates a 30-45 day pre-release trailer/teaser window as a +25% impact bonus — now is the window to release it.",
+      "confidencePct": 90,
+      "relatedFactor": "Teaser/Trailer Timing",
+      "windowStartDaysFromRelease": -45,
+      "windowEndDaysFromRelease": -30,
+      "windowLabel": "4-6 weeks before release"
+    },
+    {
+      "category": "MEDIUM_IMPACT",
+      "title": "Activate Core Fanbase",
+      "reason": "12 positive-sentiment accounts have been identified across tracked keywords, 4 of them Tier-1/2 influence accounts — comparable ally mobilization events have correlated with a 1.8x mention-volume lift.",
+      "confidencePct": 65,
+      "relatedFactor": "Fanbase Mobilization",
+      "windowStartDaysFromRelease": -21,
+      "windowEndDaysFromRelease": -7,
+      "windowLabel": "1-3 weeks before release"
+    }
+  ],
+  "generatedAt": "2026-08-08T10:15:00Z"
+}
+```
+
+**Response fields:**
+- `daysToRelease` — today's signed day-offset from `entity.releaseDate`, using the same sign convention as the window fields below (negative = before release, positive = after); `null` if the entity has no `releaseDate`.
+- `actions` — the (by default, window-filtered) action list, ordered as generated.
+- `actions[].category` — `HIGH_IMPACT`, `MEDIUM_IMPACT`, or `LOW_IMPACT`; server-computed in Phase 1, never LLM-authored.
+- `actions[].title` — LLM-authored (falls back to the underlying factor's name if the model didn't sharpen it).
+- `actions[].reason` — LLM-authored prose grounded only in that action's own supporting facts (or a generic Java-built fallback reason — see Description).
+- `actions[].confidencePct` — 0-100; server-computed in Phase 1, never LLM-authored.
+- `actions[].relatedFactor` — the underlying marketing factor this action is grounded in (e.g. "Teaser/Trailer Timing", "Fanbase Mobilization").
+- `actions[].windowStartDaysFromRelease` / `actions[].windowEndDaysFromRelease` — signed day-offsets from release bounding this action's execution window; server-computed in Phase 1, never LLM-authored.
+- `actions[].windowLabel` — human-readable rendering of the window (e.g. `"4-6 weeks before release"`, `"Release week"`).
+- `generatedAt` — when the underlying plan was generated (reflects the cached generation time, not necessarily the request time).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
