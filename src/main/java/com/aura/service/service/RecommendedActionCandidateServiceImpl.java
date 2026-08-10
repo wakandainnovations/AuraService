@@ -41,9 +41,10 @@ import java.util.stream.Collectors;
  * candidate here requires a budget on file: {@link #comparableBudgetCandidates} falls back to
  * genre+language comps across every budget tier when the entity has none, and
  * {@link #genreAudienceReachCandidate} (backed by {@link GenreMarketingLookupService}'s AuraMath
- * genre-audience lookup) never needed one in the first place - this platform's actual data skews
- * toward small/independent productions with no budget recorded, and candidate generation should
- * still reach them.
+ * genre-audience lookup), {@link #brandEvangelistOutreachCandidate}, and {@link #viralSeedCandidate}
+ * (both backed by further AuraMath keyword-scoped lookups) never needed one in the first place - this
+ * platform's actual data skews toward small/independent productions with no budget recorded, and
+ * candidate generation should still reach them.
  *
  * <p>Reuses (never re-derives) {@link BoxOfficeFactorCatalog} for factor names/impact ranges, the
  * exact teaser/trailer/first-single calendar thresholds from {@link BoxOfficeBacktestWorkerImpl},
@@ -153,12 +154,19 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // ---- BoxOfficeFactorCatalog factor numbers this service is grounded in ----
     static final int FACTOR_FANBASE_MOBILIZATION = 17;
     static final int FACTOR_MICRO_VIDEO_CAMPAIGNS = 52;
+    static final int FACTOR_INFLUENCER_PROMOTIONS = 53;
     static final int FACTOR_TEASER_TRAILER = 46;
     static final int FACTOR_FIRST_SINGLE = 47;
     static final int FACTOR_HOLIDAY_RELEASE_WINDOWS = 61;
     static final int FACTOR_SCREEN_COUNT = 87;
     static final int FACTOR_PA_COMMITMENTS = 88;
     static final int FACTOR_ORGANIC_WORD_OF_MOUTH = 91;
+
+    // ---- Brand-evangelist / viral-seed outreach confidence: fixed, grounded in a live AuraMath
+    // lookup rather than a larger-sample-means-more-confidence tier - same reasoning as
+    // GENRE_REACH_CONFIDENCE. ----
+    static final int BRAND_EVANGELIST_CONFIDENCE = 65;
+    static final int VIRAL_SEED_CONFIDENCE = 65;
 
     private record WindowSpec(int startDays, int endDays) {
     }
@@ -247,6 +255,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final DashboardService dashboardService;
     private final MoviesDataCollectionQueryService moviesDataQueryService;
     private final GenreMarketingLookupService genreMarketingLookup;
+    private final BrandEvangelistLookupService brandEvangelistLookup;
+    private final ViralSeedLookupService viralSeedLookup;
 
     public RecommendedActionCandidateServiceImpl(
             ManagedEntityRepository entityRepository,
@@ -255,7 +265,9 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             TopSpreaderLookupService spreaderLookup,
             DashboardService dashboardService,
             MoviesDataCollectionQueryService moviesDataQueryService,
-            GenreMarketingLookupService genreMarketingLookup) {
+            GenreMarketingLookupService genreMarketingLookup,
+            BrandEvangelistLookupService brandEvangelistLookup,
+            ViralSeedLookupService viralSeedLookup) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
         this.mobilizeActionRepository = mobilizeActionRepository;
@@ -263,6 +275,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.dashboardService = dashboardService;
         this.moviesDataQueryService = moviesDataQueryService;
         this.genreMarketingLookup = genreMarketingLookup;
+        this.brandEvangelistLookup = brandEvangelistLookup;
+        this.viralSeedLookup = viralSeedLookup;
     }
 
     @Override
@@ -288,10 +302,27 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         }
         addIfPresent(candidates, genreAudienceReachCandidate(genre));
 
-        addIfPresent(candidates, evangelistMobilizationCandidate(entity));
+        List<String> keywords = extractKeywords(entity);
+        addIfPresent(candidates, evangelistMobilizationCandidate(entity, keywords));
+        addIfPresent(candidates, brandEvangelistOutreachCandidate(keywords));
+        addIfPresent(candidates, viralSeedCandidate(keywords));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
         return candidates;
+    }
+
+    /** Tracked keyword strings for this entity, or empty if it has none - the gate shared by every
+     *  candidate below that needs a keyword to query AuraMath with. */
+    private static List<String> extractKeywords(ManagedEntity entity) {
+        List<String> keywords = new ArrayList<>();
+        if (entity.getKeywords() != null) {
+            for (EntityKeyword ek : entity.getKeywords()) {
+                if (ek != null && ek.getKeyword() != null && !ek.getKeyword().isBlank()) {
+                    keywords.add(ek.getKeyword());
+                }
+            }
+        }
+        return keywords;
     }
 
     private static void addIfPresent(List<RecommendedActionCandidate> list, RecommendedActionCandidate candidate) {
@@ -532,15 +563,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     // ==================== Factor 17 - evangelist / core fanbase mobilization ====================
 
-    private RecommendedActionCandidate evangelistMobilizationCandidate(ManagedEntity entity) {
-        List<String> keywords = new ArrayList<>();
-        if (entity.getKeywords() != null) {
-            for (EntityKeyword ek : entity.getKeywords()) {
-                if (ek != null && ek.getKeyword() != null && !ek.getKeyword().isBlank()) {
-                    keywords.add(ek.getKeyword());
-                }
-            }
-        }
+    private RecommendedActionCandidate evangelistMobilizationCandidate(ManagedEntity entity, List<String> keywords) {
         if (keywords.isEmpty()) {
             return null;
         }
@@ -684,6 +707,83 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 "Ally mobilization events of similar scale correlated with a %.1fx mention-volume lift across %d " +
                         "comparable historical events.",
                 avgLift, liftRatios.size());
+    }
+
+    // ==================== Factor 53 - brand evangelist outreach (AuraMath) ====================
+
+    // Distinct data source from evangelistMobilizationCandidate above: that one measures THIS
+    // platform's own mention sentiment for authors AuraMath ranks as general top spreaders (Hawkes
+    // influence). This one asks AuraMath directly which of those authors it has already classified
+    // as "Brand Evangelist" (positive tone, high branching ratio) independent of any one keyword -
+    // a real, tiered count answering "how many evangelists should this movie approach," grounded in
+    // AuraMath's own classification rather than a percentage this service would otherwise have to
+    // invent.
+    private RecommendedActionCandidate brandEvangelistOutreachCandidate(List<String> keywords) {
+        if (keywords.isEmpty()) {
+            return null;
+        }
+        Map<String, String> tierByAuthor = new LinkedHashMap<>();
+        for (String keyword : keywords) {
+            for (BrandEvangelistLookupService.BrandEvangelist evangelist : brandEvangelistLookup.getBrandEvangelists(keyword)) {
+                tierByAuthor.putIfAbsent(evangelist.author(), evangelist.influenceTier());
+            }
+        }
+        if (tierByAuthor.isEmpty()) {
+            return null;
+        }
+
+        long tier1Or2Count = tierByAuthor.values().stream().filter(t -> tierRank(t) <= 2).count();
+
+        List<String> facts = new ArrayList<>();
+        facts.add(String.format(Locale.ROOT,
+                "AuraMath has identified %d brand evangelist(s) (positive-tone, high-branching-ratio accounts) " +
+                        "across %d tracked keyword(s) for this movie.",
+                tierByAuthor.size(), keywords.size()));
+        if (tier1Or2Count > 0) {
+            facts.add(String.format(Locale.ROOT,
+                    "%d of these are Tier-1/2 influence accounts - approach these first for the highest expected " +
+                            "visibility lift per outreach.",
+                    tier1Or2Count));
+        }
+        return factorCandidateFromWindowTable(
+                FACTOR_INFLUENCER_PROMOTIONS, "brand-evangelist-outreach", BRAND_EVANGELIST_CONFIDENCE, facts);
+    }
+
+    // ==================== Factor 53 - viral seed outreach (AuraMath) ====================
+
+    // Different targeting strategy from brand-evangelist outreach above: viral seeds are the accounts
+    // AuraMath's composite infectivity/reach/influence score says are best to strategically seed NEW
+    // promotional content with (a trailer drop, a teaser), regardless of whether they've shown any
+    // prior sentiment toward this movie - not "who already likes us" but "who can make new content
+    // spread."
+    private RecommendedActionCandidate viralSeedCandidate(List<String> keywords) {
+        if (keywords.isEmpty()) {
+            return null;
+        }
+        Map<String, String> platformByAuthor = new LinkedHashMap<>();
+        for (String keyword : keywords) {
+            for (ViralSeedLookupService.ViralSeed seed : viralSeedLookup.getViralSeeds(keyword)) {
+                platformByAuthor.putIfAbsent(seed.author(), seed.primaryPlatform());
+            }
+        }
+        if (platformByAuthor.isEmpty()) {
+            return null;
+        }
+
+        List<String> facts = new ArrayList<>();
+        facts.add(String.format(Locale.ROOT,
+                "AuraMath has identified %d viral-seed account(s) across %d tracked keyword(s) for this movie, " +
+                        "ranked by a composite of infectivity, engagement, and reach.",
+                platformByAuthor.size(), keywords.size()));
+        String topPlatform = platformByAuthor.values().stream().filter(p -> p != null && !p.isBlank()).findFirst().orElse(null);
+        if (topPlatform != null) {
+            facts.add(String.format(Locale.ROOT,
+                    "The top-ranked seed account's primary platform is %s - consider giving it early or exclusive " +
+                            "access to teaser content.",
+                    topPlatform));
+        }
+        return factorCandidateFromWindowTable(
+                FACTOR_INFLUENCER_PROMOTIONS, "viral-seed-outreach", VIRAL_SEED_CONFIDENCE, facts);
     }
 
     // ==================== Factor 52 - peak audience engagement hours ====================

@@ -62,6 +62,8 @@ class RecommendedActionCandidateServiceImplTest {
     private TopSpreaderLookupService spreaderLookup;
     private MoviesDataCollectionQueryService moviesDataQueryService;
     private GenreMarketingLookupService genreMarketingLookup;
+    private BrandEvangelistLookupService brandEvangelistLookup;
+    private ViralSeedLookupService viralSeedLookup;
     private RecommendedActionCandidateServiceImpl service;
 
     @BeforeEach
@@ -76,10 +78,12 @@ class RecommendedActionCandidateServiceImplTest {
                 mock(CheckpointRepository.class), null);
         moviesDataQueryService = mock(MoviesDataCollectionQueryService.class);
         genreMarketingLookup = mock(GenreMarketingLookupService.class);
+        brandEvangelistLookup = mock(BrandEvangelistLookupService.class);
+        viralSeedLookup = mock(ViralSeedLookupService.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
-                moviesDataQueryService, genreMarketingLookup);
+                moviesDataQueryService, genreMarketingLookup, brandEvangelistLookup, viralSeedLookup);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
@@ -87,6 +91,8 @@ class RecommendedActionCandidateServiceImplTest {
         stubBudgetComps(List.of());
         stubTotalMentions(1_000L);
         when(genreMarketingLookup.getGenreReach(any())).thenReturn(null);
+        when(brandEvangelistLookup.getBrandEvangelists(anyString())).thenReturn(List.of());
+        when(viralSeedLookup.getViralSeeds(anyString())).thenReturn(List.of());
         when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(List.of());
         when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(any(), any(), any(), any()))
                 .thenReturn(List.of());
@@ -335,6 +341,82 @@ class RecommendedActionCandidateServiceImplTest {
 
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("genre-audience-reach"));
         verify(genreMarketingLookup, never()).getGenreReach(anyString());
+    }
+
+    // ==================== Brand evangelist outreach (AuraMath) ====================
+
+    @Test
+    void brandEvangelistsProduceOutreachCandidateWithTierBreakdown() {
+        ManagedEntity entity = movie(null, null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("lordgaaga", null, null, null, null, null)));
+        seedSpreaders("lordgaaga", List.of());
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(brandEvangelistLookup.getBrandEvangelists("lordgaaga")).thenReturn(List.of(
+                new BrandEvangelistLookupService.BrandEvangelist("u1", "TIER_1"),
+                new BrandEvangelistLookupService.BrandEvangelist("u2", "TIER_3"),
+                new BrandEvangelistLookupService.BrandEvangelist("u3", "TIER_2")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate outreach = findCandidate(candidates, "factor-53-brand-evangelist-outreach");
+        assertThat(outreach.confidencePct()).isEqualTo(65);
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("3 brand evangelist"));
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("2 of these are Tier-1/2"));
+    }
+
+    @Test
+    void noBrandEvangelistsFoundOmitsOutreachCandidate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("lordgaaga", null, null, null, null, null)));
+        seedSpreaders("lordgaaga", List.of());
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("brand-evangelist-outreach"));
+    }
+
+    @Test
+    void noKeywordsOmitsBrandEvangelistCandidateWithoutCallingAuraMath() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("brand-evangelist-outreach"));
+        verify(brandEvangelistLookup, never()).getBrandEvangelists(anyString());
+    }
+
+    // ==================== Viral seed outreach (AuraMath) ====================
+
+    @Test
+    void viralSeedsProduceOutreachCandidateWithTopPlatform() {
+        ManagedEntity entity = movie(null, null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("lordgaaga", null, null, null, null, null)));
+        seedSpreaders("lordgaaga", List.of());
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(viralSeedLookup.getViralSeeds("lordgaaga")).thenReturn(List.of(
+                new ViralSeedLookupService.ViralSeed("u1", "instagram"),
+                new ViralSeedLookupService.ViralSeed("u2", "x")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate outreach = findCandidate(candidates, "factor-53-viral-seed-outreach");
+        assertThat(outreach.confidencePct()).isEqualTo(65);
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("2 viral-seed account"));
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("instagram"));
+    }
+
+    @Test
+    void noViralSeedsFoundOmitsOutreachCandidate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        entity.setKeywords(List.of(new EntityKeyword("lordgaaga", null, null, null, null, null)));
+        seedSpreaders("lordgaaga", List.of());
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("viral-seed-outreach"));
     }
 
     // ==================== Genre-gated candidates ====================
