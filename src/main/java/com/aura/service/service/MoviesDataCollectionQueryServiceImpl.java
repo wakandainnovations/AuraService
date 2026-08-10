@@ -19,12 +19,18 @@ public class MoviesDataCollectionQueryServiceImpl implements MoviesDataCollectio
             "WHERE genre = :genre AND LOWER(language) = LOWER(:language) " +
             "AND budget BETWEEN :minBudget AND :maxBudget AND revenue IS NOT NULL";
 
+    // release_date is a free-text column and not always a full ISO date (sometimes just a bare
+    // year, e.g. "2025" — see MovieBacktestRow) — EXTRACT(DOW ...) needs a real date, so this
+    // restricts to rows that are a full "YYYY-MM-DD" string before casting, same guard style as
+    // BoxOfficeBacktestServiceImpl's ELIGIBLE_MOVIES_SQL.
+    // CAST(... AS date), not the "::date" shorthand — Hibernate's native-query parameter parser
+    // treats a bare "::" as a bind-parameter prefix and mangles it into invalid SQL.
     private static final String RELEASE_DAY_OF_WEEK_SQL =
-            "SELECT EXTRACT(DOW FROM release_date) AS dow, COUNT(*) AS cnt, AVG(revenue) AS avg_revenue " +
+            "SELECT EXTRACT(DOW FROM CAST(release_date AS date)) AS dow, COUNT(*) AS cnt, AVG(revenue) AS avg_revenue " +
             "FROM movies_data_collection " +
             "WHERE genre = :genre AND LOWER(language) = LOWER(:language) " +
-            "AND release_date IS NOT NULL AND revenue IS NOT NULL " +
-            "GROUP BY EXTRACT(DOW FROM release_date)";
+            "AND release_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND revenue IS NOT NULL " +
+            "GROUP BY EXTRACT(DOW FROM CAST(release_date AS date))";
 
     @PersistenceContext
     private EntityManager entityManager;
