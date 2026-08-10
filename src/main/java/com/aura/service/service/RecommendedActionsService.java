@@ -53,6 +53,10 @@ public class RecommendedActionsService {
 
     private static final String CANDIDATE_DATA_PLACEHOLDER = "[Candidate Actions Data]";
     private static final Pattern DIGIT_SEQUENCE = Pattern.compile("\\d+");
+    // Catches a weaker/local LLM literally echoing a bracketed example from the prompt (e.g.
+    // "[Movie]", "[genre]") into its actual output instead of substituting a real value - observed
+    // in production against the real-movie-reference latitude added for organic/low-cost factors.
+    private static final Pattern BRACKET_PLACEHOLDER = Pattern.compile("\\[[^\\[\\]]{1,60}]");
     private static final TypeReference<List<RecommendedActionItem>> ACTION_LIST_TYPE = new TypeReference<>() {
     };
 
@@ -263,6 +267,13 @@ public class RecommendedActionsService {
                 title = candidate.factorName();
             }
             warnIfReasonHasUngroundedNumber(candidateId, reason, candidate.supportingFacts(), entityId);
+            if (BRACKET_PLACEHOLDER.matcher(reason).find() || BRACKET_PLACEHOLDER.matcher(title).find()) {
+                log.warn("Recommended actions LLM output a literal bracket placeholder for candidate '{}' " +
+                        "(entity {}) — using this candidate's generic fallback reason instead. title=\"{}\" reason=\"{}\"",
+                        candidateId, entityId, title, reason);
+                selected.add(toActionItem(candidate, candidate.factorName(), String.join(" ", candidate.supportingFacts())));
+                continue;
+            }
             selected.add(toActionItem(candidate, title, reason));
         }
 

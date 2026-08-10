@@ -145,6 +145,32 @@ class RecommendedActionsServiceTest {
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
     }
 
+    // Regression coverage: observed live against a weaker/local LLM, which literally echoed the
+    // bracketed example from the prompt ("[Movie X] (a real movie example)") instead of substituting
+    // a real movie title. That reason is unusable as-is, so it must fall back to this candidate's own
+    // generic (supportingFacts-only) reason rather than surface the placeholder verbatim in the UI.
+    @Test
+    void merge_fallsBackToGenericReasonWhenLlmEchoesLiteralBracketPlaceholder() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "factor-52-low-online-presence", "Micro-Video Social Media Campaigns", 65, -365, -14, "label",
+                "Only 3 mention(s) tracked online to date.");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-52-low-online-presence\", \"reason\": \"Similar to how [Movie X] " +
+                        "(a real movie example) built early buzz through short-form video teasers.\"}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions()).hasSize(1);
+        RecommendedActionItem item = response.getActions().get(0);
+        assertThat(item.getReason()).doesNotContain("[Movie X]").contains("Only 3 mention(s)");
+        assertThat(item.getTitle()).isEqualTo("Micro-Video Social Media Campaigns");
+    }
+
     // ==================== LLM failure fallback ====================
 
     @Test
