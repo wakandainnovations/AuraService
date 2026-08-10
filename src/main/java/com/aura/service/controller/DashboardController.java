@@ -7,6 +7,7 @@ import com.aura.service.service.AudiencePulseAspectsService;
 import com.aura.service.service.CommandCenterSummaryService;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.EntityAccessService;
+import com.aura.service.service.RecommendedActionsService;
 import com.aura.service.service.UserEntityViewService;
 import com.aura.service.service.WhatsChangedService;
 import com.aura.service.service.WhatsNewService;
@@ -39,6 +40,7 @@ public class DashboardController {
     private final EntityAccessService entityAccessService;
     private final CommandCenterSummaryService commandCenterSummaryService;
     private final AudiencePulseAspectsService audiencePulseAspectsService;
+    private final RecommendedActionsService recommendedActionsService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -282,6 +284,16 @@ public class DashboardController {
             @RequestParam(defaultValue = "false") boolean refresh) {
         assertOwned(entityId);
         AudiencePulseAspectsResponse response = audiencePulseAspectsService.getAspects(entityId, refresh);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/recommended-actions")
+    public ResponseEntity<RecommendedActionsResponse> getRecommendedActions(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "false") boolean refresh,
+            @RequestParam(defaultValue = "false") boolean allPhases) {
+        assertOwned(entityId);
+        RecommendedActionsResponse response = recommendedActionsService.getRecommendedActions(entityId, refresh, allPhases);
         return ResponseEntity.ok(response);
     }
 
