@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.service.AudiencePulseAspectsService;
 import com.aura.service.service.CommandCenterSummaryService;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.EntityAccessService;
@@ -37,6 +38,7 @@ public class DashboardController {
     private final WhatsNewService whatsNewService;
     private final EntityAccessService entityAccessService;
     private final CommandCenterSummaryService commandCenterSummaryService;
+    private final AudiencePulseAspectsService audiencePulseAspectsService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -271,6 +273,15 @@ public class DashboardController {
             @RequestParam(defaultValue = "false") boolean refresh) {
         assertOwned(entityId);
         TodaysHighlightsResponse response = commandCenterSummaryService.getTodaysHighlights(entityId, refresh);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/audience-pulse-aspects")
+    public ResponseEntity<AudiencePulseAspectsResponse> getAudiencePulseAspects(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        assertOwned(entityId);
+        AudiencePulseAspectsResponse response = audiencePulseAspectsService.getAspects(entityId, refresh);
         return ResponseEntity.ok(response);
     }
 

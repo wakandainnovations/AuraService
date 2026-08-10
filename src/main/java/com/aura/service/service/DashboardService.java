@@ -21,6 +21,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -114,6 +115,7 @@ public class DashboardService {
         return new EntityStatsAvgResponse(totalMentions, overallSentiment, positiveRatio, netSentimentScore);
     }
     
+    @Transactional(readOnly = true)
     public List<CompetitorSnapshot> getCompetitorSnapshot(Long entityId) {
         ManagedEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));

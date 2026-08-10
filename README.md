@@ -2660,6 +2660,59 @@ GET /api/dashboard/21/todays-highlights
 
 ---
 
+### 18k. Get Audience Pulse Aspects ("People Love" / "People Concerned About" chips)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/audience-pulse-aspects`
+
+**Description:** Backs the "People Love" and "People Concerned About" chip lists on the Command Center's Audience Pulse panel. Calls AuraMath's aspect-driver analysis (`GET /api/marketing/aspect-drivers?entityId=`), a proper aspect-based sentiment analysis (ABSA) over the entity's mentions:
+- Each candidate aspect is a common-noun lemma (Stanford CoreNLP POS + lemma) with no named-entity tag — this excludes cast/crew names, other referenced films, and hashtags/@handles tagged as nouns, none of which are genuine "aspects of the movie".
+- Each aspect is scored using the sentiment of the *single sentence it appears in*, not the sentiment of the whole post — a post like "the music was amazing but the runtime killed it" now correctly scores "music" and "runtime" differently, rather than copying one document-level score onto both.
+- An aspect only counts once it's mentioned by both a minimum number of posts *and* a minimum number of distinct authors — the author-diversity floor exists because post volume alone can't distinguish a genuine consensus from one viral thread or bot/campaign account.
+- Aspects are ranked by an author-diversity-shrunk impact score (pulls toward neutral when author diversity is low, so a low-diversity outlier can't outrank a broad consensus). `peopleLove` is the top 3 "strengths" (highest average sentiment); `peopleConcerned` is the top 3 "weaknesses" (lowest/most negative).
+
+Two earlier versions of this endpoint had real problems this replaced: an LLM freely extracting aspects from raw post text could latch onto an off-topic tangent mentioned in a single post; a first pass at calling AuraMath directly inherited AuraMath's own bug of copying whole-document sentiment onto every noun with no named-entity filtering (hashtags, @handles, and cast names could rank as top "aspects"). Both are fixed at the source now (see AuraMath's `AspectSentimentAnalyzer`/`AspectDriversPrecomputer`); this endpoint keeps a second, cheap layer of hashtag/handle/cast-name filtering as defense in depth.
+
+Generation is cached per entity (same shape as `ai-summary`/`todays-highlights`, §18i/§18j) and refreshed for every entity every 6 hours; pass `refresh=true` to force regeneration. If AuraMath is unavailable, this endpoint degrades to empty `peopleLove`/`peopleConcerned` arrays rather than erroring.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `refresh` (optional, default `false`) - bypass the cache and regenerate immediately
+
+**Example Request:**
+```
+GET /api/dashboard/21/audience-pulse-aspects
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "peopleLove": ["Lead Pair Chemistry", "Music", "Comedy"],
+  "peopleConcerned": ["Runtime", "Second Half Pace", "VFX"],
+  "generatedAt": "2026-08-08T10:15:00Z"
+}
+```
+
+**Response fields:**
+- `peopleLove` — up to 3 aspects with the highest average sentiment; can be shorter or empty if AuraMath has fewer than 3 qualifying aspects (or is unavailable).
+- `peopleConcerned` — up to 3 aspects with the lowest/most negative average sentiment; can be shorter or empty if AuraMath has fewer than 3 qualifying aspects (or is unavailable).
+- `generatedAt` — when the underlying aspects were generated (reflects the cached generation time, not necessarily the request time).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
