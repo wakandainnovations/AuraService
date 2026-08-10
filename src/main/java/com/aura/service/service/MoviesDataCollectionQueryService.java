@@ -14,13 +14,16 @@ public interface MoviesDataCollectionQueryService {
 
     /**
      * Rows of {@code [count, avgRevenue]} (a single aggregate row) for comparable-movie budget comps:
-     * same genre + language, budget within {@code [minBudget, maxBudget]}, revenue not null.
+     * overlapping genre (see {@link MoviesDataCollectionQueryServiceImpl#genreOverlaps} - at least one
+     * shared genre token, not an exact match of the full comma-separated string) + same language,
+     * budget within {@code [minBudget, maxBudget]}, revenue not null.
      */
     List<Object[]> findGenreLanguageBudgetComps(String genre, String language, double minBudget, double maxBudget);
 
     /**
      * Rows of {@code [dayOfWeek, count, avgRevenue]} (Postgres {@code EXTRACT(DOW ...)}, 0 = Sunday)
-     * for same genre + language releases, grouped by release day-of-week.
+     * for overlapping-genre (see {@link MoviesDataCollectionQueryServiceImpl#genreOverlaps}) + same
+     * language releases, grouped by release day-of-week.
      */
     List<Object[]> findReleaseDayOfWeekStats(String genre, String language);
 }

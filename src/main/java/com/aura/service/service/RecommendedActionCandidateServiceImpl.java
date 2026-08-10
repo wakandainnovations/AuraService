@@ -36,7 +36,8 @@ import java.util.stream.Collectors;
  * {@code movies_data_collection} queries, this platform's own mention/spreader/hourly-activity data,
  * or plain calendar math against {@link BoxOfficeFactorCatalog}'s calibrated constants - never asked
  * of an LLM. A factor with insufficient real backing data for this entity simply produces no
- * candidate.
+ * candidate - except {@link #lowOnlinePresenceCandidate}, where a near-zero tracked-mention count is
+ * itself the grounding signal (absence of online presence, not absence of data about it).
  *
  * <p>Reuses (never re-derives) {@link BoxOfficeFactorCatalog} for factor names/impact ranges, the
  * exact teaser/trailer/first-single calendar thresholds from {@link BoxOfficeBacktestWorkerImpl},
@@ -96,6 +97,17 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int WORD_OF_MOUTH_CONFIDENCE_LOW = 55;
     static final int WORD_OF_MOUTH_CONFIDENCE_MID = 70;
     static final int WORD_OF_MOUTH_CONFIDENCE_HIGH = 85;
+
+    // ---- Low-online-presence candidate: fires when total tracked mentions (all-time, any sentiment)
+    // fall below this floor - the one generator where absence of engagement data is the signal itself,
+    // not a reason to stay silent. Fixed (not tiered) confidence since there's no larger sample to
+    // climb toward; the window is deliberately wide (a full year of pre-release runway) rather than
+    // pulled from WINDOW_BY_FACTOR, since "start building visibility" is valid on any given day this
+    // condition holds, not just a narrow marketing-calendar slice. ----
+    static final long LOW_PRESENCE_MENTION_THRESHOLD = 25;
+    static final int LOW_PRESENCE_CONFIDENCE = 65;
+    static final int LOW_PRESENCE_WINDOW_START_DAYS = -365;
+    static final int LOW_PRESENCE_WINDOW_END_DAYS = -14;
 
     // ---- Factor 46/47 calendar thresholds - mirror BoxOfficeBacktestWorkerImpl's constants exactly
     // (kept duplicated, not shared, since that class's constants are private); see that class for the
@@ -248,6 +260,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, trailerTeaserTimingCandidate(entity));
         addIfPresent(candidates, firstSingleTimingCandidate(entity));
         addIfPresent(candidates, holidayWindowCandidate(entity));
+        addIfPresent(candidates, lowOnlinePresenceCandidate(entity));
 
         String genre = resolveGenre(entity);
         boolean hasLanguage = entity.getLanguage() != null && !entity.getLanguage().isBlank();
@@ -380,6 +393,28 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private static String capitalize(DayOfWeek dayOfWeek) {
         String name = dayOfWeek.name();
         return name.charAt(0) + name.substring(1).toLowerCase(Locale.ROOT);
+    }
+
+    // ==================== Factor 52 - low/no online presence (absence of data as the signal) ====================
+
+    // The other engagement-driven generators below (evangelistMobilizationCandidate,
+    // peakEngagementHoursCandidate, organicWordOfMouthCandidate) all correctly stay silent when
+    // there's too little mention data to measure anything from. But for a movie with near-zero
+    // tracked online presence, that absence is exactly the thing a marketing team needs surfaced -
+    // not "nothing to report" but "go build some visibility." This is the one generator where the
+    // absence of engagement data is itself the grounding fact, not a reason to produce nothing.
+    private RecommendedActionCandidate lowOnlinePresenceCandidate(ManagedEntity entity) {
+        long totalMentions = mentionRepository.countByManagedEntityId(entity.getId());
+        if (totalMentions >= LOW_PRESENCE_MENTION_THRESHOLD) {
+            return null;
+        }
+        String fact = String.format(Locale.ROOT,
+                "Only %d mention(s) of this movie have been tracked online to date, below the %d-mention floor " +
+                        "this platform uses to consider organic buzz underway - too little online presence to " +
+                        "wait for it to build on its own.",
+                totalMentions, LOW_PRESENCE_MENTION_THRESHOLD);
+        return factorCandidate(FACTOR_MICRO_VIDEO_CAMPAIGNS, "low-online-presence", LOW_PRESENCE_CONFIDENCE,
+                LOW_PRESENCE_WINDOW_START_DAYS, LOW_PRESENCE_WINDOW_END_DAYS, List.of(fact));
     }
 
     // ==================== Factor 87 / 88 - genre+language+budget comps (movies_data_collection) ====================

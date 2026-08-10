@@ -83,6 +83,7 @@ class RecommendedActionCandidateServiceImplTest {
         stubHourlyActivity(0, List.of());
         stubReleaseDayStats(List.of());
         stubBudgetComps(List.of());
+        stubTotalMentions(1_000L);
         when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(List.of());
         when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(any(), any(), any(), any()))
                 .thenReturn(List.of());
@@ -249,6 +250,36 @@ class RecommendedActionCandidateServiceImplTest {
 
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("trailer-teaser"));
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("first-single"));
+    }
+
+    // ==================== Low online presence (absence of mention data as the signal) ====================
+
+    // Regression coverage for the "Lord Gaaga" bug: a movie with near-zero tracked mentions and no
+    // release date close enough for the calendar-based candidates to matter must still get a
+    // candidate telling the marketing team to go build visibility, rather than silently producing
+    // nothing the way every other engagement-driven generator correctly does when data is scarce.
+    @Test
+    void nearZeroMentionCountProducesLowOnlinePresenceCandidate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubTotalMentions(3L);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate lowPresence = findCandidate(candidates, "factor-52-low-online-presence");
+        assertThat(lowPresence.confidencePct()).isEqualTo(65);
+        assertThat(lowPresence.supportingFacts().get(0)).contains("3").contains("25");
+    }
+
+    @Test
+    void mentionCountAtThresholdOmitsLowOnlinePresenceCandidate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubTotalMentions(25L);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("low-online-presence"));
     }
 
     // ==================== Genre-gated candidates ====================
@@ -642,6 +673,10 @@ class RecommendedActionCandidateServiceImplTest {
     private void stubBudgetComps(List<Object[]> rows) {
         when(moviesDataQueryService.findGenreLanguageBudgetComps(any(), any(), anyDouble(), anyDouble()))
                 .thenReturn(rows);
+    }
+
+    private void stubTotalMentions(long total) {
+        when(mentionRepository.countByManagedEntityId(any())).thenReturn(total);
     }
 
     private void stubWordOfMouth(long total, long positive, long negative) {

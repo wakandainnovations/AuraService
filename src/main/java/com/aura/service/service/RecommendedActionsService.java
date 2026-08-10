@@ -83,7 +83,12 @@ public class RecommendedActionsService {
      * @param allPhases when true, returns the whole cached plan ungrouped/unfiltered (the full
      *                  campaign roadmap) instead of only the actions whose window currently contains
      *                  today. An entity with no releaseDate can't have a "current" window computed, so
-     *                  it always gets the full-plan behavior regardless of this flag.
+     *                  it always gets the full-plan behavior regardless of this flag. Also falls back
+     *                  to the full plan whenever the window filter would leave nothing - the curated
+     *                  factor windows (see {@code WINDOW_BY_FACTOR}) don't blanket every day of a
+     *                  movie's runway, so "no factor's window covers today" is a real gap, not a
+     *                  signal that there's nothing to recommend; the panel should never render empty
+     *                  when a grounded plan actually exists for this entity.
      */
     @Transactional
     public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
@@ -95,6 +100,9 @@ public class RecommendedActionsService {
         List<RecommendedActionItem> actions = (allPhases || daysToRelease == null)
                 ? content.actions()
                 : filterToCurrentWindow(content.actions(), daysToRelease);
+        if (actions.isEmpty() && !content.actions().isEmpty()) {
+            actions = content.actions();
+        }
 
         return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, actions, content.generatedAt());
     }

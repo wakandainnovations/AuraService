@@ -205,29 +205,54 @@ class RecommendedActionsServiceTest {
     }
 
     @Test
-    void windowFiltering_excludesActionOneDayBeforeStart() throws Exception {
+    void windowFiltering_excludesOneDayBeforeStart_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label");
-        stubCachedActions(List.of(outOfWindow), releaseDate);
+        RecommendedActionItem inWindow = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2");
+        stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
 
         assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).isEmpty();
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
     }
 
     @Test
-    void windowFiltering_excludesActionOneDayAfterEnd() throws Exception {
+    void windowFiltering_excludesOneDayAfterEnd_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label");
-        stubCachedActions(List.of(outOfWindow), releaseDate);
+        RecommendedActionItem inWindow = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2");
+        stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
 
         assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).isEmpty();
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
+    }
+
+    // A movie whose plan only has actions timed around a marketing calendar the current day doesn't
+    // fall inside (e.g. a movie many weeks further from release than any curated factor window
+    // reaches) must still return its real, grounded plan rather than an empty panel - the plan
+    // existing at all is the signal, not which narrow window happens to contain today. Regression
+    // test for the "Lord Gaaga" bug: a real cached plan existed but every action's window fell
+    // outside today's actual days-to-release, so the filtered response was empty.
+    @Test
+    void windowFiltering_allActionsOutOfWindow_fallsBackToFullPlanInsteadOfEmpty() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
+        RecommendedActionItem outOfWindow1 = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label");
+        RecommendedActionItem outOfWindow2 = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2");
+        stubCachedActions(List.of(outOfWindow1, outOfWindow2), releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
+
+        assertThat(response.getDaysToRelease()).isEqualTo(-10);
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T", "T2");
     }
 
     // ==================== No-releaseDate fallback ====================
