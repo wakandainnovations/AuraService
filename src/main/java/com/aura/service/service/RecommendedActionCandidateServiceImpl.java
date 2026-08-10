@@ -37,7 +37,13 @@ import java.util.stream.Collectors;
  * or plain calendar math against {@link BoxOfficeFactorCatalog}'s calibrated constants - never asked
  * of an LLM. A factor with insufficient real backing data for this entity simply produces no
  * candidate - except {@link #lowOnlinePresenceCandidate}, where a near-zero tracked-mention count is
- * itself the grounding signal (absence of online presence, not absence of data about it).
+ * itself the grounding signal (absence of online presence, not absence of data about it). No
+ * candidate here requires a budget on file: {@link #comparableBudgetCandidates} falls back to
+ * genre+language comps across every budget tier when the entity has none, and
+ * {@link #genreAudienceReachCandidate} (backed by {@link GenreMarketingLookupService}'s AuraMath
+ * genre-audience lookup) never needed one in the first place - this platform's actual data skews
+ * toward small/independent productions with no budget recorded, and candidate generation should
+ * still reach them.
  *
  * <p>Reuses (never re-derives) {@link BoxOfficeFactorCatalog} for factor names/impact ranges, the
  * exact teaser/trailer/first-single calendar thresholds from {@link BoxOfficeBacktestWorkerImpl},
@@ -108,6 +114,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int LOW_PRESENCE_CONFIDENCE = 65;
     static final int LOW_PRESENCE_WINDOW_START_DAYS = -365;
     static final int LOW_PRESENCE_WINDOW_END_DAYS = -14;
+
+    // ---- Genre audience-reach confidence: fixed, grounded in a live AuraMath lookup rather than a
+    // larger-sample-means-more-confidence tier. This is the one candidate that needs no budget figure
+    // at all - see genreAudienceReachCandidate. ----
+    static final int GENRE_REACH_CONFIDENCE = 70;
 
     // ---- Factor 46/47 calendar thresholds - mirror BoxOfficeBacktestWorkerImpl's constants exactly
     // (kept duplicated, not shared, since that class's constants are private); see that class for the
@@ -235,6 +246,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final TopSpreaderLookupService spreaderLookup;
     private final DashboardService dashboardService;
     private final MoviesDataCollectionQueryService moviesDataQueryService;
+    private final GenreMarketingLookupService genreMarketingLookup;
 
     public RecommendedActionCandidateServiceImpl(
             ManagedEntityRepository entityRepository,
@@ -242,13 +254,15 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             MobilizeActionRepository mobilizeActionRepository,
             TopSpreaderLookupService spreaderLookup,
             DashboardService dashboardService,
-            MoviesDataCollectionQueryService moviesDataQueryService) {
+            MoviesDataCollectionQueryService moviesDataQueryService,
+            GenreMarketingLookupService genreMarketingLookup) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
         this.mobilizeActionRepository = mobilizeActionRepository;
         this.spreaderLookup = spreaderLookup;
         this.dashboardService = dashboardService;
         this.moviesDataQueryService = moviesDataQueryService;
+        this.genreMarketingLookup = genreMarketingLookup;
     }
 
     @Override
@@ -266,10 +280,13 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         boolean hasLanguage = entity.getLanguage() != null && !entity.getLanguage().isBlank();
         if (genre != null && hasLanguage) {
             addIfPresent(candidates, releaseDayCandidate(entity, genre));
-            if (entity.getBudget() != null && entity.getBudget() > 0) {
-                candidates.addAll(comparableBudgetCandidates(entity, genre));
-            }
+            // No budget gate here (unlike the pre-loosening version of this method): a movie with no
+            // budget on file - the common case for the small/independent productions this platform
+            // tracks, see comparableBudgetCandidates - still gets genre+language comps, just not
+            // narrowed to a budget tier.
+            candidates.addAll(comparableBudgetCandidates(entity, genre));
         }
+        addIfPresent(candidates, genreAudienceReachCandidate(genre));
 
         addIfPresent(candidates, evangelistMobilizationCandidate(entity));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
@@ -417,12 +434,18 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 LOW_PRESENCE_WINDOW_START_DAYS, LOW_PRESENCE_WINDOW_END_DAYS, List.of(fact));
     }
 
-    // ==================== Factor 87 / 88 - genre+language+budget comps (movies_data_collection) ====================
+    // ==================== Factor 87 / 88 - genre+language(+budget) comps (movies_data_collection) ====================
 
+    // Budget-scoped when the entity has a real budget on file; otherwise falls back to genre+language
+    // comps across every budget tier rather than skipping this candidate entirely - a small/independent
+    // production with no budget recorded is exactly the case this platform's actual data skews toward
+    // (most tracked movies have no budget figure), and it still deserves comps-backed screen-count/P&A
+    // guidance, just not narrowed to a budget range it can't be compared against.
     private List<RecommendedActionCandidate> comparableBudgetCandidates(ManagedEntity entity, String genre) {
-        double budget = entity.getBudget();
-        double minBudget = budget * (1 - BUDGET_RANGE_FRACTION);
-        double maxBudget = budget * (1 + BUDGET_RANGE_FRACTION);
+        Double budget = entity.getBudget();
+        boolean budgetScoped = budget != null && budget > 0;
+        double minBudget = budgetScoped ? budget * (1 - BUDGET_RANGE_FRACTION) : 0;
+        double maxBudget = budgetScoped ? budget * (1 + BUDGET_RANGE_FRACTION) : Double.MAX_VALUE;
 
         List<Object[]> rows = moviesDataQueryService.findGenreLanguageBudgetComps(genre, entity.getLanguage(), minBudget, maxBudget);
         if (rows.isEmpty() || rows.get(0)[0] == null || rows.get(0)[1] == null) {
@@ -436,9 +459,14 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         }
         double avgRevenue = ((Number) row[1]).doubleValue();
 
-        String fact = String.format(Locale.ROOT,
-                "%d comparable %s %s releases (budget within +/-50%%) averaged $%,.0f in revenue.",
-                sampleCount, entity.getLanguage(), genre, avgRevenue);
+        String fact = budgetScoped
+                ? String.format(Locale.ROOT,
+                        "%d comparable %s %s releases (budget within +/-50%%) averaged $%,.0f in revenue.",
+                        sampleCount, entity.getLanguage(), genre, avgRevenue)
+                : String.format(Locale.ROOT,
+                        "%d comparable %s %s releases (no budget on file for this movie, so shown across all " +
+                                "budgets) averaged $%,.0f in revenue.",
+                        sampleCount, entity.getLanguage(), genre, avgRevenue);
 
         List<RecommendedActionCandidate> results = new ArrayList<>(2);
         results.add(factorCandidateFromWindowTable(FACTOR_SCREEN_COUNT, "screen-count-allocation", confidence, fact));
@@ -457,6 +485,49 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return COMPS_CONFIDENCE_MID;
         }
         return COMPS_CONFIDENCE_LOW;
+    }
+
+    // ==================== Factor 52 - genre audience reach (AuraMath, no budget required) ====================
+
+    // The only candidate grounded in a live external call rather than this platform's own DB - AuraMath's
+    // genre-scoped audience-reach data (see GenreMarketingLookupService) needs nothing but a genre, so
+    // it's reachable for a movie with no budget and no tracked mentions yet, unlike every other
+    // comps/engagement-driven generator in this file.
+    private RecommendedActionCandidate genreAudienceReachCandidate(String genre) {
+        String primaryGenre = primaryGenreToken(genre);
+        if (primaryGenre == null) {
+            return null;
+        }
+        GenreMarketingLookupService.GenreReach reach = genreMarketingLookup.getGenreReach(primaryGenre);
+        if (reach == null) {
+            return null;
+        }
+
+        List<String> facts = new ArrayList<>();
+        if (reach.totalViewers() != null) {
+            facts.add(String.format(Locale.ROOT,
+                    "AuraMath tracks %,d potential viewers with an affinity for %s content on this platform.",
+                    reach.totalViewers(), primaryGenre));
+        }
+        if (reach.topChannel() != null) {
+            facts.add(String.format(Locale.ROOT,
+                    "AuraMath's channel-strategy model recommends %s as the top channel to reach %s audiences.",
+                    reach.topChannel(), primaryGenre));
+        }
+        if (facts.isEmpty()) {
+            return null;
+        }
+        return factorCandidateFromWindowTable(
+                FACTOR_MICRO_VIDEO_CAMPAIGNS, "genre-audience-reach", GENRE_REACH_CONFIDENCE, facts);
+    }
+
+    /** First token of a comma-separated multi-genre string - AuraMath's genre endpoints take one genre. */
+    private static String primaryGenreToken(String genre) {
+        if (genre == null || genre.isBlank()) {
+            return null;
+        }
+        String first = genre.split(",")[0].trim();
+        return first.isEmpty() ? null : first;
     }
 
     // ==================== Factor 17 - evangelist / core fanbase mobilization ====================

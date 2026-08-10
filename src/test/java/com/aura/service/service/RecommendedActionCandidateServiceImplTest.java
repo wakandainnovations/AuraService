@@ -61,6 +61,7 @@ class RecommendedActionCandidateServiceImplTest {
     private MobilizeActionRepository mobilizeActionRepository;
     private TopSpreaderLookupService spreaderLookup;
     private MoviesDataCollectionQueryService moviesDataQueryService;
+    private GenreMarketingLookupService genreMarketingLookup;
     private RecommendedActionCandidateServiceImpl service;
 
     @BeforeEach
@@ -74,16 +75,18 @@ class RecommendedActionCandidateServiceImplTest {
                 mock(ReplyDraftRepository.class), mock(CrisisPlanRepository.class),
                 mock(CheckpointRepository.class), null);
         moviesDataQueryService = mock(MoviesDataCollectionQueryService.class);
+        genreMarketingLookup = mock(GenreMarketingLookupService.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
-                moviesDataQueryService);
+                moviesDataQueryService, genreMarketingLookup);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
         stubReleaseDayStats(List.of());
         stubBudgetComps(List.of());
         stubTotalMentions(1_000L);
+        when(genreMarketingLookup.getGenreReach(any())).thenReturn(null);
         when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(List.of());
         when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(any(), any(), any(), any()))
                 .thenReturn(List.of());
@@ -282,6 +285,58 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("low-online-presence"));
     }
 
+    // ==================== Genre audience reach (AuraMath, no budget required) ====================
+
+    // AuraMath's genre-scoped audience data needs nothing but a genre - grounding a candidate for a
+    // small/independent movie with no budget and no tracked mentions, unlike every comps/engagement
+    // generator above.
+    @Test
+    void auraMathGenreReachProducesCandidateGroundedInBothFacts() {
+        ManagedEntity entity = movie(null, "Action,Adventure", null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(genreMarketingLookup.getGenreReach("Action"))
+                .thenReturn(new GenreMarketingLookupService.GenreReach(52_000L, "Instagram"));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate reach = findCandidate(candidates, "factor-52-genre-audience-reach");
+        assertThat(reach.confidencePct()).isEqualTo(70);
+        assertThat(reach.supportingFacts()).anyMatch(f -> f.contains("52,000") && f.contains("Action"));
+        assertThat(reach.supportingFacts()).anyMatch(f -> f.contains("Instagram"));
+    }
+
+    @Test
+    void auraMathGenreReachUsesOnlyPrimaryGenreToken() {
+        ManagedEntity entity = movie(null, "Action,Adventure,Psychedelic", null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        service.buildCandidateActions(ENTITY_ID);
+
+        verify(genreMarketingLookup).getGenreReach("Action");
+    }
+
+    @Test
+    void auraMathUnavailableOmitsGenreReachCandidate() {
+        ManagedEntity entity = movie(null, "Action", null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(genreMarketingLookup.getGenreReach("Action")).thenReturn(null);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("genre-audience-reach"));
+    }
+
+    @Test
+    void blankGenreOmitsGenreReachCandidateWithoutCallingAuraMath() {
+        ManagedEntity entity = movie(null, null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("genre-audience-reach"));
+        verify(genreMarketingLookup, never()).getGenreReach(anyString());
+    }
+
     // ==================== Genre-gated candidates ====================
 
     @Test
@@ -321,6 +376,23 @@ class RecommendedActionCandidateServiceImplTest {
 
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("screen-count"));
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("pa-commitments"));
+    }
+
+    // Regression coverage: a movie with no budget on file (the common case for the small/independent
+    // productions this platform's actual data skews toward) used to skip budget-comps candidates
+    // entirely. It should now still get them, scoped to genre+language across every budget tier.
+    @Test
+    void noBudgetOnFileStillProducesBudgetCompsCandidatesAcrossAllBudgets() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubBudgetComps(List.<Object[]>of(new Object[]{9L, 2_900_000.0}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate screenCount = findCandidate(candidates, "factor-87-screen-count-allocation");
+        assertThat(screenCount.confidencePct()).isEqualTo(55); // 9 comps -> low tier
+        assertThat(screenCount.supportingFacts()).anyMatch(f -> f.contains("no budget on file"));
+        verify(moviesDataQueryService).findGenreLanguageBudgetComps("Action", "Kannada", 0.0, Double.MAX_VALUE);
     }
 
     @Test
