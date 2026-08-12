@@ -281,6 +281,76 @@ class RecommendedActionsServiceTest {
         assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T", "T2");
     }
 
+    // ==================== Post-release fallback excludes pre-release-only actions ====================
+
+    // Regression test for the bug where an already-released movie's action panel resurrected
+    // pre-release-only beats (e.g. "Releasing Teasers and Trailers at Optimal Timing", "Releasing the
+    // First Single at an Optimal Time") once today's offset stopped falling inside any curated window.
+    // Once released, the fallback should prefer actions whose window reaches release day or later
+    // over ones that are entirely pre-release and thus no longer actionable.
+    @Test
+    void windowFiltering_postRelease_fallbackExcludesPreReleaseOnlyActions() throws Exception {
+        // clock fixed at 2026-08-10; releaseDate 30 days earlier means today's offset is +30, past
+        // every window below.
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11);
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label");
+        RecommendedActionItem firstSingle = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
+                "R", 90, "First Single Timing", -56, -42, "label");
+        RecommendedActionItem criticalReviews = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "Critical Review Ratings on Aggregators",
+                "R", 80, "Critical Reviews", 0, 7, "label");
+        stubCachedActions(List.of(teaserTrailer, firstSingle, criticalReviews), releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
+
+        assertThat(response.getDaysToRelease()).isEqualTo(30);
+        assertThat(response.getActions())
+                .extracting(RecommendedActionItem::getTitle)
+                .containsExactly("Critical Review Ratings on Aggregators");
+    }
+
+    // If the cached plan has nothing post-release-relevant at all, the panel must still not render
+    // empty - falls all the way back to the full plan rather than the (now-empty) filtered set.
+    @Test
+    void windowFiltering_postRelease_fallsBackToFullPlanWhenNoPostReleaseActionsExist() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label");
+        RecommendedActionItem firstSingle = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
+                "R", 90, "First Single Timing", -56, -42, "label");
+        stubCachedActions(List.of(teaserTrailer, firstSingle), releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
+
+        assertThat(response.getDaysToRelease()).isEqualTo(30);
+        assertThat(response.getActions())
+                .extracting(RecommendedActionItem::getTitle)
+                .containsExactlyInAnyOrder(
+                        "Releasing Teasers and Trailers at Optimal Timing",
+                        "Releasing the First Single at an Optimal Time");
+    }
+
+    // windowEndDaysFromRelease == 0 (a release-day action) must survive the post-release fallback
+    // filter, while a purely pre-release window (ending the day before release) must not.
+    @Test
+    void windowFiltering_postRelease_fallbackRetainsActionEndingOnReleaseDayBoundary() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
+        RecommendedActionItem preReleaseOnly = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label");
+        RecommendedActionItem releaseDayBoundary = new RecommendedActionItem(
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2");
+        stubCachedActions(List.of(preReleaseOnly, releaseDayBoundary), releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
+
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
+    }
+
     // ==================== No-releaseDate fallback ====================
 
     @Test

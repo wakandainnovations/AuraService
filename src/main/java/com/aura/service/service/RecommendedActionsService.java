@@ -88,11 +88,14 @@ public class RecommendedActionsService {
      *                  campaign roadmap) instead of only the actions whose window currently contains
      *                  today. An entity with no releaseDate can't have a "current" window computed, so
      *                  it always gets the full-plan behavior regardless of this flag. Also falls back
-     *                  to the full plan whenever the window filter would leave nothing - the curated
-     *                  factor windows (see {@code WINDOW_BY_FACTOR}) don't blanket every day of a
-     *                  movie's runway, so "no factor's window covers today" is a real gap, not a
-     *                  signal that there's nothing to recommend; the panel should never render empty
-     *                  when a grounded plan actually exists for this entity.
+     *                  when the window filter would leave nothing - the curated factor windows (see
+     *                  {@code WINDOW_BY_FACTOR}) don't blanket every day of a movie's runway, so "no
+     *                  factor's window covers today" is a real gap, not a signal that there's nothing
+     *                  to recommend; the panel should never render empty when a grounded plan actually
+     *                  exists for this entity. Once the movie has released, that fallback excludes
+     *                  actions whose window is entirely pre-release (e.g. trailer/teaser timing, first-
+     *                  single timing) since those are no longer actionable, falling back further to the
+     *                  full plan only if nothing post-release-relevant remains.
      */
     @Transactional
     public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
@@ -105,7 +108,10 @@ public class RecommendedActionsService {
                 ? content.actions()
                 : filterToCurrentWindow(content.actions(), daysToRelease);
         if (actions.isEmpty() && !content.actions().isEmpty()) {
-            actions = content.actions();
+            List<RecommendedActionItem> fallback = (daysToRelease != null && daysToRelease > 0)
+                    ? filterOutExpiredPreRelease(content.actions())
+                    : content.actions();
+            actions = fallback.isEmpty() ? content.actions() : fallback;
         }
 
         return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, actions, content.generatedAt());
@@ -133,6 +139,15 @@ public class RecommendedActionsService {
     private static List<RecommendedActionItem> filterToCurrentWindow(List<RecommendedActionItem> actions, int todayOffset) {
         return actions.stream()
                 .filter(a -> todayOffset >= a.getWindowStartDaysFromRelease() && todayOffset <= a.getWindowEndDaysFromRelease())
+                .toList();
+    }
+
+    // Drops actions whose window ends before release day (e.g. trailer/teaser timing, first-single
+    // timing) - once a movie has released, those pre-release-only beats are no longer actionable and
+    // shouldn't resurface just because no window covers today.
+    private static List<RecommendedActionItem> filterOutExpiredPreRelease(List<RecommendedActionItem> actions) {
+        return actions.stream()
+                .filter(a -> a.getWindowEndDaysFromRelease() >= 0)
                 .toList();
     }
 
