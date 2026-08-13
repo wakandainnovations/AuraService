@@ -362,6 +362,10 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(outreach.confidencePct()).isEqualTo(65);
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("3 brand evangelist"));
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("2 of these are Tier-1/2"));
+        // exampleHandles ranked by tier (TIER_1 first, then TIER_2, then TIER_3) - real handles a
+        // marketing team can actually reach out to, not just a count.
+        assertThat(outreach.exampleHandles()).containsExactly("u1", "u3", "u2");
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("u1") && f.contains("u3") && f.contains("u2"));
     }
 
     @Test
@@ -405,6 +409,10 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(outreach.confidencePct()).isEqualTo(65);
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("2 viral-seed account"));
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("instagram"));
+        // exampleHandles preserves AuraMath's own top-ranked ordering (u1 before u2) - real handles,
+        // not just a count.
+        assertThat(outreach.exampleHandles()).containsExactly("u1", "u2");
+        assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("u1") && f.contains("u2"));
     }
 
     @Test
@@ -549,6 +557,10 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(evangelist.confidencePct()).isEqualTo(50); // 2 qualifying accounts (posUser, tiedUser) -> low tier (1-3)
         assertThat(evangelist.supportingFacts().get(0)).contains("2 positive-sentiment accounts");
         assertThat(evangelist.supportingFacts()).anyMatch(f -> f.contains("Tier-1/2"));
+        // exampleHandles excludes the disqualified accounts (negUser, neuHeavyUser) entirely and
+        // ranks the qualifying ones by tier (posUser is TIER_1, tiedUser is TIER_2) - real handles to
+        // mobilize, not just a count.
+        assertThat(evangelist.exampleHandles()).containsExactly("posUser", "tiedUser");
     }
 
     @Test

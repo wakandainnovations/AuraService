@@ -13,12 +13,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -39,13 +44,15 @@ import java.util.regex.Pattern;
  * flow from the candidate record to {@link RecommendedActionItem} untouched; the LLM's only output is
  * which candidateIds to keep and what to say about them.
  *
- * <p>Generation is persisted to {@link RecommendedActionsCache} and refreshed for every entity by
- * {@link #refreshAllActionPlans()} once a day - unlike the 6-hour cadence used by
- * {@link CommandCenterSummaryService}/{@link AudiencePulseAspectsService}, the facts this plan is
- * built from (genre, budget, historical comps) change rarely, so there's no value in re-running the
- * LLM call more than once a day; what changes daily is only which phase of the plan is "current",
- * which {@link #getRecommendedActions} computes live against {@code entity.releaseDate} on every call
- * rather than baking it into the cached plan.
+ * <p>Generation is persisted to {@link RecommendedActionsCache}. Unlike the simple fixed-cadence
+ * refresh used by {@link CommandCenterSummaryService}/{@link AudiencePulseAspectsService}, this
+ * feature's refresh lifecycle has two stages - see {@link #onApplicationReady()} for the startup pass
+ * over a small priority movie list and {@link #runFullRefreshCycle()} for the steady-state, spaced,
+ * all-entities cycle that follows it 24h later. The facts a plan is built from (genre, budget,
+ * historical comps) change rarely, so there's no value in re-running the LLM call more than about once
+ * a day per entity; what changes daily is only which phase of the plan is "current", which
+ * {@link #getRecommendedActions} computes live against {@code entity.releaseDate} on every call rather
+ * than baking it into the cached plan.
  */
 @Slf4j
 @Service
@@ -60,27 +67,46 @@ public class RecommendedActionsService {
     private static final TypeReference<List<RecommendedActionItem>> ACTION_LIST_TYPE = new TypeReference<>() {
     };
 
+    // Movies that need a plan available right away rather than waiting for the first full cycle
+    // (up to 24h out) - refreshed synchronously, back-to-back, at startup. Matched by exact
+    // ManagedEntity.name.
+    private static final List<String> STARTUP_PRIORITY_MOVIE_NAMES = List.of("Toxic", "GD Naidu", "Lord Gaaga");
+    private static final Duration FULL_CYCLE_INTERVAL = Duration.ofHours(24);
+    private static final Duration PER_ENTITY_SPACING = Duration.ofHours(1);
+
     private final ManagedEntityRepository managedEntityRepository;
     private final RecommendedActionsCacheRepository cacheRepository;
     private final RecommendedActionCandidateService candidateService;
     private final LLMService llmService;
     private final Clock clock;
+    private final TaskScheduler taskScheduler;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${llm.prompt.generate.recommended.actions}")
     private String llmPrompt;
+
+    // Self-injected proxy: calls to refreshOneEntity() below must go through Spring's proxy (not a
+    // direct this.refreshOneEntity(...) self-call) for its @Transactional advice to actually apply -
+    // required because these calls run off scheduler threads, which have no request-bound Hibernate
+    // session the way an HTTP request does under open-in-view (see refreshOneEntity's own doc for why
+    // that matters). @Lazy avoids the circular-bean chicken/egg problem at construction time.
+    @Autowired
+    @Lazy
+    private RecommendedActionsService self;
 
     public RecommendedActionsService(
             ManagedEntityRepository managedEntityRepository,
             RecommendedActionsCacheRepository cacheRepository,
             RecommendedActionCandidateService candidateService,
             LLMService llmService,
-            Clock clock) {
+            Clock clock,
+            TaskScheduler taskScheduler) {
         this.managedEntityRepository = managedEntityRepository;
         this.cacheRepository = cacheRepository;
         this.candidateService = candidateService;
         this.llmService = llmService;
         this.clock = clock;
+        this.taskScheduler = taskScheduler;
     }
 
     /**
@@ -118,21 +144,84 @@ public class RecommendedActionsService {
     }
 
     /**
-     * Refreshes the cached action plan for every managed entity. Runs at startup and every 24 hours
-     * after that (see class doc for why this cadence differs from the 6-hour panels); one entity's
-     * failure is logged and skipped rather than aborting the run.
+     * Kicks off the refresh lifecycle once, at application startup: an immediate, synchronous pass
+     * over {@link #STARTUP_PRIORITY_MOVIE_NAMES} so those panels aren't empty while the first full
+     * cycle is still up to {@link #FULL_CYCLE_INTERVAL} away, then schedules that first full cycle.
      */
-    @Scheduled(fixedDelayString = "PT24H")
-    @Transactional
-    public void refreshAllActionPlans() {
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        Instant startupTime = clock.instant();
+        refreshPriorityMoviesAtStartup();
+        scheduleNextFullCycle(startupTime);
+    }
+
+    private void refreshPriorityMoviesAtStartup() {
+        List<ManagedEntity> priorityEntities = managedEntityRepository.findAll().stream()
+                .filter(e -> STARTUP_PRIORITY_MOVIE_NAMES.contains(e.getName()))
+                .toList();
+        log.info("Refreshing recommended action plans at startup for {} priority movie(s)",
+                priorityEntities.size());
+        for (ManagedEntity entity : priorityEntities) {
+            self.refreshOneEntity(entity.getId());
+        }
+    }
+
+    /**
+     * The steady-state refresh: every managed entity (not just the startup priority list), each
+     * spaced {@link #PER_ENTITY_SPACING} apart so one cycle doesn't fire N concurrent AuraMath lookups
+     * at once. Schedules its own successor cycle once the last entity's refresh completes - see
+     * {@link #scheduleNextFullCycle}.
+     */
+    private void runFullRefreshCycle() {
+        Instant cycleStart = clock.instant();
         List<ManagedEntity> entities = managedEntityRepository.findAll();
-        log.info("Refreshing recommended action plans for {} entities", entities.size());
-        for (ManagedEntity entity : entities) {
-            try {
-                regenerateAndStore(entity.getId());
-            } catch (Exception e) {
-                log.error("Failed to refresh recommended actions for entity {}", entity.getId(), e);
-            }
+        log.info("Starting full recommended-actions refresh cycle for {} entities, {} apart",
+                entities.size(), PER_ENTITY_SPACING);
+        if (entities.isEmpty()) {
+            scheduleNextFullCycle(cycleStart);
+            return;
+        }
+        for (int i = 0; i < entities.size(); i++) {
+            Long entityId = entities.get(i).getId();
+            Instant runAt = cycleStart.plus(PER_ENTITY_SPACING.multipliedBy(i));
+            boolean isLastEntity = i == entities.size() - 1;
+            taskScheduler.schedule(() -> {
+                self.refreshOneEntity(entityId);
+                if (isLastEntity) {
+                    scheduleNextFullCycle(cycleStart);
+                }
+            }, runAt);
+        }
+    }
+
+    /**
+     * Schedules the next full cycle to start {@link #FULL_CYCLE_INTERVAL} after the previous cycle's
+     * own start - not after it finishes. When a cycle's per-entity spacing pushes its last entity past
+     * that mark already (e.g. 36 entities * 1h spacing = 36h, past the 24h target), the computed
+     * instant is already in the past by the time this runs (right after the last entity's refresh),
+     * and {@link TaskScheduler} executes a past-due instant immediately - so a long cycle chains
+     * straight into the next one instead of stacking an idle 24h wait on top of an already-overrun run.
+     */
+    private void scheduleNextFullCycle(Instant previousCycleStart) {
+        Instant nextCycleStart = previousCycleStart.plus(FULL_CYCLE_INTERVAL);
+        taskScheduler.schedule(this::runFullRefreshCycle, nextCycleStart);
+    }
+
+    /**
+     * Regenerates and persists a single entity's plan; isolated per entity (its own transaction, own
+     * try/catch) so one failure - e.g. a bad AuraMath response - doesn't take down the rest of a
+     * startup pass or cycle, and so a crash mid-cycle doesn't lose already-persisted entities the way
+     * one shared transaction across the whole cycle would. Transactional because this runs off a
+     * scheduler thread, which has no request-bound Hibernate session the way an HTTP request does
+     * under open-in-view - see AudiencePulseAspectsService.getAspects's doc comment for the same
+     * constraint. Must be called via {@link #self}, not directly - see that field's doc comment.
+     */
+    @Transactional
+    public void refreshOneEntity(Long entityId) {
+        try {
+            regenerateAndStore(entityId);
+        } catch (Exception e) {
+            log.error("Failed to refresh recommended actions for entity {}", entityId, e);
         }
     }
 
@@ -313,12 +402,26 @@ public class RecommendedActionsService {
         return new RecommendedActionItem(
                 candidate.category(),
                 title,
-                reason,
+                ensureReasonNamesExampleHandles(reason, candidate.exampleHandles()),
                 candidate.confidencePct(),
                 candidate.factorName(),
                 candidate.windowStartDaysFromRelease(),
                 candidate.windowEndDaysFromRelease(),
-                candidate.windowLabel());
+                candidate.windowLabel(),
+                candidate.exampleHandles());
+    }
+
+    // The prompt asks the LLM to name real example handles verbatim in its reason, but instruction-
+    // following isn't guaranteed - handles are exactly the concrete, actionable detail this feature
+    // exists to surface, so this doesn't leave it to chance: if none of this candidate's real handles
+    // made it into the LLM's reason text, append them deterministically rather than silently accept a
+    // generic reason. A no-op whenever the LLM already named at least one (including the fallback
+    // paths, whose reason is built straight from supportingFacts and so already contains them).
+    private static String ensureReasonNamesExampleHandles(String reason, List<String> exampleHandles) {
+        if (exampleHandles.isEmpty() || exampleHandles.stream().anyMatch(reason::contains)) {
+            return reason;
+        }
+        return reason + " Example account(s): " + String.join(", ", exampleHandles) + ".";
     }
 
     // Cheap defensive check (not a hard requirement, but worth it given how central "no invented

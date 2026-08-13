@@ -5,6 +5,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * One entry in the "Recommended Actions" Command Center panel: everything except {@code title}/
  * {@code reason} is copied verbatim from the Phase 1 {@link com.aura.service.dto.RecommendedActionCandidate}
@@ -23,4 +25,5 @@ public class RecommendedActionItem {
     private int windowStartDaysFromRelease;
     private int windowEndDaysFromRelease;
     private String windowLabel;
+    private List<String> exampleHandles;
 }

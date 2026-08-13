@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -167,6 +168,10 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // GENRE_REACH_CONFIDENCE. ----
     static final int BRAND_EVANGELIST_CONFIDENCE = 65;
     static final int VIRAL_SEED_CONFIDENCE = 65;
+
+    // Cap on how many real account handles ride along in a candidate's exampleHandles - enough for
+    // marketing to have concrete names to act on without turning the response into a full roster dump.
+    static final int TOP_HANDLES_LIMIT = 3;
 
     private record WindowSpec(int startDays, int endDays) {
     }
@@ -398,7 +403,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         return new RecommendedActionCandidate(
                 "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-holiday-proximity",
                 def.name(), categorize(def), SERVER_COMPUTED_CONFIDENCE, 0, 0,
-                buildWindowLabel(0, 0), List.of(fact));
+                buildWindowLabel(0, 0), List.of(fact), List.of());
     }
 
     // ==================== Factor 61 - best release day-of-week (movies_data_collection) ====================
@@ -429,7 +434,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return new RecommendedActionCandidate(
                     "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-release-day",
                     def.name(), categorize(def), confidence, 0, 0,
-                    buildWindowLabel(0, 0), List.of(fact));
+                    buildWindowLabel(0, 0), List.of(fact), List.of());
         }
         return null;
     }
@@ -583,6 +588,16 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 .filter(p -> tierRank(p.influenceTier()) <= 2)
                 .count();
 
+        Comparator<SpreaderProfile> byTierThenPositiveCount = Comparator
+                .comparingInt((SpreaderProfile p) -> tierRank(p.influenceTier()))
+                .thenComparing(p -> positiveCounts.getOrDefault(p.globalUserId(), 0L), Comparator.reverseOrder());
+        List<String> topHandles = spreaders.values().stream()
+                .filter(p -> positiveCounts.containsKey(p.globalUserId()))
+                .sorted(byTierThenPositiveCount)
+                .map(SpreaderProfile::globalUserId)
+                .limit(TOP_HANDLES_LIMIT)
+                .toList();
+
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
                 "%d positive-sentiment accounts identified across %d tracked keyword(s) (predominantly positive " +
@@ -591,13 +606,17 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         if (tier1Or2Count > 0) {
             facts.add(tier1Or2Count + " of these are Tier-1/2 influence accounts.");
         }
+        if (!topHandles.isEmpty()) {
+            facts.add("Top positive-sentiment account(s) to mobilize: " + String.join(", ", topHandles) + ".");
+        }
         String liftFact = allyMobilizationLiftFact(entity);
         if (liftFact != null) {
             facts.add(liftFact);
         }
 
         int confidence = evangelistConfidence(positiveCounts.size());
-        return factorCandidateFromWindowTable(FACTOR_FANBASE_MOBILIZATION, "evangelist-mobilization", confidence, facts);
+        return factorCandidateFromWindowTable(
+                FACTOR_FANBASE_MOBILIZATION, "evangelist-mobilization", confidence, facts, topHandles);
     }
 
     private Map<String, SpreaderProfile> fetchSpreaderProfiles(List<String> keywords) {
@@ -734,6 +753,12 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         long tier1Or2Count = tierByAuthor.values().stream().filter(t -> tierRank(t) <= 2).count();
 
+        List<String> topHandles = tierByAuthor.entrySet().stream()
+                .sorted(Comparator.comparingInt(e -> tierRank(e.getValue())))
+                .map(Map.Entry::getKey)
+                .limit(TOP_HANDLES_LIMIT)
+                .toList();
+
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
                 "AuraMath has identified %d brand evangelist(s) (positive-tone, high-branching-ratio accounts) " +
@@ -745,8 +770,12 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                             "visibility lift per outreach.",
                     tier1Or2Count));
         }
+        if (!topHandles.isEmpty()) {
+            facts.add("Top brand-evangelist account(s) to approach first: " + String.join(", ", topHandles) + ".");
+        }
         return factorCandidateFromWindowTable(
-                FACTOR_INFLUENCER_PROMOTIONS, "brand-evangelist-outreach", BRAND_EVANGELIST_CONFIDENCE, facts);
+                FACTOR_INFLUENCER_PROMOTIONS, "brand-evangelist-outreach", BRAND_EVANGELIST_CONFIDENCE, facts,
+                topHandles);
     }
 
     // ==================== Factor 53 - viral seed outreach (AuraMath) ====================
@@ -770,6 +799,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return null;
         }
 
+        List<String> topHandles = platformByAuthor.keySet().stream().limit(TOP_HANDLES_LIMIT).toList();
+
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
                 "AuraMath has identified %d viral-seed account(s) across %d tracked keyword(s) for this movie, " +
@@ -782,8 +813,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                             "access to teaser content.",
                     topPlatform));
         }
+        if (!topHandles.isEmpty()) {
+            facts.add("Top-ranked viral-seed account(s) to approach: " + String.join(", ", topHandles) + ".");
+        }
         return factorCandidateFromWindowTable(
-                FACTOR_INFLUENCER_PROMOTIONS, "viral-seed-outreach", VIRAL_SEED_CONFIDENCE, facts);
+                FACTOR_INFLUENCER_PROMOTIONS, "viral-seed-outreach", VIRAL_SEED_CONFIDENCE, facts, topHandles);
     }
 
     // ==================== Factor 52 - peak audience engagement hours ====================
@@ -892,11 +926,17 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     private RecommendedActionCandidate factorCandidate(int factorNumber, String slug, int confidencePct,
                                                          int windowStartDays, int windowEndDays, List<String> facts) {
+        return factorCandidate(factorNumber, slug, confidencePct, windowStartDays, windowEndDays, facts, List.of());
+    }
+
+    private RecommendedActionCandidate factorCandidate(int factorNumber, String slug, int confidencePct,
+                                                         int windowStartDays, int windowEndDays, List<String> facts,
+                                                         List<String> exampleHandles) {
         BoxOfficeFactorCatalog.FactorDefinition def = BoxOfficeFactorCatalog.byNumber(factorNumber);
         return new RecommendedActionCandidate(
                 "factor-" + factorNumber + "-" + slug,
                 def.name(), categorize(def), confidencePct, windowStartDays, windowEndDays,
-                buildWindowLabel(windowStartDays, windowEndDays), facts);
+                buildWindowLabel(windowStartDays, windowEndDays), facts, exampleHandles);
     }
 
     private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
@@ -906,8 +946,15 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
                                                                         int confidencePct, List<String> facts) {
+        return factorCandidateFromWindowTable(factorNumber, slug, confidencePct, facts, List.of());
+    }
+
+    private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
+                                                                        int confidencePct, List<String> facts,
+                                                                        List<String> exampleHandles) {
         WindowSpec window = WINDOW_BY_FACTOR.get(factorNumber);
-        return factorCandidate(factorNumber, slug, confidencePct, window.startDays(), window.endDays(), facts);
+        return factorCandidate(factorNumber, slug, confidencePct, window.startDays(), window.endDays(), facts,
+                exampleHandles);
     }
 
     static RecommendedActionCategory categorize(BoxOfficeFactorCatalog.FactorDefinition def) {

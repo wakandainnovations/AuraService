@@ -38,7 +38,7 @@ class DashboardControllerRecommendedActionsTest {
         RecommendedActionsResponse response;
 
         StubRecommendedActionsService() {
-            super(null, null, null, null, null);
+            super(null, null, null, null, null, null);
         }
 
         @Override
@@ -74,7 +74,8 @@ class DashboardControllerRecommendedActionsTest {
         service.response = new RecommendedActionsResponse(
                 ENTITY_ID, "Test Movie", 5,
                 List.of(new RecommendedActionItem(
-                        RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10, "Release week")),
+                        RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10,
+                        "Release week", List.of())),
                 Instant.parse("2026-08-09T10:00:00Z"));
 
         mvc.perform(get("/api/dashboard/{entityId}/recommended-actions", ENTITY_ID))

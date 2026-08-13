@@ -20,6 +20,10 @@ import java.util.List;
  * @param windowEndDaysFromRelease   later bound of the execution window, signed
  * @param windowLabel    human-readable rendering of the two day offsets
  * @param supportingFacts precise, self-contained strings citing the real data behind this candidate
+ * @param exampleHandles up to a few real account handles/usernames backing this candidate (e.g. top
+ *                        viral-seed or positive-sentiment accounts), when the underlying data is
+ *                        account-level; empty when it isn't. Never LLM-authored - Phase 2 copies this
+ *                        through verbatim.
  */
 public record RecommendedActionCandidate(
         String candidateId,
@@ -29,6 +33,7 @@ public record RecommendedActionCandidate(
         int windowStartDaysFromRelease,
         int windowEndDaysFromRelease,
         String windowLabel,
-        List<String> supportingFacts
+        List<String> supportingFacts,
+        List<String> exampleHandles
 ) {
 }

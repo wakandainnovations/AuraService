@@ -11,6 +11,8 @@ import com.aura.service.repository.RecommendedActionsCacheRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
@@ -22,8 +24,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +50,7 @@ class RecommendedActionsServiceTest {
     private RecommendedActionsCacheRepository cacheRepository;
     private RecommendedActionCandidateService candidateService;
     private LLMService llmService;
+    private TaskScheduler taskScheduler;
     private Clock clock;
     private RecommendedActionsService service;
 
@@ -55,10 +60,17 @@ class RecommendedActionsServiceTest {
         cacheRepository = mock(RecommendedActionsCacheRepository.class);
         candidateService = mock(RecommendedActionCandidateService.class);
         llmService = mock(LLMService.class);
+        taskScheduler = mock(TaskScheduler.class);
         clock = Clock.fixed(Instant.parse("2026-08-10T10:00:00Z"), ZoneOffset.UTC);
 
-        service = new RecommendedActionsService(entityRepository, cacheRepository, candidateService, llmService, clock);
+        service = new RecommendedActionsService(
+                entityRepository, cacheRepository, candidateService, llmService, clock, taskScheduler);
         ReflectionTestUtils.setField(service, "llmPrompt", PROMPT_TEMPLATE);
+        // No Spring context in this test, so self-invocation through the proxy (see the `self` field's
+        // doc comment on the service) isn't exercised here - wiring it to the instance itself keeps
+        // refreshOneEntity's business logic reachable and testable without asserting on @Transactional
+        // itself, which is framework behavior, not this class's logic.
+        ReflectionTestUtils.setField(service, "self", service);
     }
 
     private static ManagedEntity entity(LocalDate releaseDate) {
@@ -69,10 +81,26 @@ class RecommendedActionsServiceTest {
         return e;
     }
 
+    private static ManagedEntity entityWithIdAndName(Long id, String name) {
+        ManagedEntity e = new ManagedEntity();
+        e.setId(id);
+        e.setName(name);
+        return e;
+    }
+
     private static RecommendedActionCandidate candidate(
             String id, String factor, int confidence, int start, int end, String label, String... facts) {
         return new RecommendedActionCandidate(
-                id, factor, RecommendedActionCategory.HIGH_IMPACT, confidence, start, end, label, List.of(facts));
+                id, factor, RecommendedActionCategory.HIGH_IMPACT, confidence, start, end, label, List.of(facts),
+                List.of());
+    }
+
+    private static RecommendedActionCandidate candidateWithHandles(
+            String id, String factor, int confidence, int start, int end, String label,
+            List<String> exampleHandles, String... facts) {
+        return new RecommendedActionCandidate(
+                id, factor, RecommendedActionCategory.HIGH_IMPACT, confidence, start, end, label, List.of(facts),
+                exampleHandles);
     }
 
     // ==================== Cache hit ====================
@@ -81,7 +109,8 @@ class RecommendedActionsServiceTest {
     void cacheHit_returnsWithoutCallingLlmOrCandidateService() throws Exception {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
         List<RecommendedActionItem> cachedActions = List.of(new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Cached Title", "Cached reason", 85, "Factor A", -10, 10, "label"));
+                RecommendedActionCategory.HIGH_IMPACT, "Cached Title", "Cached reason", 85, "Factor A", -10, 10,
+                "label", List.of()));
         RecommendedActionsCache row = new RecommendedActionsCache(
                 1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(cachedActions), 0,
                 Instant.parse("2026-08-01T00:00:00Z"));
@@ -143,6 +172,61 @@ class RecommendedActionsServiceTest {
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
+    }
+
+    // ==================== Example handles guaranteed in reason text ====================
+
+    // Regression coverage: observed live against a weaker/local LLM, which - despite the prompt
+    // instructing it to name real example handles verbatim - still wrote a generic reason ("top
+    // positive-sentiment account(s) should be mobilized") without naming any of them. Handles are
+    // exactly the concrete, actionable detail this feature exists to surface, so this can't be left to
+    // LLM instruction-following alone: the merge step must append them itself when the LLM omits them.
+    @Test
+    void merge_appendsExampleHandlesWhenLlmReasonOmitsThem() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidateWithHandles(
+                "factor-17-evangelist-mobilization", "Core Fanbase Mobilization Value", 80, -21, -7, "label",
+                List.of("Nepal Yash Army 🇳🇵", "God of Thunder"),
+                "41 positive-sentiment accounts identified across 2 tracked keyword(s).");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-17-evangelist-mobilization\", \"reason\": \"Positive-sentiment " +
+                        "accounts for this movie have been identified and should be mobilized.\"}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions()).hasSize(1);
+        RecommendedActionItem item = response.getActions().get(0);
+        assertThat(item.getReason())
+                .contains("Positive-sentiment accounts for this movie have been identified and should be mobilized.")
+                .contains("Nepal Yash Army 🇳🇵")
+                .contains("God of Thunder");
+        assertThat(item.getExampleHandles()).containsExactly("Nepal Yash Army 🇳🇵", "God of Thunder");
+    }
+
+    @Test
+    void merge_doesNotDuplicateExampleHandlesWhenLlmAlreadyNamedThem() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidateWithHandles(
+                "factor-53-viral-seed-outreach", "Influencer-Driven Promotions", 65, -30, -7, "label",
+                List.of("Honest Review", "Nikhil"),
+                "2 viral-seed account(s) identified.");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-53-viral-seed-outreach\", \"reason\": \"Reach out to Honest Review " +
+                        "and Nikhil to seed the teaser.\"}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions()).hasSize(1);
+        assertThat(response.getActions().get(0).getReason())
+                .isEqualTo("Reach out to Honest Review and Nikhil to seed the teaser.");
     }
 
     // Regression coverage: observed live against a weaker/local LLM, which literally echoed the
@@ -208,7 +292,7 @@ class RecommendedActionsServiceTest {
         // clock is fixed at 2026-08-10; releaseDate 10 days later means today's offset is -10.
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -10, -5, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -10, -5, "label", List.of());
         stubCachedActions(List.of(inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -221,7 +305,7 @@ class RecommendedActionsServiceTest {
     void windowFiltering_includesActionAtEndBoundary() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -10, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -10, "label", List.of());
         stubCachedActions(List.of(inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -234,9 +318,9 @@ class RecommendedActionsServiceTest {
     void windowFiltering_excludesOneDayBeforeStart_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of());
         RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2");
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of());
         stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -249,9 +333,9 @@ class RecommendedActionsServiceTest {
     void windowFiltering_excludesOneDayAfterEnd_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label", List.of());
         RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2");
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of());
         stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -270,9 +354,9 @@ class RecommendedActionsServiceTest {
     void windowFiltering_allActionsOutOfWindow_fallsBackToFullPlanInsteadOfEmpty() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow1 = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of());
         RecommendedActionItem outOfWindow2 = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2");
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2", List.of());
         stubCachedActions(List.of(outOfWindow1, outOfWindow2), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -295,13 +379,13 @@ class RecommendedActionsServiceTest {
         LocalDate releaseDate = LocalDate.of(2026, 7, 11);
         RecommendedActionItem teaserTrailer = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label");
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of());
         RecommendedActionItem firstSingle = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label");
+                "R", 90, "First Single Timing", -56, -42, "label", List.of());
         RecommendedActionItem criticalReviews = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "Critical Review Ratings on Aggregators",
-                "R", 80, "Critical Reviews", 0, 7, "label");
+                "R", 80, "Critical Reviews", 0, 7, "label", List.of());
         stubCachedActions(List.of(teaserTrailer, firstSingle, criticalReviews), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -319,10 +403,10 @@ class RecommendedActionsServiceTest {
         LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
         RecommendedActionItem teaserTrailer = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label");
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of());
         RecommendedActionItem firstSingle = new RecommendedActionItem(
                 RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label");
+                "R", 90, "First Single Timing", -56, -42, "label", List.of());
         stubCachedActions(List.of(teaserTrailer, firstSingle), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -341,9 +425,9 @@ class RecommendedActionsServiceTest {
     void windowFiltering_postRelease_fallbackRetainsActionEndingOnReleaseDayBoundary() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
         RecommendedActionItem preReleaseOnly = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label", List.of());
         RecommendedActionItem releaseDayBoundary = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2");
+                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2", List.of());
         stubCachedActions(List.of(preReleaseOnly, releaseDayBoundary), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -356,7 +440,7 @@ class RecommendedActionsServiceTest {
     @Test
     void noReleaseDate_returnsFullUnfilteredPlan() throws Exception {
         RecommendedActionItem action = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90, "label", List.of());
         stubCachedActions(List.of(action), null);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -371,11 +455,96 @@ class RecommendedActionsServiceTest {
     void allPhasesTrue_bypassesWindowFilter() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label");
+                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label", List.of());
         stubCachedActions(List.of(outOfWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
 
         assertThat(response.getActions()).hasSize(1);
+    }
+
+    // ==================== Startup: priority movies only ====================
+
+    @Test
+    void onApplicationReady_refreshesOnlyPriorityMoviesAndSchedulesFirstFullCycle() {
+        ManagedEntity toxic = entityWithIdAndName(1L, "Toxic");
+        ManagedEntity gdNaidu = entityWithIdAndName(2L, "GD Naidu");
+        ManagedEntity lordGaaga = entityWithIdAndName(3L, "Lord Gaaga");
+        ManagedEntity other = entityWithIdAndName(4L, "Some Other Movie");
+        List<ManagedEntity> all = List.of(toxic, gdNaidu, lordGaaga, other);
+        when(entityRepository.findAll()).thenReturn(all);
+        when(entityRepository.findById(any())).thenAnswer(inv ->
+                all.stream().filter(e -> e.getId().equals(inv.getArgument(0))).findFirst());
+        when(candidateService.buildCandidateActions(any())).thenReturn(List.of());
+
+        service.onApplicationReady();
+
+        verify(candidateService).buildCandidateActions(1L);
+        verify(candidateService).buildCandidateActions(2L);
+        verify(candidateService).buildCandidateActions(3L);
+        verify(candidateService, never()).buildCandidateActions(4L);
+        verify(cacheRepository, times(3)).save(any());
+
+        ArgumentCaptor<Instant> instantCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(taskScheduler, times(1)).schedule(any(Runnable.class), instantCaptor.capture());
+        assertThat(instantCaptor.getValue()).isEqualTo(Instant.parse("2026-08-11T10:00:00Z"));
+    }
+
+    // ==================== Steady-state full cycle: spacing + chaining ====================
+
+    // Regression coverage for the "if there are 36 movies, each run will extend 24 hrs, in which case
+    // it should be triggered after the previous runs complete" requirement: a full cycle spaces every
+    // entity 1h apart, and schedules its successor 24h after *this* cycle's own start (not after it
+    // finishes) - so a short cycle waits out the remainder of the 24h, while a cycle whose spacing
+    // alone already exceeds 24h chains straight into the next one, since that computed instant is
+    // already in the past by the time the last entity's task runs.
+    @Test
+    void fullCycle_spacesEachEntityOneHourApart_andChainsNextCycleAfterLastEntityCompletes() {
+        ManagedEntity e1 = entityWithIdAndName(10L, "Movie A");
+        ManagedEntity e2 = entityWithIdAndName(11L, "Movie B");
+        ManagedEntity e3 = entityWithIdAndName(12L, "Movie C");
+        List<ManagedEntity> all = List.of(e1, e2, e3);
+        when(entityRepository.findAll()).thenReturn(all);
+        when(entityRepository.findById(any())).thenAnswer(inv ->
+                all.stream().filter(e -> e.getId().equals(inv.getArgument(0))).findFirst());
+        when(candidateService.buildCandidateActions(any())).thenReturn(List.of());
+
+        // None of these entities match a startup-priority name, so this only exercises the first
+        // full-cycle scheduling call, with no priority-movie refresh noise.
+        service.onApplicationReady();
+
+        ArgumentCaptor<Runnable> cycleCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(taskScheduler, times(1)).schedule(cycleCaptor.capture(), eq(Instant.parse("2026-08-11T10:00:00Z")));
+        Runnable firstCycle = cycleCaptor.getValue();
+
+        // Fire the captured cycle to simulate it running "24h later" - the fixed test Clock still
+        // reads the original startup instant, so cycleStart below is numerically identical to it; only
+        // the *relative* spacing between entities, and to the next cycle, is under test here.
+        firstCycle.run();
+
+        ArgumentCaptor<Runnable> afterCycleTaskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        ArgumentCaptor<Instant> afterCycleInstantCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(taskScheduler, times(4)).schedule(afterCycleTaskCaptor.capture(), afterCycleInstantCaptor.capture());
+        // Index 0 is the outer cycle-scheduling call captured above; indices 1-3 are this cycle's 3
+        // entities, spaced 1h apart from the cycle's own start.
+        assertThat(afterCycleInstantCaptor.getAllValues().get(1)).isEqualTo(Instant.parse("2026-08-10T10:00:00Z"));
+        assertThat(afterCycleInstantCaptor.getAllValues().get(2)).isEqualTo(Instant.parse("2026-08-10T11:00:00Z"));
+        assertThat(afterCycleInstantCaptor.getAllValues().get(3)).isEqualTo(Instant.parse("2026-08-10T12:00:00Z"));
+        Runnable firstEntityTask = afterCycleTaskCaptor.getAllValues().get(1);
+        Runnable lastEntityTask = afterCycleTaskCaptor.getAllValues().get(3);
+
+        // Running a non-last entity's task refreshes it but must not chain a next cycle yet.
+        firstEntityTask.run();
+        verify(candidateService).buildCandidateActions(10L);
+        verify(candidateService, never()).buildCandidateActions(12L);
+        verify(taskScheduler, times(4)).schedule(any(), any(Instant.class));
+
+        // Running the last entity's task refreshes it AND chains the next cycle 24h after this cycle's
+        // own start (2026-08-10T10:00:00Z + 24h), not after this cycle finishes.
+        lastEntityTask.run();
+        verify(candidateService).buildCandidateActions(12L);
+        ArgumentCaptor<Instant> finalInstantCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(taskScheduler, times(5)).schedule(any(), finalInstantCaptor.capture());
+        assertThat(finalInstantCaptor.getAllValues().get(4)).isEqualTo(Instant.parse("2026-08-11T10:00:00Z"));
     }
 }
