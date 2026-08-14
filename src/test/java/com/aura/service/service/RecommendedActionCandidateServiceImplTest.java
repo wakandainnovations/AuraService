@@ -536,10 +536,10 @@ class RecommendedActionCandidateServiceImplTest {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
         seedSpreaders("MovieKeyword", List.of(
-                new SpreaderProfile("posUser", "X", "TIER_1"),      // pos>neg && pos>=neu -> qualifies
-                new SpreaderProfile("tiedUser", "X", "TIER_2"),     // pos==neu, pos>neg -> qualifies (>=)
-                new SpreaderProfile("negUser", "X", "TIER_3"),      // pos<neg -> excluded
-                new SpreaderProfile("neuHeavyUser", "X", "TIER_1"))); // pos<neu -> excluded
+                new SpreaderProfile("posUser", "X", "TIER_1", 500L),      // pos>neg && pos>=neu -> qualifies
+                new SpreaderProfile("tiedUser", "X", "TIER_2", 500L),     // pos==neu, pos>neg -> qualifies (>=)
+                new SpreaderProfile("negUser", "X", "TIER_3", 500L),      // pos<neg -> excluded
+                new SpreaderProfile("neuHeavyUser", "X", "TIER_1", 500L))); // pos<neu -> excluded
 
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L},
@@ -556,10 +556,9 @@ class RecommendedActionCandidateServiceImplTest {
         RecommendedActionCandidate evangelist = findCandidate(candidates, "factor-17-evangelist-mobilization");
         assertThat(evangelist.confidencePct()).isEqualTo(50); // 2 qualifying accounts (posUser, tiedUser) -> low tier (1-3)
         assertThat(evangelist.supportingFacts().get(0)).contains("2 positive-sentiment accounts");
-        assertThat(evangelist.supportingFacts()).anyMatch(f -> f.contains("Tier-1/2"));
-        // exampleHandles excludes the disqualified accounts (negUser, neuHeavyUser) entirely and
-        // ranks the qualifying ones by tier (posUser is TIER_1, tiedUser is TIER_2) - real handles to
-        // mobilize, not just a count.
+        // exampleHandles excludes the disqualified accounts (negUser, neuHeavyUser) entirely and ranks
+        // the qualifying ones by total_views (tied at 500 here), tiebroken by positive-mention count
+        // (posUser has 5, tiedUser has 2) - real handles to mobilize, not just a count.
         assertThat(evangelist.exampleHandles()).containsExactly("posUser", "tiedUser");
     }
 
@@ -569,7 +568,7 @@ class RecommendedActionCandidateServiceImplTest {
         entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("negUser", "X", "TIER_1")));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("negUser", "X", "TIER_1", 0L)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"negUser", Sentiment.NEGATIVE, 5L}));
 
@@ -594,7 +593,7 @@ class RecommendedActionCandidateServiceImplTest {
         entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1")));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
 
@@ -747,7 +746,7 @@ class RecommendedActionCandidateServiceImplTest {
                 new Object[]{postgresDow(entity.getReleaseDate()), 40L, 300_000_000.0}));
         stubHourlyActivity(600, List.<Object[]>of(new Object[]{10, 600L}));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1")));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
 

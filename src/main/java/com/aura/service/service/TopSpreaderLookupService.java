@@ -29,7 +29,10 @@ public class TopSpreaderLookupService {
     private final TtlCache<Set<String>> cache = new TtlCache<>(1024);
     private final TtlCache<List<SpreaderProfile>> profileCache = new TtlCache<>(1024);
 
-    public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier) {}
+    // influenceTier/primaryPlatform are not part of AuraMath's top-50-spreaders response contract and
+    // are always null in practice; totalViews (AuraMath's total_views) is the only real reach proxy
+    // that endpoint provides, and is what ranking should key off instead.
+    public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier, long totalViews) {}
 
     public TopSpreaderLookupService(AuraMathProxyService proxy, ObjectMapper objectMapper) {
         this.proxy = proxy;
@@ -141,13 +144,27 @@ public class TopSpreaderLookupService {
                 }
                 String platform = extractField(element, "primaryPlatform", "platform");
                 String tier = extractField(element, "influenceTier", "tier");
-                deduped.putIfAbsent(author, new SpreaderProfile(author, platform, tier));
+                long totalViews = extractNumericField(element, "total_views", "totalViews");
+                deduped.putIfAbsent(author, new SpreaderProfile(author, platform, tier, totalViews));
             }
             return new ArrayList<>(deduped.values());
         } catch (Exception e) {
             log.warn("Failed to parse top-spreaders payload keyword={}", keyword, e);
             return null;
         }
+    }
+
+    private static long extractNumericField(JsonNode element, String... fields) {
+        if (!element.isObject()) {
+            return 0L;
+        }
+        for (String field : fields) {
+            JsonNode v = element.get(field);
+            if (v != null && v.isNumber()) {
+                return v.asLong();
+            }
+        }
+        return 0L;
     }
 
     private static String extractField(JsonNode element, String... fields) {

@@ -50,10 +50,13 @@ import java.util.stream.Collectors;
  * <p>Reuses (never re-derives) {@link BoxOfficeFactorCatalog} for factor names/impact ranges, the
  * exact teaser/trailer/first-single calendar thresholds from {@link BoxOfficeBacktestWorkerImpl},
  * the budget-range pattern from {@link MovieAudienceServiceImpl}, and the evangelist
- * positive-sentiment-filter/tier-rank logic from {@link MobilizeAlliesService} (duplicated here
- * rather than called, since that service returns a differently-shaped, DM-generating response - see
- * {@link #filterPredominantlyPositive} / {@link #tierRank} for the mirrored logic, kept in sync by
- * comment reference).
+ * positive-sentiment-filter logic from {@link MobilizeAlliesService} (duplicated here rather than
+ * called, since that service returns a differently-shaped, DM-generating response - see
+ * {@link #filterPredominantlyPositive} for the mirrored logic, kept in sync by comment reference).
+ * Evangelist/ally ranking is keyed on AuraMath's {@code total_views} (a real reach proxy the
+ * top-50-spreaders endpoint actually returns), not on {@code influenceTier} - that endpoint never
+ * emits it, see {@link TopSpreaderLookupService.SpreaderProfile}. {@link #tierRank} is still used,
+ * but only by {@link #brandEvangelistOutreachCandidate}, whose AuraMath endpoint does emit a tier.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -583,17 +586,15 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return null;
         }
 
-        long tier1Or2Count = spreaders.values().stream()
-                .filter(p -> positiveCounts.containsKey(p.globalUserId()))
-                .filter(p -> tierRank(p.influenceTier()) <= 2)
-                .count();
-
-        Comparator<SpreaderProfile> byTierThenPositiveCount = Comparator
-                .comparingInt((SpreaderProfile p) -> tierRank(p.influenceTier()))
+        // Ranked by AuraMath's total_views (summed views on the author's matching posts) - the only
+        // real reach proxy the top-50-spreaders endpoint provides. influenceTier/primaryPlatform are
+        // not part of that endpoint's response and are always null; do not sort/filter on them here.
+        Comparator<SpreaderProfile> byViewsThenPositiveCount = Comparator
+                .comparingLong(SpreaderProfile::totalViews).reversed()
                 .thenComparing(p -> positiveCounts.getOrDefault(p.globalUserId(), 0L), Comparator.reverseOrder());
         List<String> topHandles = spreaders.values().stream()
                 .filter(p -> positiveCounts.containsKey(p.globalUserId()))
-                .sorted(byTierThenPositiveCount)
+                .sorted(byViewsThenPositiveCount)
                 .map(SpreaderProfile::globalUserId)
                 .limit(TOP_HANDLES_LIMIT)
                 .toList();
@@ -603,11 +604,9 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 "%d positive-sentiment accounts identified across %d tracked keyword(s) (predominantly positive " +
                         "toward this movie: positive mentions outnumber negative and are at least as many as neutral).",
                 positiveCounts.size(), keywords.size()));
-        if (tier1Or2Count > 0) {
-            facts.add(tier1Or2Count + " of these are Tier-1/2 influence accounts.");
-        }
         if (!topHandles.isEmpty()) {
-            facts.add("Top positive-sentiment account(s) to mobilize: " + String.join(", ", topHandles) + ".");
+            facts.add("Top positive-sentiment account(s) to mobilize (ranked by reach): "
+                    + String.join(", ", topHandles) + ".");
         }
         String liftFact = allyMobilizationLiftFact(entity);
         if (liftFact != null) {
@@ -659,7 +658,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         return positive;
     }
 
-    // Mirrors MobilizeAlliesService.tierRank - keep the two in sync.
+    // Used by brandEvangelistOutreachCandidate below - that AuraMath endpoint (unlike
+    // top-50-spreaders) does return a real influenceTier value.
     static int tierRank(String tier) {
         if (tier == null) {
             return Integer.MAX_VALUE;

@@ -117,12 +117,15 @@ public class MobilizeAlliesService {
 
         Map<String, Long> positiveCounts = filterPredominantlyPositive(entity.getId(), candidates.keySet());
 
+        // Ranked by AuraMath's total_views (the only real reach proxy top-50-spreaders provides),
+        // tiebroken by this platform's own positive-mention count. influenceTier is never populated
+        // by that endpoint, so it is not used for ranking.
         List<SpreaderProfile> ranked = candidates.values().stream()
                 .filter(p -> positiveCounts.containsKey(p.globalUserId()))
                 .sorted(Comparator
-                        .comparingLong((SpreaderProfile p) ->
-                                positiveCounts.getOrDefault(p.globalUserId(), 0L)).reversed()
-                        .thenComparing(p -> tierRank(p.influenceTier()))
+                        .comparingLong(SpreaderProfile::totalViews).reversed()
+                        .thenComparing((SpreaderProfile p) ->
+                                positiveCounts.getOrDefault(p.globalUserId(), 0L), Comparator.reverseOrder())
                         .thenComparing(SpreaderProfile::globalUserId))
                 .limit(ALLY_LIMIT)
                 .toList();
@@ -163,7 +166,8 @@ public class MobilizeAlliesService {
                 deduped.merge(p.globalUserId(), p, (existing, incoming) -> new SpreaderProfile(
                         existing.globalUserId(),
                         existing.primaryPlatform() != null ? existing.primaryPlatform() : incoming.primaryPlatform(),
-                        existing.influenceTier() != null ? existing.influenceTier() : incoming.influenceTier()
+                        existing.influenceTier() != null ? existing.influenceTier() : incoming.influenceTier(),
+                        Math.max(existing.totalViews(), incoming.totalViews())
                 ));
             }
         }
@@ -214,18 +218,6 @@ public class MobilizeAlliesService {
             generated = generated.substring(firstQuote + 1, lastQuote);
         }
         return generated;
-    }
-
-    private static int tierRank(String tier) {
-        if (tier == null) return Integer.MAX_VALUE;
-        String t = tier.toUpperCase();
-        return switch (t) {
-            case "TIER_1", "TIER1", "T1" -> 1;
-            case "TIER_2", "TIER2", "T2" -> 2;
-            case "TIER_3", "TIER3", "T3" -> 3;
-            case "TIER_4", "TIER4", "T4" -> 4;
-            default -> Integer.MAX_VALUE - 1;
-        };
     }
 
     private static String nullSafe(String s) {
