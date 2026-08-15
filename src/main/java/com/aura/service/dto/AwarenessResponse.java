@@ -10,7 +10,6 @@ import lombok.NoArgsConstructor;
 public class AwarenessResponse {
     private Long entityId;
     private String entityName;
-    private long totalViews;
+    private long uniqueUsers;
     private String awarenessLevel;
-    private int comparedMovieCount;
 }

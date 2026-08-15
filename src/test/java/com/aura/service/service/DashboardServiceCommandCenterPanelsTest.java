@@ -7,7 +7,6 @@ import com.aura.service.dto.MovieSentimentResponse;
 import com.aura.service.dto.ReachResponse;
 import com.aura.service.dto.SentimentStats;
 import com.aura.service.entity.ManagedEntity;
-import com.aura.service.entity.User;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.CrisisPlanRepository;
@@ -23,7 +22,6 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -55,14 +53,6 @@ class DashboardServiceCommandCenterPanelsTest {
         e.setId(id);
         e.setName(name);
         e.setType("MOVIE");
-        return e;
-    }
-
-    private ManagedEntity entityWithOwner(Long id, String name, Long ownerId) {
-        ManagedEntity e = entity(id, name);
-        User owner = new User();
-        owner.setId(ownerId);
-        e.setOwner(owner);
         return e;
     }
 
@@ -242,15 +232,15 @@ class DashboardServiceCommandCenterPanelsTest {
     // ------------------------------------------------------------------
 
     @Test
-    void reach_returnsDistinctAuthorCountForEntity() {
+    void reach_returnsTotalViewsForEntity() {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Test Movie")));
-        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(4321L);
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(900_000L);
 
         ReachResponse response = service.getReach(ENTITY_ID);
 
         assertThat(response.getEntityId()).isEqualTo(ENTITY_ID);
         assertThat(response.getEntityName()).isEqualTo("Test Movie");
-        assertThat(response.getUniqueUsers()).isEqualTo(4321L);
+        assertThat(response.getTotalViews()).isEqualTo(900_000L);
     }
 
     // ------------------------------------------------------------------
@@ -258,88 +248,44 @@ class DashboardServiceCommandCenterPanelsTest {
     // ------------------------------------------------------------------
 
     @Test
-    void awareness_topThirdOfOwnersMoviesByViews_isLabeledHigh() {
-        ManagedEntity target = entityWithOwner(ENTITY_ID, "Top Movie", 9L);
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        when(entityRepository.findByTypeAndOwnerId("MOVIE", 9L))
-                .thenReturn(List.of(target, entity(2L, "Mid Movie"), entity(3L, "Low Movie")));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.of(
-                new Object[]{ENTITY_ID, 900_000L},
-                new Object[]{2L, 500_000L},
-                new Object[]{3L, 10_000L}
-        ));
+    void awareness_atLeastOneThousandUniqueUsers_isLabeledVeryHigh() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Top Movie")));
+        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(1000L);
 
         AwarenessResponse response = service.getAwareness(ENTITY_ID);
 
-        assertThat(response.getTotalViews()).isEqualTo(900_000L);
+        assertThat(response.getUniqueUsers()).isEqualTo(1000L);
+        assertThat(response.getAwarenessLevel()).isEqualTo("Very High");
+    }
+
+    @Test
+    void awareness_fiveHundredToNineHundredNinetyNineUniqueUsers_isLabeledHigh() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Mid Movie")));
+        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(750L);
+
+        AwarenessResponse response = service.getAwareness(ENTITY_ID);
+
         assertThat(response.getAwarenessLevel()).isEqualTo("High");
-        assertThat(response.getComparedMovieCount()).isEqualTo(3);
     }
 
     @Test
-    void awareness_bottomThirdOfOwnersMoviesByViews_isLabeledLow() {
-        ManagedEntity target = entityWithOwner(ENTITY_ID, "Quiet Movie", 9L);
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        when(entityRepository.findByTypeAndOwnerId("MOVIE", 9L))
-                .thenReturn(List.of(target, entity(2L, "Mid Movie"), entity(3L, "Loud Movie")));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.of(
-                new Object[]{ENTITY_ID, 10_000L},
-                new Object[]{2L, 500_000L},
-                new Object[]{3L, 900_000L}
-        ));
-
-        AwarenessResponse response = service.getAwareness(ENTITY_ID);
-
-        assertThat(response.getTotalViews()).isEqualTo(10_000L);
-        assertThat(response.getAwarenessLevel()).isEqualTo("Low");
-    }
-
-    @Test
-    void awareness_entityMissingFromViewsResult_defaultsToZeroViewsInsteadOfNpe() {
-        // An entity with no X posts (or no views yet) is simply absent from findTotalViewsForEntities.
-        ManagedEntity target = entityWithOwner(ENTITY_ID, "No Views Movie", 9L);
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        when(entityRepository.findByTypeAndOwnerId("MOVIE", 9L))
-                .thenReturn(List.of(target, entity(2L, "Other Movie")));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.<Object[]>of(
-                new Object[]{2L, 500_000L}
-        ));
-
-        AwarenessResponse response = service.getAwareness(ENTITY_ID);
-
-        assertThat(response.getTotalViews()).isEqualTo(0L);
-        assertThat(response.getAwarenessLevel()).isEqualTo("Low");
-    }
-
-    @Test
-    void awareness_onlyOneMovieToCompareAgainst_defaultsToMediumRatherThanRanking() {
-        ManagedEntity target = entityWithOwner(ENTITY_ID, "Only Movie", 9L);
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        when(entityRepository.findByTypeAndOwnerId("MOVIE", 9L)).thenReturn(List.of(target));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.<Object[]>of(
-                new Object[]{ENTITY_ID, 5_000L}
-        ));
+    void awareness_twoHundredFiftyToFourHundredNinetyNineUniqueUsers_isLabeledMedium() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Growing Movie")));
+        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(300L);
 
         AwarenessResponse response = service.getAwareness(ENTITY_ID);
 
         assertThat(response.getAwarenessLevel()).isEqualTo("Medium");
-        assertThat(response.getComparedMovieCount()).isEqualTo(1);
     }
 
     @Test
-    void awareness_unownedEntity_comparesAgainstAllMoviesInsteadOfOwnerPortfolio() {
-        ManagedEntity target = entity(ENTITY_ID, "Legacy Movie"); // no owner set
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        when(entityRepository.findByType("MOVIE"))
-                .thenReturn(List.of(target, entity(2L, "Other Movie"), entity(3L, "Third Movie")));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.of(
-                new Object[]{ENTITY_ID, 700_000L},
-                new Object[]{2L, 100_000L},
-                new Object[]{3L, 50_000L}
-        ));
+    void awareness_belowTwoHundredFiftyUniqueUsers_isLabeledLow() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Quiet Movie")));
+        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(10L);
 
         AwarenessResponse response = service.getAwareness(ENTITY_ID);
 
-        assertThat(response.getAwarenessLevel()).isEqualTo("High");
+        assertThat(response.getUniqueUsers()).isEqualTo(10L);
+        assertThat(response.getAwarenessLevel()).isEqualTo("Low");
     }
 }

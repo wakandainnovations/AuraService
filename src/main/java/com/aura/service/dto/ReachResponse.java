@@ -10,5 +10,5 @@ import lombok.NoArgsConstructor;
 public class ReachResponse {
     private Long entityId;
     private String entityName;
-    private long uniqueUsers;
+    private long totalViews;
 }

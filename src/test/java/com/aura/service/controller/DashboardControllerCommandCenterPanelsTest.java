@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -177,14 +176,14 @@ class DashboardControllerCommandCenterPanelsTest {
     // ------------------------------------------------------------------
 
     @Test
-    void getReach_returnsUniqueUserCount() throws Exception {
+    void getReach_returnsTotalViews() throws Exception {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(ENTITY_ID, "Test Movie")));
-        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(4321L);
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(900_000L);
 
         mvc.perform(get("/api/dashboard/{entityId}/reach", ENTITY_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entityId").value(ENTITY_ID))
-                .andExpect(jsonPath("$.uniqueUsers").value(4321));
+                .andExpect(jsonPath("$.totalViews").value(900_000));
 
         verify(entityAccessService).assertOwnedByCurrentUser(ENTITY_ID);
     }
@@ -203,22 +202,16 @@ class DashboardControllerCommandCenterPanelsTest {
     // ------------------------------------------------------------------
 
     @Test
-    void getAwareness_returnsTotalViewsAndLevel() throws Exception {
+    void getAwareness_returnsUniqueUsersAndLevel() throws Exception {
         ManagedEntity target = entity(ENTITY_ID, "Test Movie");
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(target));
-        // No owner set -> compares against every MOVIE entity.
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(target, entity(2L, "Other Movie")));
-        when(mentionRepository.findTotalViewsForEntities(anyList())).thenReturn(List.of(
-                new Object[]{ENTITY_ID, 900_000L},
-                new Object[]{2L, 10_000L}
-        ));
+        when(mentionRepository.countDistinctAuthorsByEntityId(ENTITY_ID)).thenReturn(750L);
 
         mvc.perform(get("/api/dashboard/{entityId}/awareness", ENTITY_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entityId").value(ENTITY_ID))
-                .andExpect(jsonPath("$.totalViews").value(900_000))
-                .andExpect(jsonPath("$.awarenessLevel").value("High"))
-                .andExpect(jsonPath("$.comparedMovieCount").value(2));
+                .andExpect(jsonPath("$.uniqueUsers").value(750))
+                .andExpect(jsonPath("$.awarenessLevel").value("High"));
 
         verify(entityAccessService).assertOwnedByCurrentUser(ENTITY_ID);
     }
