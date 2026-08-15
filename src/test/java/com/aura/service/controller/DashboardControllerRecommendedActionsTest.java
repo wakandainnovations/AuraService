@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.RecommendedActionItem;
 import com.aura.service.dto.RecommendedActionsResponse;
 import com.aura.service.enums.RecommendedActionCategory;
+import com.aura.service.enums.RecommendedActionStatus;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.RecommendedActionsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,9 +74,8 @@ class DashboardControllerRecommendedActionsTest {
     void getRecommendedActions_defaultsRefreshAndAllPhasesToFalse() throws Exception {
         service.response = new RecommendedActionsResponse(
                 ENTITY_ID, "Test Movie", 5,
-                List.of(new RecommendedActionItem(
-                        RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10,
-                        "Release week", List.of())),
+                List.of(new RecommendedActionItem("test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10,
+                        "Release week", List.of(), RecommendedActionStatus.ACTIVE)),
                 Instant.parse("2026-08-09T10:00:00Z"));
 
         mvc.perform(get("/api/dashboard/{entityId}/recommended-actions", ENTITY_ID))

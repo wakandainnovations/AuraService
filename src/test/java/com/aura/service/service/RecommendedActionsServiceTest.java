@@ -6,8 +6,11 @@ import com.aura.service.dto.RecommendedActionsResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.RecommendedActionsCache;
 import com.aura.service.enums.RecommendedActionCategory;
+import com.aura.service.enums.RecommendedActionStatus;
+import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.RecommendedActionsCacheRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -108,9 +112,8 @@ class RecommendedActionsServiceTest {
     @Test
     void cacheHit_returnsWithoutCallingLlmOrCandidateService() throws Exception {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
-        List<RecommendedActionItem> cachedActions = List.of(new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Cached Title", "Cached reason", 85, "Factor A", -10, 10,
-                "label", List.of()));
+        List<RecommendedActionItem> cachedActions = List.of(new RecommendedActionItem("test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Cached Title", "Cached reason", 85, "Factor A", -10, 10,
+                "label", List.of(), RecommendedActionStatus.ACTIVE));
         RecommendedActionsCache row = new RecommendedActionsCache(
                 1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(cachedActions), 0,
                 Instant.parse("2026-08-01T00:00:00Z"));
@@ -291,8 +294,7 @@ class RecommendedActionsServiceTest {
     void windowFiltering_includesActionAtStartBoundary() throws Exception {
         // clock is fixed at 2026-08-10; releaseDate 10 days later means today's offset is -10.
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -10, -5, "label", List.of());
+        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-2", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -10, -5, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -304,8 +306,7 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_includesActionAtEndBoundary() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -10, "label", List.of());
+        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-3", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -10, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -317,10 +318,8 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_excludesOneDayBeforeStart_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of());
-        RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of());
+        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-4", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-5", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -332,10 +331,8 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_excludesOneDayAfterEnd_butOtherInWindowActionStillSurvives() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label", List.of());
-        RecommendedActionItem inWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of());
+        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-6", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-7", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -353,10 +350,8 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_allActionsOutOfWindow_fallsBackToFullPlanInsteadOfEmpty() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow1 = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of());
-        RecommendedActionItem outOfWindow2 = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2", List.of());
+        RecommendedActionItem outOfWindow1 = new RecommendedActionItem("test-candidate-8", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem outOfWindow2 = new RecommendedActionItem("test-candidate-9", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(outOfWindow1, outOfWindow2), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -377,15 +372,12 @@ class RecommendedActionsServiceTest {
         // clock fixed at 2026-08-10; releaseDate 30 days earlier means today's offset is +30, past
         // every window below.
         LocalDate releaseDate = LocalDate.of(2026, 7, 11);
-        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of());
-        RecommendedActionItem firstSingle = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label", List.of());
-        RecommendedActionItem criticalReviews = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Critical Review Ratings on Aggregators",
-                "R", 80, "Critical Reviews", 0, 7, "label", List.of());
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem("test-candidate-10", RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem firstSingle = new RecommendedActionItem("test-candidate-11", RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
+                "R", 90, "First Single Timing", -56, -42, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem criticalReviews = new RecommendedActionItem("test-candidate-12", RecommendedActionCategory.HIGH_IMPACT, "Critical Review Ratings on Aggregators",
+                "R", 80, "Critical Reviews", 0, 7, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(teaserTrailer, firstSingle, criticalReviews), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -401,12 +393,10 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_postRelease_fallsBackToFullPlanWhenNoPostReleaseActionsExist() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
-        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of());
-        RecommendedActionItem firstSingle = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label", List.of());
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem("test-candidate-13", RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
+                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem firstSingle = new RecommendedActionItem("test-candidate-14", RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
+                "R", 90, "First Single Timing", -56, -42, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(teaserTrailer, firstSingle), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -424,10 +414,8 @@ class RecommendedActionsServiceTest {
     @Test
     void windowFiltering_postRelease_fallbackRetainsActionEndingOnReleaseDayBoundary() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
-        RecommendedActionItem preReleaseOnly = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label", List.of());
-        RecommendedActionItem releaseDayBoundary = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2", List.of());
+        RecommendedActionItem preReleaseOnly = new RecommendedActionItem("test-candidate-15", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem releaseDayBoundary = new RecommendedActionItem("test-candidate-16", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(preReleaseOnly, releaseDayBoundary), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -439,8 +427,7 @@ class RecommendedActionsServiceTest {
 
     @Test
     void noReleaseDate_returnsFullUnfilteredPlan() throws Exception {
-        RecommendedActionItem action = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90, "label", List.of());
+        RecommendedActionItem action = new RecommendedActionItem("test-candidate-17", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(action), null);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
@@ -454,13 +441,174 @@ class RecommendedActionsServiceTest {
     @Test
     void allPhasesTrue_bypassesWindowFilter() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem(
-                RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label", List.of());
+        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-18", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label", List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(outOfWindow), releaseDate);
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
 
         assertThat(response.getActions()).hasSize(1);
+    }
+
+    // ==================== Status filtering on the main "what to do now" panel ====================
+
+    @Test
+    void getRecommendedActions_excludesDoneAndIrrelevantActions() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
+        RecommendedActionItem active = new RecommendedActionItem(
+                "id-active", RecommendedActionCategory.HIGH_IMPACT, "Active", "R", 90, "Factor", -10, 10, "label",
+                List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem done = new RecommendedActionItem(
+                "id-done", RecommendedActionCategory.HIGH_IMPACT, "Done", "R", 90, "Factor2", -10, 10, "label",
+                List.of(), RecommendedActionStatus.DONE);
+        RecommendedActionItem irrelevant = new RecommendedActionItem(
+                "id-irrelevant", RecommendedActionCategory.HIGH_IMPACT, "Irrelevant", "R", 90, "Factor3", -10, 10,
+                "label", List.of(), RecommendedActionStatus.IRRELEVANT);
+        stubCachedActions(List.of(active, done, irrelevant), releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("Active");
+    }
+
+    // ==================== Regeneration merges onto history instead of overwriting it ====================
+
+    @Test
+    void regenerate_preservesExistingStatusForReselectedCandidate_andRetainsHistoricalActionNotReselected()
+            throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+
+        RecommendedActionItem doneBefore = new RecommendedActionItem(
+                "factor-A", RecommendedActionCategory.HIGH_IMPACT, "Old Title", "Old reason", 80, "Factor A",
+                -10, 10, "label", List.of(), RecommendedActionStatus.DONE);
+        RecommendedActionItem historicalOnly = new RecommendedActionItem(
+                "factor-old", RecommendedActionCategory.MEDIUM_IMPACT, "Historical Title", "Historical reason", 60,
+                "Factor Old", -30, -20, "label2", List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionsCache existingRow = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(doneBefore, historicalOnly)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(existingRow));
+
+        RecommendedActionCandidate freshCandidate = candidate(
+                "factor-A", "Factor A", 85, -10, 10, "label", "fresh fact");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(freshCandidate));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-A\", \"title\": \"New Title\", \"reason\": \"fresh fact\"}]");
+
+        // refresh=true forces regeneration even though a cache row already exists.
+        service.getRecommendedActions(ENTITY_ID, true, true);
+
+        ArgumentCaptor<RecommendedActionsCache> captor = ArgumentCaptor.forClass(RecommendedActionsCache.class);
+        verify(cacheRepository).save(captor.capture());
+        List<RecommendedActionItem> persisted = MAPPER.readValue(
+                captor.getValue().getActionsJson(), new TypeReference<List<RecommendedActionItem>>() {
+                });
+
+        assertThat(persisted).hasSize(2);
+        RecommendedActionItem persistedFactorA = persisted.stream()
+                .filter(a -> "factor-A".equals(a.getCandidateId())).findFirst().orElseThrow();
+        // Reselected this cycle: content refreshed, but the marketing team's DONE status survives.
+        assertThat(persistedFactorA.getStatus()).isEqualTo(RecommendedActionStatus.DONE);
+        assertThat(persistedFactorA.getTitle()).isEqualTo("New Title");
+
+        RecommendedActionItem persistedHistorical = persisted.stream()
+                .filter(a -> "factor-old".equals(a.getCandidateId())).findFirst().orElseThrow();
+        // Not reselected this cycle - carried forward unchanged rather than dropped.
+        assertThat(persistedHistorical.getStatus()).isEqualTo(RecommendedActionStatus.ACTIVE);
+        assertThat(persistedHistorical.getTitle()).isEqualTo("Historical Title");
+    }
+
+    // ==================== updateActionStatus ====================
+
+    @Test
+    void updateActionStatus_marksMatchingActionAndPersists() throws Exception {
+        RecommendedActionItem action = new RecommendedActionItem(
+                "id-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10, "label",
+                List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(action)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        RecommendedActionItem updated = service.updateActionStatus(ENTITY_ID, "id-1", RecommendedActionStatus.DONE);
+
+        assertThat(updated.getStatus()).isEqualTo(RecommendedActionStatus.DONE);
+        verify(cacheRepository).save(row);
+        List<RecommendedActionItem> persisted = MAPPER.readValue(
+                row.getActionsJson(), new TypeReference<List<RecommendedActionItem>>() {
+                });
+        assertThat(persisted).extracting(RecommendedActionItem::getStatus).containsExactly(RecommendedActionStatus.DONE);
+    }
+
+    @Test
+    void updateActionStatus_throwsWhenNoCacheRowExists() {
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.updateActionStatus(ENTITY_ID, "id-1", RecommendedActionStatus.DONE))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void updateActionStatus_throwsWhenCandidateIdUnknown() throws Exception {
+        RecommendedActionItem action = new RecommendedActionItem(
+                "id-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10, "label",
+                List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(action)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.updateActionStatus(ENTITY_ID, "unknown-id", RecommendedActionStatus.DONE))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ==================== getAllRecommendedActions ====================
+
+    @Test
+    void getAllRecommendedActions_returnsEveryStatusUnfilteredByWindow() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(LocalDate.of(2026, 8, 20))));
+        RecommendedActionItem active = new RecommendedActionItem(
+                "id-active", RecommendedActionCategory.HIGH_IMPACT, "Active", "R", 90, "Factor", 100, 120, "label",
+                List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem done = new RecommendedActionItem(
+                "id-done", RecommendedActionCategory.HIGH_IMPACT, "Done", "R", 90, "Factor2", -365, -300, "label",
+                List.of(), RecommendedActionStatus.DONE);
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(active, done)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        RecommendedActionsResponse response = service.getAllRecommendedActions(ENTITY_ID, null);
+
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle)
+                .containsExactlyInAnyOrder("Active", "Done");
+    }
+
+    @Test
+    void getAllRecommendedActions_filtersByRequestedStatus() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        RecommendedActionItem active = new RecommendedActionItem(
+                "id-active", RecommendedActionCategory.HIGH_IMPACT, "Active", "R", 90, "Factor", -10, 10, "label",
+                List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem done = new RecommendedActionItem(
+                "id-done", RecommendedActionCategory.HIGH_IMPACT, "Done", "R", 90, "Factor2", -10, 10, "label",
+                List.of(), RecommendedActionStatus.DONE);
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(active, done)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        RecommendedActionsResponse response = service.getAllRecommendedActions(ENTITY_ID, RecommendedActionStatus.DONE);
+
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("Done");
+    }
+
+    @Test
+    void getAllRecommendedActions_throwsWhenNoCacheRowExists() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getAllRecommendedActions(ENTITY_ID, null))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     // ==================== Startup: priority movies only ====================

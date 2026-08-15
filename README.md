@@ -2726,6 +2726,10 @@ If the LLM call fails, its response can't be parsed, or it selects nothing usabl
 
 Generation is cached per entity and refreshed for every entity once a day (`refresh=true` forces regeneration) — unlike the 6-hour cadence of `audience-pulse-aspects` (§18k), the underlying facts (genre, budget, historical comps) change rarely, so there's no value in re-running the LLM call more often. What *does* change daily is which phase of the plan is "current": by default this endpoint filters the cached plan down to only the actions whose window currently contains today (computed live against `entity.releaseDate` on every call, not baked into the cached plan); pass `allPhases=true` to see the entire campaign roadmap instead. An entity with no `releaseDate` can't have a "current" window computed, so it always returns the full, unfiltered plan regardless of `allPhases` — and if the window filter would otherwise leave the response empty despite a real generated plan existing (e.g. a movie whose release is further out than any single factor's marketing window reaches), it falls back to the full plan too, so the panel never renders empty just because no window happens to cover today.
 
+**Status tracking (marketing team workflow).** Each action carries a `candidateId` (stable across regenerations — see below) and a `status`: `ACTIVE` (default), `DONE` (the marketing team has acted on it), or `IRRELEVANT` (the team has ruled it out as not applicable to this movie). This endpoint — the "what to do now" panel — only ever returns `ACTIVE` actions; once an action is marked `DONE` or `IRRELEVANT` via [18l-i](#18l-i-update-recommended-action-status) it drops out of this response but is **never deleted**. To see the full history including handled/ruled-out actions, use [18l-ii](#18l-ii-get-all-recommended-actions-history).
+
+A daily regeneration never wipes this history: the fresh candidate list is merged onto whatever is already cached, matched by `candidateId`. A candidate the LLM re-selects keeps whatever status the team already set on it (only its content — title/reason/numbers — is refreshed, since the candidate is grounded in live data that can move day to day); a previously-cached action the LLM doesn't re-select this cycle is carried forward unchanged rather than dropped; a candidate never seen before is added at `ACTIVE`.
+
 **Headers:**
 ```
 Authorization: Bearer {jwt_token}
@@ -2751,6 +2755,7 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
   "daysToRelease": -12,
   "actions": [
     {
+      "candidateId": "factor-46-teaser-trailer-timing",
       "category": "HIGH_IMPACT",
       "title": "Kick Off Teaser/Trailer Push",
       "reason": "This platform's timing model calibrates a 30-45 day pre-release trailer/teaser window as a +25% impact bonus — now is the window to release it.",
@@ -2758,9 +2763,11 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
       "relatedFactor": "Teaser/Trailer Timing",
       "windowStartDaysFromRelease": -45,
       "windowEndDaysFromRelease": -30,
-      "windowLabel": "4-6 weeks before release"
+      "windowLabel": "4-6 weeks before release",
+      "status": "ACTIVE"
     },
     {
+      "candidateId": "factor-17-fanbase-mobilization",
       "category": "MEDIUM_IMPACT",
       "title": "Activate Core Fanbase",
       "reason": "12 positive-sentiment accounts have been identified across tracked keywords, 4 of them Tier-1/2 influence accounts — comparable ally mobilization events have correlated with a 1.8x mention-volume lift.",
@@ -2768,7 +2775,8 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
       "relatedFactor": "Fanbase Mobilization",
       "windowStartDaysFromRelease": -21,
       "windowEndDaysFromRelease": -7,
-      "windowLabel": "1-3 weeks before release"
+      "windowLabel": "1-3 weeks before release",
+      "status": "ACTIVE"
     }
   ],
   "generatedAt": "2026-08-08T10:15:00Z"
@@ -2777,7 +2785,8 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
 
 **Response fields:**
 - `daysToRelease` — today's signed day-offset from `entity.releaseDate`, using the same sign convention as the window fields below (negative = before release, positive = after); `null` if the entity has no `releaseDate`.
-- `actions` — the (by default, window-filtered) action list, ordered as generated.
+- `actions` — the (by default, window-filtered) **`ACTIVE`-only** action list, ordered as generated.
+- `actions[].candidateId` — stable id of the underlying candidate; unchanged by regeneration, used to target [18l-i](#18l-i-update-recommended-action-status).
 - `actions[].category` — `HIGH_IMPACT`, `MEDIUM_IMPACT`, or `LOW_IMPACT`; server-computed in Phase 1, never LLM-authored.
 - `actions[].title` — LLM-authored (falls back to the underlying factor's name if the model didn't sharpen it).
 - `actions[].reason` — LLM-authored prose grounded only in that action's own supporting facts (or a generic Java-built fallback reason — see Description).
@@ -2785,12 +2794,132 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
 - `actions[].relatedFactor` — the underlying marketing factor this action is grounded in (e.g. "Teaser/Trailer Timing", "Fanbase Mobilization").
 - `actions[].windowStartDaysFromRelease` / `actions[].windowEndDaysFromRelease` — signed day-offsets from release bounding this action's execution window; server-computed in Phase 1, never LLM-authored.
 - `actions[].windowLabel` — human-readable rendering of the window (e.g. `"4-6 weeks before release"`, `"Release week"`).
-- `generatedAt` — when the underlying plan was generated (reflects the cached generation time, not necessarily the request time).
+- `actions[].status` — always `"ACTIVE"` in this endpoint's response (see **Status tracking** above); `generatedAt` — when the underlying plan was generated (reflects the cached generation time, not necessarily the request time).
 
 **Status Code:** `200 OK`
 
 **Error Responses:**
 - `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18l-i. Update Recommended Action Status
+
+**Endpoint:** `PATCH /api/dashboard/{entityId}/recommended-actions/{actionId}/status`
+
+**Description:** Lets the marketing team mark a single recommended action as `DONE` (already acted on) or `IRRELEVANT` (doesn't apply to this movie), or move it back to `ACTIVE`. `actionId` is the action's `candidateId` from [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel)'s response. The status is stored on the cached plan and survives the next daily regeneration (see **Status tracking** above) — it is not reset until explicitly changed again.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+- `actionId` - the action's `candidateId` (e.g. `factor-46-teaser-trailer-timing`)
+
+**Request Body:**
+```json
+{
+  "status": "DONE"
+}
+```
+
+- `status` — required; one of `ACTIVE`, `DONE`, `IRRELEVANT`.
+
+**Example Request:**
+```
+PATCH /api/dashboard/21/recommended-actions/factor-46-teaser-trailer-timing/status
+```
+
+**Response:** The updated action.
+```json
+{
+  "candidateId": "factor-46-teaser-trailer-timing",
+  "category": "HIGH_IMPACT",
+  "title": "Kick Off Teaser/Trailer Push",
+  "reason": "This platform's timing model calibrates a 30-45 day pre-release trailer/teaser window as a +25% impact bonus — now is the window to release it.",
+  "confidencePct": 90,
+  "relatedFactor": "Teaser/Trailer Timing",
+  "windowStartDaysFromRelease": -45,
+  "windowEndDaysFromRelease": -30,
+  "windowLabel": "4-6 weeks before release",
+  "status": "DONE"
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, the entity is owned by another user, no plan has been generated yet for this entity (call [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel) at least once first), or `actionId` doesn't match any action ever generated for this entity.
+- `400 Bad Request` — `status` is missing or not one of `ACTIVE`, `DONE`, `IRRELEVANT`.
+
+---
+
+### 18l-ii. Get All Recommended Actions (History)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/recommended-actions/all`
+
+**Description:** Every recommended action ever generated for this entity — past and present — each carrying whatever status the marketing team last set on it, so the team can see at a glance what's already been handled (`DONE`), what's been ruled out (`IRRELEVANT`), and what's still open (`ACTIVE`). Unlike [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel), this is **not** filtered to `ACTIVE` and **not** filtered to today's execution window — it's the full audit view, not the "what to do today" panel. Optionally narrow to a single status with the `status` query parameter.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `status` (optional) — one of `ACTIVE`, `DONE`, `IRRELEVANT`. Omit to return actions of every status.
+
+**Example Requests:**
+```
+GET /api/dashboard/21/recommended-actions/all              # everything ever recommended
+GET /api/dashboard/21/recommended-actions/all?status=DONE  # only what's been handled
+```
+
+**Response:** Same shape as [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel), except `actions` is the full (optionally status-filtered) history rather than the window-filtered, `ACTIVE`-only current plan.
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "daysToRelease": -12,
+  "actions": [
+    {
+      "candidateId": "factor-46-teaser-trailer-timing",
+      "category": "HIGH_IMPACT",
+      "title": "Kick Off Teaser/Trailer Push",
+      "reason": "This platform's timing model calibrates a 30-45 day pre-release trailer/teaser window as a +25% impact bonus — now is the window to release it.",
+      "confidencePct": 90,
+      "relatedFactor": "Teaser/Trailer Timing",
+      "windowStartDaysFromRelease": -45,
+      "windowEndDaysFromRelease": -30,
+      "windowLabel": "4-6 weeks before release",
+      "status": "DONE"
+    },
+    {
+      "candidateId": "factor-61-holiday-proximity",
+      "category": "LOW_IMPACT",
+      "title": "Avoid Competing Holiday Releases",
+      "reason": "Release date is 3 day(s) from Independence Day (2026-08-15); this platform's factor model calibrates holiday-window releases at a +5% to +15% box-office impact.",
+      "confidencePct": 55,
+      "relatedFactor": "Holiday Release Windows",
+      "windowStartDaysFromRelease": 0,
+      "windowEndDaysFromRelease": 0,
+      "windowLabel": "Release day",
+      "status": "IRRELEVANT"
+    }
+  ],
+  "generatedAt": "2026-08-08T10:15:00Z"
+}
+```
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, the entity is owned by another user, or no plan has been generated yet for this entity (call [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel) at least once first).
 
 ---
 

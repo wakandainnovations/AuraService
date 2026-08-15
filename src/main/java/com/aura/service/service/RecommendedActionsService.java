@@ -5,6 +5,8 @@ import com.aura.service.dto.RecommendedActionItem;
 import com.aura.service.dto.RecommendedActionsResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.RecommendedActionsCache;
+import com.aura.service.enums.RecommendedActionStatus;
+import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.RecommendedActionsCacheRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -29,9 +31,11 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -129,18 +133,74 @@ public class RecommendedActionsService {
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
         GeneratedContent content = getCachedOrGenerate(entityId, refresh);
 
+        // This panel is "what to do right now" - an action the marketing team already marked DONE or
+        // IRRELEVANT (see updateActionStatus) has nothing left to act on, so it's excluded here even
+        // though it's retained (never deleted) in the cached plan for the /all history endpoint.
+        List<RecommendedActionItem> activeActions = content.actions().stream()
+                .filter(a -> a.getStatus() == RecommendedActionStatus.ACTIVE)
+                .toList();
+
         Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
         List<RecommendedActionItem> actions = (allPhases || daysToRelease == null)
-                ? content.actions()
-                : filterToCurrentWindow(content.actions(), daysToRelease);
-        if (actions.isEmpty() && !content.actions().isEmpty()) {
+                ? activeActions
+                : filterToCurrentWindow(activeActions, daysToRelease);
+        if (actions.isEmpty() && !activeActions.isEmpty()) {
             List<RecommendedActionItem> fallback = (daysToRelease != null && daysToRelease > 0)
-                    ? filterOutExpiredPreRelease(content.actions())
-                    : content.actions();
-            actions = fallback.isEmpty() ? content.actions() : fallback;
+                    ? filterOutExpiredPreRelease(activeActions)
+                    : activeActions;
+            actions = fallback.isEmpty() ? activeActions : fallback;
         }
 
         return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, actions, content.generatedAt());
+    }
+
+    /**
+     * Full accumulated plan for an entity - every action ever recommended, past or present, each
+     * carrying whatever status the marketing team last set on it (default {@link
+     * RecommendedActionStatus#ACTIVE} for one never explicitly updated). Unlike {@link
+     * #getRecommendedActions}, this never filters by status or by today's execution window - it's the
+     * "what has and hasn't been handled" audit view, not the "what to do today" panel. {@code
+     * statusFilter} narrows to one status (e.g. only DONE, or only ACTIVE) when non-null.
+     */
+    @Transactional(readOnly = true)
+    public RecommendedActionsResponse getAllRecommendedActions(Long entityId, RecommendedActionStatus statusFilter) {
+        ManagedEntity entity = managedEntityRepository.findById(entityId)
+                .orElseThrow(() -> new ResourceNotFoundException("Entity not found with id: " + entityId));
+        RecommendedActionsCache row = cacheRepository.findByEntityId(entityId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No recommended actions have been generated yet for entity " + entityId));
+
+        List<RecommendedActionItem> actions = readActionsJson(row);
+        if (statusFilter != null) {
+            actions = actions.stream().filter(a -> a.getStatus() == statusFilter).toList();
+        }
+
+        Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
+        return new RecommendedActionsResponse(entityId, row.getEntityName(), daysToRelease, actions, row.getGeneratedAt());
+    }
+
+    /**
+     * Marks a single cached action's status (e.g. DONE once the marketing team has acted on it, or
+     * IRRELEVANT if it doesn't apply to this movie), matched by the stable {@code candidateId} it was
+     * built from. Does not trigger regeneration or touch any other action in the plan.
+     */
+    @Transactional
+    public RecommendedActionItem updateActionStatus(Long entityId, String candidateId, RecommendedActionStatus status) {
+        RecommendedActionsCache row = cacheRepository.findByEntityId(entityId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No recommended actions have been generated yet for entity " + entityId));
+
+        List<RecommendedActionItem> actions = readActionsJson(row);
+        RecommendedActionItem target = actions.stream()
+                .filter(a -> candidateId.equals(a.getCandidateId()))
+                .findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No recommended action '" + candidateId + "' found for entity " + entityId));
+
+        target.setStatus(status);
+        row.setActionsJson(writeActionsJson(actions, entityId));
+        cacheRepository.save(row);
+        return target;
     }
 
     /**
@@ -263,8 +323,55 @@ public class RecommendedActionsService {
 
     private GeneratedContent regenerateAndStore(Long entityId) {
         GeneratedContent generated = generate(entityId);
-        persist(entityId, generated);
-        return generated;
+        GeneratedContent merged = mergeWithHistory(entityId, generated);
+        persist(entityId, merged);
+        return merged;
+    }
+
+    /**
+     * Merges a freshly generated action list onto whatever's already cached for this entity, so a
+     * regeneration never deletes an action the marketing team may already have marked DONE/IRRELEVANT
+     * on - only the LLM's current selection can change per cycle, not the team's history. Matched by
+     * {@code candidateId}: a candidate re-selected this cycle keeps its existing status but otherwise
+     * takes the fresh content (numbers/prose may have moved since the candidate is grounded in live
+     * data); a previously-cached action not re-selected this cycle is carried forward unchanged rather
+     * than dropped; a candidate never seen before is added at its default {@link
+     * RecommendedActionStatus#ACTIVE}. Cache rows written before {@code candidateId} existed have
+     * {@code null} ids on their old items and so can't be matched - those are superseded by this
+     * entity's first post-upgrade regeneration rather than preserved, since there's nothing to key them
+     * on.
+     */
+    private GeneratedContent mergeWithHistory(Long entityId, GeneratedContent fresh) {
+        var existing = cacheRepository.findByEntityId(entityId);
+        if (existing.isEmpty()) {
+            return fresh;
+        }
+
+        List<RecommendedActionItem> historical = readActionsJson(existing.get());
+        Map<String, RecommendedActionItem> historicalById = new LinkedHashMap<>();
+        for (RecommendedActionItem item : historical) {
+            if (item.getCandidateId() != null) {
+                historicalById.put(item.getCandidateId(), item);
+            }
+        }
+
+        Set<String> freshIds = new HashSet<>();
+        List<RecommendedActionItem> merged = new ArrayList<>();
+        for (RecommendedActionItem item : fresh.actions()) {
+            freshIds.add(item.getCandidateId());
+            RecommendedActionItem previous = historicalById.get(item.getCandidateId());
+            if (previous != null) {
+                item.setStatus(previous.getStatus());
+            }
+            merged.add(item);
+        }
+        for (RecommendedActionItem item : historical) {
+            if (item.getCandidateId() != null && !freshIds.contains(item.getCandidateId())) {
+                merged.add(item);
+            }
+        }
+
+        return new GeneratedContent(fresh.entityName(), merged, fresh.daysToReleaseAtGeneration(), fresh.generatedAt());
     }
 
     private void persist(Long entityId, GeneratedContent content) {
@@ -400,6 +507,7 @@ public class RecommendedActionsService {
 
     private static RecommendedActionItem toActionItem(RecommendedActionCandidate candidate, String title, String reason) {
         return new RecommendedActionItem(
+                candidate.candidateId(),
                 candidate.category(),
                 title,
                 ensureReasonNamesExampleHandles(reason, candidate.exampleHandles()),
@@ -408,7 +516,8 @@ public class RecommendedActionsService {
                 candidate.windowStartDaysFromRelease(),
                 candidate.windowEndDaysFromRelease(),
                 candidate.windowLabel(),
-                candidate.exampleHandles());
+                candidate.exampleHandles(),
+                RecommendedActionStatus.ACTIVE);
     }
 
     // The prompt asks the LLM to name real example handles verbatim in its reason, but instruction-

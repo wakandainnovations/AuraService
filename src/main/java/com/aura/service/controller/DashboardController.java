@@ -2,6 +2,7 @@ package com.aura.service.controller;
 
 import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
+import com.aura.service.enums.RecommendedActionStatus;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.AudiencePulseAspectsService;
 import com.aura.service.service.CommandCenterSummaryService;
@@ -17,6 +18,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.validation.annotation.Validated;
@@ -295,6 +297,31 @@ public class DashboardController {
         assertOwned(entityId);
         RecommendedActionsResponse response = recommendedActionsService.getRecommendedActions(entityId, refresh, allPhases);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Every recommended action ever generated for this entity - past and present, each carrying
+     * whatever status the marketing team last set - so the team can see what's already been handled
+     * (DONE), what's been ruled out (IRRELEVANT), and what's still open (ACTIVE), independent of
+     * today's execution window. Optionally narrowed to a single status via {@code status}.
+     */
+    @GetMapping("/{entityId}/recommended-actions/all")
+    public ResponseEntity<RecommendedActionsResponse> getAllRecommendedActions(
+            @PathVariable Long entityId,
+            @RequestParam(required = false) RecommendedActionStatus status) {
+        assertOwned(entityId);
+        RecommendedActionsResponse response = recommendedActionsService.getAllRecommendedActions(entityId, status);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{entityId}/recommended-actions/{actionId}/status")
+    public ResponseEntity<RecommendedActionItem> updateRecommendedActionStatus(
+            @PathVariable Long entityId,
+            @PathVariable String actionId,
+            @Valid @RequestBody UpdateRecommendedActionStatusRequest request) {
+        assertOwned(entityId);
+        RecommendedActionItem updated = recommendedActionsService.updateActionStatus(entityId, actionId, request.getStatus());
+        return ResponseEntity.ok(updated);
     }
 
     @GetMapping("/{entityId}/movie-health")
