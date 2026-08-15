@@ -896,38 +896,70 @@ public class DashboardService {
         return new MovieSentimentResponse(entityId, entity.getName(), totalMentions, averageSentimentScore, positiveRatio);
     }
 
-    /** Total views (X impressions, the only platform with a view count) across the entity's whole history. */
+    /** Total unique users (distinct authors) who have posted about the entity. */
     public ReachResponse getReach(Long entityId) {
-        ManagedEntity entity = entityRepository.findById(entityId)
-                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
-
-        long totalViews = mentionRepository.findTotalViewsForEntity(entityId);
-
-        return new ReachResponse(entityId, entity.getName(), totalViews);
-    }
-
-    /**
-     * Very High/High/Medium/Low tier based on total unique users (distinct authors) who have posted
-     * about the entity: 1000+ is Very High, 500-999 is High, 250-499 is Medium, below 250 is Low.
-     */
-    public AwarenessResponse getAwareness(Long entityId) {
         ManagedEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
 
         long uniqueUsers = mentionRepository.countDistinctAuthorsByEntityId(entityId);
 
-        String awarenessLevel;
-        if (uniqueUsers >= 1000) {
-            awarenessLevel = "Very High";
-        } else if (uniqueUsers >= 500) {
-            awarenessLevel = "High";
-        } else if (uniqueUsers >= 250) {
-            awarenessLevel = "Medium";
-        } else {
-            awarenessLevel = "Low";
+        return new ReachResponse(entityId, entity.getName(), uniqueUsers);
+    }
+
+    /**
+     * High/Medium/Low tier for total views (X impressions, the only platform with a view count) ranked
+     * against the caller's other movies. When the entity has no owner (legacy unowned rows), the
+     * comparison set widens to every MOVIE entity system-wide instead. With fewer than 2 movies to
+     * compare against, there's no meaningful ranking, so the level defaults to "Medium".
+     */
+    public AwarenessResponse getAwareness(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<ManagedEntity> comparisonSet = entity.getOwner() != null
+                ? entityRepository.findByTypeAndOwnerId("MOVIE", entity.getOwner().getId())
+                : entityRepository.findByType("MOVIE");
+
+        List<Long> comparisonIds = comparisonSet.stream().map(ManagedEntity::getId).toList();
+        if (comparisonIds.isEmpty()) {
+            comparisonIds = List.of(entityId);
         }
 
-        return new AwarenessResponse(entityId, entity.getName(), uniqueUsers, awarenessLevel);
+        Map<Long, Long> viewsByEntity = new HashMap<>();
+        for (Long id : comparisonIds) {
+            viewsByEntity.put(id, 0L);
+        }
+        for (Object[] row : mentionRepository.findTotalViewsForEntities(comparisonIds)) {
+            Long id = ((Number) row[0]).longValue();
+            long views = row[1] == null ? 0L : ((Number) row[1]).longValue();
+            viewsByEntity.put(id, views);
+        }
+
+        long totalViews = viewsByEntity.getOrDefault(entityId, 0L);
+
+        List<Long> sortedViews = viewsByEntity.values().stream().sorted().toList();
+        String awarenessLevel;
+        if (sortedViews.size() < 2) {
+            awarenessLevel = "Medium";
+        } else {
+            // Min-max rank normalization (countBelow / (N-1)) rather than countBelow / N: the latter
+            // caps the top entity's position at (N-1)/N, which never reaches a 2/3 "High" cut when N=2
+            // (0.5 < 0.667). Dividing by (N-1) instead always spans the lowest entity to exactly 0.0 and
+            // the highest to exactly 1.0, so the extremes land in Low/High regardless of comparison-set
+            // size, and ties share the same rank via the strictly-below count.
+            long countBelow = sortedViews.stream().filter(v -> v < totalViews).count();
+            double position = (double) countBelow / (sortedViews.size() - 1);
+            if (position >= 2.0 / 3.0) {
+                awarenessLevel = "High";
+            } else if (position >= 1.0 / 3.0) {
+                awarenessLevel = "Medium";
+            } else {
+                awarenessLevel = "Low";
+            }
+        }
+
+        return new AwarenessResponse(
+                entityId, entity.getName(), totalViews, awarenessLevel, comparisonIds.size());
     }
 
     private MentionResponse mapToMentionResponseWithActions(
