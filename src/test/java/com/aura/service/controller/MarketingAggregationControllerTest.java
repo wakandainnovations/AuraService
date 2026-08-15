@@ -250,7 +250,7 @@ class MarketingAggregationControllerTest {
                 .andExpect(jsonPath("$.data.length()").value(2));
 
         RecordedRequest req = takeRequest();
-        assertThat(req.getPath()).contains("brand-evangelists/rrr");
+        assertThat(req.getPath()).contains("movie-buffs/rrr");
     }
 
     // ------------------------------------------------------------------

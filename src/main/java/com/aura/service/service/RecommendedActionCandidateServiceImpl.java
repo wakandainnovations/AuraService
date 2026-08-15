@@ -733,7 +733,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // Distinct data source from evangelistMobilizationCandidate above: that one measures THIS
     // platform's own mention sentiment for authors AuraMath ranks as general top spreaders (Hawkes
     // influence). This one asks AuraMath directly which of those authors it has already classified
-    // as "Brand Evangelist" (positive tone, high branching ratio) independent of any one keyword -
+    // as "Movie Buff" (positive tone, high branching ratio) independent of any one keyword -
     // a real, tiered count answering "how many movie buffs should this movie approach," grounded in
     // AuraMath's own classification rather than a percentage this service would otherwise have to
     // invent.

@@ -350,13 +350,13 @@ class AuraMathMarketingProxyControllerTest {
 
     @Test
     void movieBuffs_happyPath() throws Exception {
-        enqueueJson("{\"keyword\":\"Avengers\",\"totalEvangelists\":0,\"evangelists\":[]}");
+        enqueueJson("{\"keyword\":\"Avengers\",\"totalMovieBuffs\":0,\"movieBuffs\":[]}");
 
         mvc.perform(get("/v1/marketing/movie-buffs/{k}", "Avengers"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalEvangelists").value(0));
+                .andExpect(jsonPath("$.totalMovieBuffs").value(0));
 
-        assertThat(takeRequest().getPath()).isEqualTo("/api/marketing/brand-evangelists/Avengers");
+        assertThat(takeRequest().getPath()).isEqualTo("/api/marketing/movie-buffs/Avengers");
     }
 
     // ==================================================================

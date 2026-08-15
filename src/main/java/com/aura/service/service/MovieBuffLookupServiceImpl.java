@@ -47,7 +47,7 @@ public class MovieBuffLookupServiceImpl implements MovieBuffLookupService {
     private List<MovieBuff> fetch(String keyword) {
         ResponseEntity<String> response = proxy.forwardMarketingGet(
                 "/v1/marketing/movie-buffs/{keyword}",
-                "/api/marketing/brand-evangelists/" + encodeSegment(keyword),
+                "/api/marketing/movie-buffs/" + encodeSegment(keyword),
                 60);
         if (!response.getStatusCode().is2xxSuccessful()) {
             log.warn("movie-buffs lookup failed keyword={} status={}", keyword, response.getStatusCode().value());
@@ -59,12 +59,12 @@ public class MovieBuffLookupServiceImpl implements MovieBuffLookupService {
         }
         try {
             JsonNode root = objectMapper.readTree(body);
-            JsonNode evangelists = root.get("evangelists");
-            if (evangelists == null || !evangelists.isArray()) {
+            JsonNode movieBuffs = root.get("movieBuffs");
+            if (movieBuffs == null || !movieBuffs.isArray()) {
                 return Collections.emptyList();
             }
-            List<MovieBuff> result = new ArrayList<>(evangelists.size());
-            for (JsonNode element : evangelists) {
+            List<MovieBuff> result = new ArrayList<>(movieBuffs.size());
+            for (JsonNode element : movieBuffs) {
                 if (!element.isObject()) {
                     continue;
                 }

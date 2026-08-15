@@ -191,7 +191,7 @@ public class MarketingAggregationService {
             case "top-spreaders" -> "/api/marketing/top-50-spreaders/" + encodeSegment(keyword);
             case "viral-seeds" -> "/api/marketing/viral-seeds";
             case "aspect-drivers" -> "/api/marketing/aspect-drivers/" + encodeSegment(keyword);
-            case "movie-buffs" -> "/api/marketing/brand-evangelists/" + encodeSegment(keyword);
+            case "movie-buffs" -> "/api/marketing/movie-buffs/" + encodeSegment(keyword);
             default -> throw new IllegalArgumentException("Unknown category: " + category);
         };
 

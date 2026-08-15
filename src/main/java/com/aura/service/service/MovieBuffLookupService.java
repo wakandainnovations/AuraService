@@ -3,9 +3,9 @@ package com.aura.service.service;
 import java.util.List;
 
 /**
- * Keyword-scoped "movie buff" lookup from AuraMath's {@code /api/marketing/brand-evangelists/*}
+ * Keyword-scoped "movie buff" lookup from AuraMath's {@code /api/marketing/movie-buffs/*}
  * endpoint — a distinct classification from {@link TopSpreaderLookupService}'s Hawkes-α top-spreader
- * ranking: AuraMath pre-tags authors as {@code audience_classification = 'Brand Evangelist'} (positive
+ * ranking: AuraMath pre-tags authors as {@code audience_classification = 'Movie Buff'} (positive
  * tone, high branching ratio) in its own {@code author_categories} table, independent of any one
  * keyword, then intersects that with who has actually posted about this movie's tracked keyword.
  *

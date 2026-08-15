@@ -215,7 +215,7 @@ public class AuraMathMarketingProxyController {
     public ResponseEntity<String> movieBuffs(@PathVariable("keyword") String keyword) {
         return proxy.forwardMarketingGet(
                 "/v1/marketing/movie-buffs/{keyword}",
-                "/api/marketing/brand-evangelists/" + encodeSegment(keyword),
+                "/api/marketing/movie-buffs/" + encodeSegment(keyword),
                 defaultTtlSeconds()
         );
     }
@@ -310,7 +310,7 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
         routes.add(route("GET", "/v1/marketing/language/{language}/users", "/api/marketing/language/{language}/users"));
         routes.add(route("GET", "/v1/marketing/language/{language}/movie/{movieName}/users", "/api/marketing/language/{language}/movie/{movieName}/users"));
-        routes.add(route("GET", "/v1/marketing/movie-buffs/{keyword}", "/api/marketing/brand-evangelists/{keyword}"));
+        routes.add(route("GET", "/v1/marketing/movie-buffs/{keyword}", "/api/marketing/movie-buffs/{keyword}"));
         routes.add(route("POST", "/v1/marketing/narrative-novelty/score", "/api/marketing/narrative-novelty/score"));
         routes.add(route("GET", "/v1/marketing/narrative-novelty/lookup", "/api/marketing/narrative-novelty/lookup"));
 
