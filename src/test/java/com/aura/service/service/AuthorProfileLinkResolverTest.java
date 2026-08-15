@@ -118,4 +118,89 @@ class AuthorProfileLinkResolverTest {
                 """);
         assertThat(AuthorProfileLinkResolver.extractProfileUrl(element)).isNull();
     }
+
+    // ==================== Verbatim elements captured live from a running AuraMath instance
+    // (localhost:8081, /api/marketing/{top-50-spreaders,movie-buffs,viral-seeds}/toxic) - real payload
+    // shape, not a synthetic approximation, so a future AuraMath response-shape change that silently
+    // breaks extraction again shows up here. ====================
+
+    @Test
+    void extractProfileUrl_realTopSpreadersElement() throws Exception {
+        JsonNode element = json("""
+                {
+                  "author": "𝙍𝙤𝙘𝙠𝙞𝙣𝙜 𝘼𝙨𝙝𝙪👑",
+                  "viral_potential_score": 1223.1108224979314,
+                  "alpha": 0.6528524628350423,
+                  "engagement_count": 740.0,
+                  "total_likes": 740,
+                  "total_comments": 0,
+                  "total_views": 10179,
+                  "engagement_rate": 0.07269869338834856,
+                  "average_sentiment_score": 90.4,
+                  "platform_handles": {
+                    "by_platform": {
+                      "x": {
+                        "post_count": 1.0,
+                        "profile_url": "https://twitter.com/Dudey212530",
+                        "total_likes": 84.0,
+                        "total_views": 1647.0,
+                        "total_comments": 0.0,
+                        "sample_post_url": "https://twitter.com/Dudey212530/status/2084626867177541761",
+                        "avg_engagement_per_post": 84.0
+                      }
+                    },
+                    "primary_platform": "x"
+                  },
+                  "profile_url": "https://twitter.com/Dudey212530"
+                }
+                """);
+        assertThat(AuthorProfileLinkResolver.extractProfileUrl(element)).isEqualTo("https://twitter.com/Dudey212530");
+    }
+
+    @Test
+    void extractProfileUrl_realMovieBuffsElementHasNoLinkData() throws Exception {
+        JsonNode element = json("""
+                {
+                  "author": "𝗥𝗞 2.0 ᴿᵃʸᵃ",
+                  "audienceClassification": "Movie Buff",
+                  "influenceTier": "Viral Node",
+                  "postingStyle": "Power Burst Poster",
+                  "dominantTone": "positive",
+                  "primaryPlatform": "x",
+                  "branchingRatio": 1.0,
+                  "totalPosts": 11,
+                  "keywordPostCount": 8,
+                  "keywordEngagement": 2
+                }
+                """);
+        assertThat(AuthorProfileLinkResolver.extractProfileUrl(element)).isNull();
+    }
+
+    @Test
+    void extractOutreachProfileUrl_realViralSeedsElement() throws Exception {
+        JsonNode element = json("""
+                {
+                  "rank": 1,
+                  "author": "Honest Review",
+                  "seedScore": 5.2155,
+                  "hawkesAlpha": 2.9411469,
+                  "moiScore": 0.029839732,
+                  "tribe": "Tribe_2",
+                  "primaryPlatform": "x",
+                  "outreachHandle": {
+                    "platform": "x",
+                    "profile_url": "https://twitter.com/honestreview01",
+                    "permalink": "https://twitter.com/honestreview01/status/2071239626090766468"
+                  },
+                  "reachSignals": {
+                    "x_views_count": 27587,
+                    "instagram_like_count": 0,
+                    "reddit_score": 0,
+                    "youtube_comment_count": 0
+                  }
+                }
+                """);
+        assertThat(AuthorProfileLinkResolver.extractOutreachProfileUrl(element))
+                .isEqualTo("https://twitter.com/honestreview01");
+    }
 }
