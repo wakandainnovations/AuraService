@@ -16,8 +16,11 @@ import java.util.List;
  */
 public interface MovieBuffLookupService {
 
-    /** {@code profileUrl} is populated only when AuraMath's element carries its {@code platform_handles}
-     *  shape (see {@link AuthorProfileLinkResolver}) - null otherwise, never fabricated from author. */
+    /** {@code profileUrl} is always null today - AuraMath's movie-buffs query never joins its
+     *  profile-handles table (confirmed against AuraMath's own source), so this endpoint carries no
+     *  profile-link data to extract, unlike {@link TopSpreaderLookupService.SpreaderProfile} or
+     *  {@link ViralSeedLookupService.ViralSeed}. Kept as a field (rather than dropped) so a future
+     *  AuraMath change that adds it doesn't require another API shape change here. */
     record MovieBuff(String author, String influenceTier, String profileUrl) {
     }
 

@@ -31,9 +31,9 @@ public class TopSpreaderLookupService {
 
     // influenceTier/primaryPlatform are not part of AuraMath's top-50-spreaders response contract and
     // are always null in practice; totalViews (AuraMath's total_views) is the only real reach proxy
-    // that endpoint provides, and is what ranking should key off instead. profileUrl is populated only
-    // when an element carries AuraMath's platform_handles shape (see AuthorProfileLinkResolver) - null
-    // otherwise, never fabricated from globalUserId.
+    // that endpoint provides, and is what ranking should key off instead. profileUrl comes from this
+    // endpoint's flat profile_url field (AuraMath's own attachProfileLinks enrichment step) - null when
+    // that author hasn't been enriched yet, never fabricated from globalUserId.
     public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier, long totalViews,
                                    String profileUrl) {}
 

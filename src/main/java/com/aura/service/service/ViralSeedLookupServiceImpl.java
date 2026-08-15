@@ -73,7 +73,7 @@ public class ViralSeedLookupServiceImpl implements ViralSeedLookupService {
                     continue;
                 }
                 result.add(new ViralSeed(author, textOrNull(element, "primaryPlatform"),
-                        AuthorProfileLinkResolver.extractProfileUrl(element)));
+                        AuthorProfileLinkResolver.extractOutreachProfileUrl(element)));
             }
             return result;
         } catch (Exception e) {

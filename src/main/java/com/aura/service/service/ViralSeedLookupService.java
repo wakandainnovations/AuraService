@@ -16,8 +16,9 @@ import java.util.List;
  */
 public interface ViralSeedLookupService {
 
-    /** {@code profileUrl} is populated only when AuraMath's element carries its {@code platform_handles}
-     *  shape (see {@link AuthorProfileLinkResolver}) - null otherwise, never fabricated from author. */
+    /** {@code profileUrl} is read from this endpoint's nested {@code outreachHandle.profile_url}
+     *  (see {@link AuthorProfileLinkResolver#extractOutreachProfileUrl}) - null when AuraMath returns
+     *  no {@code outreachHandle} for that author, never fabricated from {@code author}. */
     record ViralSeed(String author, String primaryPlatform, String profileUrl) {
     }
 
