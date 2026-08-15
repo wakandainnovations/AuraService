@@ -907,10 +907,12 @@ public class DashboardService {
     }
 
     /**
-     * High/Medium/Low tier for total views (X impressions, the only platform with a view count) ranked
-     * against the caller's other movies. When the entity has no owner (legacy unowned rows), the
-     * comparison set widens to every MOVIE entity system-wide instead. With fewer than 2 movies to
-     * compare against, there's no meaningful ranking, so the level defaults to "Medium".
+     * High/Medium/Low tier for total views, summed across all platforms (X impressions, Reddit subreddit
+     * subscribers, Instagram views/engagement, YouTube per-video view counts — see
+     * {@link com.aura.service.repository.MentionRepository#findTotalViewsForEntities}), ranked against
+     * the caller's other movies. When the entity has no owner (legacy unowned rows), the comparison set
+     * widens to every MOVIE entity system-wide instead. With fewer than 2 movies to compare against,
+     * there's no meaningful ranking, so the level defaults to "Medium".
      */
     public AwarenessResponse getAwareness(Long entityId) {
         ManagedEntity entity = entityRepository.findById(entityId)

@@ -569,27 +569,86 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     long countDistinctAuthorsByEntityId(@Param("entityId") Long entityId);
 
     /**
-     * Total impressions for one entity's whole history — Awareness panel. Only {@code x_posts} carries
-     * a view/impression count (see {@link #findXPostViewsCounts}), so this is X-only by construction,
-     * same join-back-via-{@code post_id}+{@code platform} pattern as {@link #findRegionBuzzForEntity}.
+     * Total views for one entity's whole history, across all four platforms — Awareness panel. Each
+     * platform's raw ingestion table has a different (or no) native view/impression column, so "views"
+     * is a per-platform proxy: X uses {@code x_posts.views_count} directly; Reddit uses
+     * {@code subreddit_subscribers} (reach of the subreddit a post landed in, standing in for
+     * impressions since Reddit exposes no per-post view count) counted once per distinct subreddit the
+     * entity was mentioned in, not once per post — otherwise an entity with several posts in the same
+     * subreddit would have that subreddit's subscriber base added again for every post, inflating the
+     * total; Instagram uses the {@code views} column,
+     * falling back to {@code like_count + comments_count} when {@code views} is NULL or 0 (video-only
+     * metric — photo posts have no views); YouTube uses {@code youtube_videos.view_count}, counted once
+     * per distinct video rather than once per comment, since {@code mentions.post_id} for platform
+     * {@code YOUTUBE} joins to {@code youtube_comments} and a single video can have many comments.
+     * Every branch excludes posts/comments whose {@code author_type} is {@code 'irrelevant'} (an
+     * upstream classifier's judgment that the post isn't really about the entity — e.g. an unrelated
+     * keyword collision) — rows with a NULL {@code author_type} (not yet classified) are still included.
      */
-    @Query(value = "SELECT COALESCE(SUM(x.views_count), 0) FROM x_posts x " +
-            "JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
-            "JOIN mention_entities me ON me.mention_id = m.id " +
-            "WHERE me.managed_entity_id = :entityId",
+    @Query(value = "SELECT COALESCE(SUM(v.views), 0) FROM ( " +
+            "  SELECT x.views_count AS views FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND x.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT MAX(r.subreddit_subscribers) AS views FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND r.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    GROUP BY r.community_name " +
+            "  UNION ALL " +
+            "  SELECT COALESCE(NULLIF(i.views, 0), COALESCE(i.like_count, 0) + COALESCE(i.comments_count, 0)) AS views " +
+            "    FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND i.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT yv.view_count AS views FROM ( " +
+            "    SELECT DISTINCT yc.video_id FROM youtube_comments yc " +
+            "      JOIN mentions m ON m.post_id = yc.id AND m.platform = 'YOUTUBE' " +
+            "      JOIN mention_entities me ON me.mention_id = m.id " +
+            "      WHERE me.managed_entity_id = :entityId AND yc.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  ) ev " +
+            "  JOIN (SELECT video_id, MAX(view_count) AS view_count FROM youtube_videos GROUP BY video_id) yv " +
+            "    ON yv.video_id = ev.video_id " +
+            ") v",
             nativeQuery = true)
     long findTotalViewsForEntity(@Param("entityId") Long entityId);
 
     /**
      * Same total as {@link #findTotalViewsForEntity}, batched per entity — used by the Awareness panel
-     * to rank one movie's views against the comparison set in a single query. An entity with no X posts
-     * (or no views yet) is simply absent from the result, not returned as a zero row.
+     * to rank one movie's views against the comparison set in a single query. An entity with no posts on
+     * any platform (or no views yet) is simply absent from the result, not returned as a zero row.
      */
-    @Query(value = "SELECT me.managed_entity_id, SUM(x.views_count) FROM x_posts x " +
-            "JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
-            "JOIN mention_entities me ON me.mention_id = m.id " +
-            "WHERE me.managed_entity_id IN (:entityIds) " +
-            "GROUP BY me.managed_entity_id",
+    @Query(value = "SELECT entity_id, SUM(views) FROM ( " +
+            "  SELECT me.managed_entity_id AS entity_id, x.views_count AS views FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id IN (:entityIds) AND x.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT me.managed_entity_id AS entity_id, MAX(r.subreddit_subscribers) AS views FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id IN (:entityIds) AND r.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    GROUP BY me.managed_entity_id, r.community_name " +
+            "  UNION ALL " +
+            "  SELECT me.managed_entity_id AS entity_id, " +
+            "    COALESCE(NULLIF(i.views, 0), COALESCE(i.like_count, 0) + COALESCE(i.comments_count, 0)) AS views " +
+            "    FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id IN (:entityIds) AND i.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT ev.managed_entity_id AS entity_id, yv.view_count AS views FROM ( " +
+            "    SELECT DISTINCT me.managed_entity_id, yc.video_id FROM youtube_comments yc " +
+            "      JOIN mentions m ON m.post_id = yc.id AND m.platform = 'YOUTUBE' " +
+            "      JOIN mention_entities me ON me.mention_id = m.id " +
+            "      WHERE me.managed_entity_id IN (:entityIds) AND yc.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  ) ev " +
+            "  JOIN (SELECT video_id, MAX(view_count) AS view_count FROM youtube_videos GROUP BY video_id) yv " +
+            "    ON yv.video_id = ev.video_id " +
+            ") all_views " +
+            "GROUP BY entity_id",
             nativeQuery = true)
     List<Object[]> findTotalViewsForEntities(@Param("entityIds") List<Long> entityIds);
 
