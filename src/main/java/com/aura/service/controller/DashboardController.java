@@ -297,6 +297,41 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/{entityId}/movie-health")
+    public ResponseEntity<MovieHealthResponse> getMovieHealth(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        MovieHealthResponse response = dashboardService.getMovieHealth(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/buzz")
+    public ResponseEntity<BuzzResponse> getBuzz(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        BuzzResponse response = dashboardService.getBuzz(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/sentiment")
+    public ResponseEntity<MovieSentimentResponse> getSentiment(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        MovieSentimentResponse response = dashboardService.getSentiment(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/reach")
+    public ResponseEntity<ReachResponse> getReach(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        ReachResponse response = dashboardService.getReach(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/awareness")
+    public ResponseEntity<AwarenessResponse> getAwareness(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        AwarenessResponse response = dashboardService.getAwareness(entityId);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{entityId}/mentions")
     public ResponseEntity<Page<MentionResponse>> getMentions(
             @PathVariable Long entityId,

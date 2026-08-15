@@ -829,6 +829,139 @@ public class DashboardService {
         return new TopicCategoryBreakdownResponse(entityId, entity.getName(), totalClassifiedPosts, topics);
     }
 
+    /**
+     * Percentage health derived from net sentiment score (positive/negative ratio, same formula as
+     * {@link #getEntityStats}): a score of 2.0+ (the "excellent" threshold) saturates the percentage at
+     * 100, so 1.5 ("good") lands at 75%. Zero/negative scores (including the "no negative mentions yet"
+     * edge case of the underlying formula) floor at 0%.
+     */
+    private static final double HEALTH_EXCELLENT_THRESHOLD = 2.0;
+    private static final double HEALTH_GOOD_THRESHOLD = 1.5;
+
+    public MovieHealthResponse getMovieHealth(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        long positiveMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.POSITIVE);
+        long negativeMentions = mentionRepository.countByManagedEntityIdAndSentiment(entityId, Sentiment.NEGATIVE);
+        double netSentimentScore = negativeMentions > 0 ? (double) positiveMentions / negativeMentions : 0.0;
+
+        double healthPercentage = Math.max(0.0, Math.min(100.0,
+                (netSentimentScore / HEALTH_EXCELLENT_THRESHOLD) * 100.0));
+
+        String healthLabel;
+        if (netSentimentScore > HEALTH_EXCELLENT_THRESHOLD) {
+            healthLabel = "Excellent";
+        } else if (netSentimentScore > HEALTH_GOOD_THRESHOLD) {
+            healthLabel = "Good";
+        } else {
+            healthLabel = "Needs Improvement";
+        }
+
+        return new MovieHealthResponse(entityId, entity.getName(), netSentimentScore, healthPercentage, healthLabel);
+    }
+
+    /** Change in mention volume vs. the prior UTC day. */
+    public BuzzResponse getBuzz(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        Instant now = Instant.now();
+        Instant todayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant yesterdayStart = todayStart.minus(1, ChronoUnit.DAYS);
+        Instant yesterdayEnd = todayStart.minusNanos(1);
+
+        long mentionsToday = mentionRepository.countByManagedEntityIdAndPostDateBetween(entityId, todayStart, now);
+        long mentionsYesterday = mentionRepository.countByManagedEntityIdAndPostDateBetween(
+                entityId, yesterdayStart, yesterdayEnd);
+        long mentionsChange = mentionsToday - mentionsYesterday;
+        double mentionsChangePct = mentionsYesterday > 0
+                ? (double) mentionsChange / mentionsYesterday * 100.0
+                : (mentionsToday > 0 ? 100.0 : 0.0);
+
+        return new BuzzResponse(
+                entityId, entity.getName(), mentionsToday, mentionsYesterday, mentionsChange, mentionsChangePct);
+    }
+
+    /** Overall average sentiment across the entity's whole mention history. */
+    public MovieSentimentResponse getSentiment(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        long totalMentions = mentionRepository.countByManagedEntityId(entityId);
+        Optional<SentimentStats> sentimentStats = mentionRepository.getSentimentStats(entityId);
+        double averageSentimentScore = sentimentStats.map(SentimentStats::getAverageSentimentScore).orElse(0.0);
+        double positiveRatio = sentimentStats.map(SentimentStats::getPositiveRatio).orElse(0.0);
+
+        return new MovieSentimentResponse(entityId, entity.getName(), totalMentions, averageSentimentScore, positiveRatio);
+    }
+
+    /** Total unique users (distinct authors) who have posted about the entity. */
+    public ReachResponse getReach(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        long uniqueUsers = mentionRepository.countDistinctAuthorsByEntityId(entityId);
+
+        return new ReachResponse(entityId, entity.getName(), uniqueUsers);
+    }
+
+    /**
+     * High/Medium/Low tier for total views (X impressions, the only platform with a view count) ranked
+     * against the caller's other movies. When the entity has no owner (legacy unowned rows), the
+     * comparison set widens to every MOVIE entity system-wide instead. With fewer than 2 movies to
+     * compare against, there's no meaningful ranking, so the level defaults to "Medium".
+     */
+    public AwarenessResponse getAwareness(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        List<ManagedEntity> comparisonSet = entity.getOwner() != null
+                ? entityRepository.findByTypeAndOwnerId("MOVIE", entity.getOwner().getId())
+                : entityRepository.findByType("MOVIE");
+
+        List<Long> comparisonIds = comparisonSet.stream().map(ManagedEntity::getId).toList();
+        if (comparisonIds.isEmpty()) {
+            comparisonIds = List.of(entityId);
+        }
+
+        Map<Long, Long> viewsByEntity = new HashMap<>();
+        for (Long id : comparisonIds) {
+            viewsByEntity.put(id, 0L);
+        }
+        for (Object[] row : mentionRepository.findTotalViewsForEntities(comparisonIds)) {
+            Long id = ((Number) row[0]).longValue();
+            long views = row[1] == null ? 0L : ((Number) row[1]).longValue();
+            viewsByEntity.put(id, views);
+        }
+
+        long totalViews = viewsByEntity.getOrDefault(entityId, 0L);
+
+        List<Long> sortedViews = viewsByEntity.values().stream().sorted().toList();
+        String awarenessLevel;
+        if (sortedViews.size() < 2) {
+            awarenessLevel = "Medium";
+        } else {
+            // Min-max rank normalization (countBelow / (N-1)) rather than countBelow / N: the latter
+            // caps the top entity's position at (N-1)/N, which never reaches a 2/3 "High" cut when N=2
+            // (0.5 < 0.667). Dividing by (N-1) instead always spans the lowest entity to exactly 0.0 and
+            // the highest to exactly 1.0, so the extremes land in Low/High regardless of comparison-set
+            // size, and ties share the same rank via the strictly-below count.
+            long countBelow = sortedViews.stream().filter(v -> v < totalViews).count();
+            double position = (double) countBelow / (sortedViews.size() - 1);
+            if (position >= 2.0 / 3.0) {
+                awarenessLevel = "High";
+            } else if (position >= 1.0 / 3.0) {
+                awarenessLevel = "Medium";
+            } else {
+                awarenessLevel = "Low";
+            }
+        }
+
+        return new AwarenessResponse(
+                entityId, entity.getName(), totalViews, awarenessLevel, comparisonIds.size());
+    }
+
     private MentionResponse mapToMentionResponseWithActions(
             Mention mention,
             Map<Long, ActionHistorySummary> summaries,

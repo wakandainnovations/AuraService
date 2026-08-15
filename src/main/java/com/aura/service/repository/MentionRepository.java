@@ -563,6 +563,36 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
      * resonate" panel. Same NULL/'irrelevant' exclusion and join pattern as
      * {@link #findRegionBuzzForEntity}.
      */
+    /** Unique posters across an entity's whole history (no date/language/industry/state filter) — Reach panel. */
+    @Query("SELECT COUNT(DISTINCT m.author) FROM Mention m WHERE m.author IS NOT NULL AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId)")
+    long countDistinctAuthorsByEntityId(@Param("entityId") Long entityId);
+
+    /**
+     * Total impressions for one entity's whole history — Awareness panel. Only {@code x_posts} carries
+     * a view/impression count (see {@link #findXPostViewsCounts}), so this is X-only by construction,
+     * same join-back-via-{@code post_id}+{@code platform} pattern as {@link #findRegionBuzzForEntity}.
+     */
+    @Query(value = "SELECT COALESCE(SUM(x.views_count), 0) FROM x_posts x " +
+            "JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "JOIN mention_entities me ON me.mention_id = m.id " +
+            "WHERE me.managed_entity_id = :entityId",
+            nativeQuery = true)
+    long findTotalViewsForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Same total as {@link #findTotalViewsForEntity}, batched per entity — used by the Awareness panel
+     * to rank one movie's views against the comparison set in a single query. An entity with no X posts
+     * (or no views yet) is simply absent from the result, not returned as a zero row.
+     */
+    @Query(value = "SELECT me.managed_entity_id, SUM(x.views_count) FROM x_posts x " +
+            "JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "JOIN mention_entities me ON me.mention_id = m.id " +
+            "WHERE me.managed_entity_id IN (:entityIds) " +
+            "GROUP BY me.managed_entity_id",
+            nativeQuery = true)
+    List<Object[]> findTotalViewsForEntities(@Param("entityIds") List<Long> entityIds);
+
     @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
             "  SELECT x.topic_category FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +

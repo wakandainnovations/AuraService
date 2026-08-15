@@ -2794,6 +2794,215 @@ GET /api/dashboard/21/recommended-actions?allPhases=true
 
 ---
 
+### 18m. Get Movie Health (Command Center "Movie Health" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/movie-health`
+
+**Description:** Backs the "Movie Health" panel — a single percentage distilled from the entity's net sentiment score (the same positive/negative mention-count ratio used by `/stats`, `/sentiment-delta`, `/checkpoint-trend`, etc.: a value of `2.0` means two positive mentions per negative). Health percentage is `min(100, (netSentimentScore / 2.0) * 100)`, so `1.5` (the "good" cutoff) lands at 75% and anything at or above `2.0` (the "excellent" cutoff) saturates at 100%. `healthLabel` is `"Excellent"` above 2.0, `"Good"` above 1.5, otherwise `"Needs Improvement"` — a score of exactly `1.5` or `2.0` does **not** qualify for the higher label, since both cutoffs are exclusive.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/movie-health
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "netSentimentScore": 2.4,
+  "healthPercentage": 100.0,
+  "healthLabel": "Excellent"
+}
+```
+
+**Response fields:**
+- `netSentimentScore` — positive mentions ÷ negative mentions across the entity's whole history; `0.0` when there are no negative mentions yet (same edge case as every other endpoint that reports this ratio).
+- `healthPercentage` — `netSentimentScore` mapped onto a 0–100 scale, floored at 0 and saturating at 100 once the score reaches 2.0.
+- `healthLabel` — `"Excellent"` (`netSentimentScore > 2.0`), `"Good"` (`> 1.5`), or `"Needs Improvement"` (everything else, including a movie with no mentions at all).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18n. Get Buzz (Command Center "Buzz" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/buzz`
+
+**Description:** Backs the "Buzz" panel — the change in mention volume versus the prior day. `mentionsToday` counts mentions with `postDate` between today's UTC midnight and now; `mentionsYesterday` counts the full prior UTC day. `mentionsChangePct` is `100.0` when yesterday had zero mentions but today has some (avoids a divide-by-zero while still signaling "buzz appeared from nothing"), and `0.0` when both days are silent.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/buzz
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "mentionsToday": 150,
+  "mentionsYesterday": 100,
+  "mentionsChange": 50,
+  "mentionsChangePct": 50.0
+}
+```
+
+**Response fields:**
+- `mentionsToday` / `mentionsYesterday` — raw mention counts for the current and prior UTC calendar day.
+- `mentionsChange` — `mentionsToday - mentionsYesterday` (can be negative).
+- `mentionsChangePct` — `mentionsChange` as a percentage of `mentionsYesterday`.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18o. Get Sentiment (Command Center "Sentiment" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/sentiment`
+
+**Description:** Backs the "Sentiment" panel — the entity's overall average sentiment across its whole mention history (not a time-windowed slice, unlike `/sentiment-delta`). Reuses the same `AVG(sentimentScore)` / positive-ratio query as `/stats`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/sentiment
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalMentions": 412,
+  "averageSentimentScore": 1.8,
+  "positiveRatio": 0.65
+}
+```
+
+**Response fields:**
+- `totalMentions` — every mention linked to the entity, regardless of sentiment.
+- `averageSentimentScore` — mean of the per-mention `sentimentScore` field; `0.0` when the entity has no mentions yet.
+- `positiveRatio` — fraction of mentions classified `POSITIVE`; `0.0` when the entity has no mentions yet.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18p. Get Reach (Command Center "Reach" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/reach`
+
+**Description:** Backs the "Reach" panel — the total number of unique users (distinct mention authors) who have ever posted about the entity, across every platform and the entity's entire history. Unlike `/hourly-activity`'s `countDistinctActiveUsers` (which is scoped to a time window and optional language/industry/state filters), this is a single unfiltered lifetime count.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/reach
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "uniqueUsers": 4321
+}
+```
+
+**Response fields:**
+- `uniqueUsers` — count of distinct (non-null) `author` values across all mentions linked to the entity.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
+### 18q. Get Awareness (Command Center "Awareness" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/awareness`
+
+**Description:** Backs the "Awareness" panel — a High/Medium/Low tier based on total view count compared against the caller's other movies. `totalViews` sums `x_posts.views_count` for every X post linked to the entity; X is the only one of the four ingested platforms (`x_posts`, `youtube_comments`, `reddit_posts`, `instagram_posts`) that carries a real view/impression count, the same limitation the mentions list's `impressions` field has.
+
+The comparison set is every other `MOVIE`-type entity owned by the same user (or, for legacy rows with no owner, every `MOVIE` entity system-wide). Movies are ranked by min-max normalized position — the lowest-viewed movie always lands at position `0.0` and the highest at `1.0` regardless of how many movies are being compared — then bucketed: `>= 2/3` is `"High"`, `>= 1/3` is `"Medium"`, otherwise `"Low"`. With fewer than 2 movies to compare against, ranking is meaningless and the level defaults to `"Medium"`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/awareness
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalViews": 900000,
+  "awarenessLevel": "High",
+  "comparedMovieCount": 5
+}
+```
+
+**Response fields:**
+- `totalViews` — sum of X-post view counts for the entity; `0` if it has no X posts (or none with views yet).
+- `awarenessLevel` — `"High"`, `"Medium"`, or `"Low"`, ranked against `comparedMovieCount` other movies.
+- `comparedMovieCount` — size of the comparison set (includes the entity itself).
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
