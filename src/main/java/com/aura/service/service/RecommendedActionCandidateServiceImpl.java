@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
  * candidate here requires a budget on file: {@link #comparableBudgetCandidates} falls back to
  * genre+language comps across every budget tier when the entity has none, and
  * {@link #genreAudienceReachCandidate} (backed by {@link GenreMarketingLookupService}'s AuraMath
- * genre-audience lookup), {@link #brandEvangelistOutreachCandidate}, and {@link #viralSeedCandidate}
+ * genre-audience lookup), {@link #movieBuffOutreachCandidate}, and {@link #viralSeedCandidate}
  * (both backed by further AuraMath keyword-scoped lookups) never needed one in the first place - this
  * platform's actual data skews toward small/independent productions with no budget recorded, and
  * candidate generation should still reach them.
@@ -56,7 +56,7 @@ import java.util.stream.Collectors;
  * Evangelist/ally ranking is keyed on AuraMath's {@code total_views} (a real reach proxy the
  * top-50-spreaders endpoint actually returns), not on {@code influenceTier} - that endpoint never
  * emits it, see {@link TopSpreaderLookupService.SpreaderProfile}. {@link #tierRank} is still used,
- * but only by {@link #brandEvangelistOutreachCandidate}, whose AuraMath endpoint does emit a tier.
+ * but only by {@link #movieBuffOutreachCandidate}, whose AuraMath endpoint does emit a tier.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -166,10 +166,10 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int FACTOR_PA_COMMITMENTS = 88;
     static final int FACTOR_ORGANIC_WORD_OF_MOUTH = 91;
 
-    // ---- Brand-evangelist / viral-seed outreach confidence: fixed, grounded in a live AuraMath
+    // ---- Movie-buff / viral-seed outreach confidence: fixed, grounded in a live AuraMath
     // lookup rather than a larger-sample-means-more-confidence tier - same reasoning as
     // GENRE_REACH_CONFIDENCE. ----
-    static final int BRAND_EVANGELIST_CONFIDENCE = 65;
+    static final int MOVIE_BUFF_CONFIDENCE = 65;
     static final int VIRAL_SEED_CONFIDENCE = 65;
 
     // Cap on how many real account handles ride along in a candidate's exampleHandles - enough for
@@ -263,7 +263,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final DashboardService dashboardService;
     private final MoviesDataCollectionQueryService moviesDataQueryService;
     private final GenreMarketingLookupService genreMarketingLookup;
-    private final BrandEvangelistLookupService brandEvangelistLookup;
+    private final MovieBuffLookupService movieBuffLookup;
     private final ViralSeedLookupService viralSeedLookup;
 
     public RecommendedActionCandidateServiceImpl(
@@ -274,7 +274,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             DashboardService dashboardService,
             MoviesDataCollectionQueryService moviesDataQueryService,
             GenreMarketingLookupService genreMarketingLookup,
-            BrandEvangelistLookupService brandEvangelistLookup,
+            MovieBuffLookupService movieBuffLookup,
             ViralSeedLookupService viralSeedLookup) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
@@ -283,7 +283,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.dashboardService = dashboardService;
         this.moviesDataQueryService = moviesDataQueryService;
         this.genreMarketingLookup = genreMarketingLookup;
-        this.brandEvangelistLookup = brandEvangelistLookup;
+        this.movieBuffLookup = movieBuffLookup;
         this.viralSeedLookup = viralSeedLookup;
     }
 
@@ -312,7 +312,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         List<String> keywords = extractKeywords(entity);
         addIfPresent(candidates, evangelistMobilizationCandidate(entity, keywords));
-        addIfPresent(candidates, brandEvangelistOutreachCandidate(keywords));
+        addIfPresent(candidates, movieBuffOutreachCandidate(keywords));
         addIfPresent(candidates, viralSeedCandidate(keywords));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
@@ -658,7 +658,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         return positive;
     }
 
-    // Used by brandEvangelistOutreachCandidate below - that AuraMath endpoint (unlike
+    // Used by movieBuffOutreachCandidate below - that AuraMath endpoint (unlike
     // top-50-spreaders) does return a real influenceTier value.
     static int tierRank(String tier) {
         if (tier == null) {
@@ -728,23 +728,23 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 avgLift, liftRatios.size());
     }
 
-    // ==================== Factor 53 - brand evangelist outreach (AuraMath) ====================
+    // ==================== Factor 53 - movie-buff outreach (AuraMath) ====================
 
     // Distinct data source from evangelistMobilizationCandidate above: that one measures THIS
     // platform's own mention sentiment for authors AuraMath ranks as general top spreaders (Hawkes
     // influence). This one asks AuraMath directly which of those authors it has already classified
     // as "Brand Evangelist" (positive tone, high branching ratio) independent of any one keyword -
-    // a real, tiered count answering "how many evangelists should this movie approach," grounded in
+    // a real, tiered count answering "how many movie buffs should this movie approach," grounded in
     // AuraMath's own classification rather than a percentage this service would otherwise have to
     // invent.
-    private RecommendedActionCandidate brandEvangelistOutreachCandidate(List<String> keywords) {
+    private RecommendedActionCandidate movieBuffOutreachCandidate(List<String> keywords) {
         if (keywords.isEmpty()) {
             return null;
         }
         Map<String, String> tierByAuthor = new LinkedHashMap<>();
         for (String keyword : keywords) {
-            for (BrandEvangelistLookupService.BrandEvangelist evangelist : brandEvangelistLookup.getBrandEvangelists(keyword)) {
-                tierByAuthor.putIfAbsent(evangelist.author(), evangelist.influenceTier());
+            for (MovieBuffLookupService.MovieBuff buff : movieBuffLookup.getMovieBuffs(keyword)) {
+                tierByAuthor.putIfAbsent(buff.author(), buff.influenceTier());
             }
         }
         if (tierByAuthor.isEmpty()) {
@@ -761,7 +761,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
-                "AuraMath has identified %d brand evangelist(s) (positive-tone, high-branching-ratio accounts) " +
+                "AuraMath has identified %d movie buff(s) (positive-tone, high-branching-ratio accounts) " +
                         "across %d tracked keyword(s) for this movie.",
                 tierByAuthor.size(), keywords.size()));
         if (tier1Or2Count > 0) {
@@ -771,16 +771,16 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                     tier1Or2Count));
         }
         if (!topHandles.isEmpty()) {
-            facts.add("Top brand-evangelist account(s) to approach first: " + String.join(", ", topHandles) + ".");
+            facts.add("Top movie-buff account(s) to approach first: " + String.join(", ", topHandles) + ".");
         }
         return factorCandidateFromWindowTable(
-                FACTOR_INFLUENCER_PROMOTIONS, "brand-evangelist-outreach", BRAND_EVANGELIST_CONFIDENCE, facts,
+                FACTOR_INFLUENCER_PROMOTIONS, "movie-buff-outreach", MOVIE_BUFF_CONFIDENCE, facts,
                 topHandles);
     }
 
     // ==================== Factor 53 - viral seed outreach (AuraMath) ====================
 
-    // Different targeting strategy from brand-evangelist outreach above: viral seeds are the accounts
+    // Different targeting strategy from movie-buff outreach above: viral seeds are the accounts
     // AuraMath's composite infectivity/reach/influence score says are best to strategically seed NEW
     // promotional content with (a trailer drop, a teaser), regardless of whether they've shown any
     // prior sentiment toward this movie - not "who already likes us" but "who can make new content

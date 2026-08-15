@@ -54,10 +54,10 @@ public class MarketingAggregationService {
         return aggregateByKeyword("aspect-drivers", language, industry, state, genre, entityId, groupByKeyword);
     }
 
-    public Object getAggregatedBrandEvangelists(String language, String industry,
-                                                String state, String genre,
-                                                Long entityId, boolean groupByKeyword) {
-        return aggregateByKeyword("brand-evangelists", language, industry, state, genre, entityId, groupByKeyword);
+    public Object getAggregatedMovieBuffs(String language, String industry,
+                                          String state, String genre,
+                                          Long entityId, boolean groupByKeyword) {
+        return aggregateByKeyword("movie-buffs", language, industry, state, genre, entityId, groupByKeyword);
     }
 
     public Object getAggregatedGenreData(String subType, String language, String industry,
@@ -191,7 +191,7 @@ public class MarketingAggregationService {
             case "top-spreaders" -> "/api/marketing/top-50-spreaders/" + encodeSegment(keyword);
             case "viral-seeds" -> "/api/marketing/viral-seeds";
             case "aspect-drivers" -> "/api/marketing/aspect-drivers/" + encodeSegment(keyword);
-            case "brand-evangelists" -> "/api/marketing/brand-evangelists/" + encodeSegment(keyword);
+            case "movie-buffs" -> "/api/marketing/brand-evangelists/" + encodeSegment(keyword);
             default -> throw new IllegalArgumentException("Unknown category: " + category);
         };
 

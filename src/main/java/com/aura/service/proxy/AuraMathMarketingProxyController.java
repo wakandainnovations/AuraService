@@ -207,14 +207,14 @@ public class AuraMathMarketingProxyController {
     }
 
     // ------------------------------------------------------------------
-    // Brand evangelists
+    // Movie buffs
     // ------------------------------------------------------------------
 
-    @Operation(summary = "List brand evangelists who have posted about a keyword (cacheable, 60s)")
-    @GetMapping(value = "/brand-evangelists/{keyword}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> brandEvangelists(@PathVariable("keyword") String keyword) {
+    @Operation(summary = "List movie buffs who have posted about a keyword (cacheable, 60s)")
+    @GetMapping(value = "/movie-buffs/{keyword}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> movieBuffs(@PathVariable("keyword") String keyword) {
         return proxy.forwardMarketingGet(
-                "/v1/marketing/brand-evangelists/{keyword}",
+                "/v1/marketing/movie-buffs/{keyword}",
                 "/api/marketing/brand-evangelists/" + encodeSegment(keyword),
                 defaultTtlSeconds()
         );
@@ -310,7 +310,7 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
         routes.add(route("GET", "/v1/marketing/language/{language}/users", "/api/marketing/language/{language}/users"));
         routes.add(route("GET", "/v1/marketing/language/{language}/movie/{movieName}/users", "/api/marketing/language/{language}/movie/{movieName}/users"));
-        routes.add(route("GET", "/v1/marketing/brand-evangelists/{keyword}", "/api/marketing/brand-evangelists/{keyword}"));
+        routes.add(route("GET", "/v1/marketing/movie-buffs/{keyword}", "/api/marketing/brand-evangelists/{keyword}"));
         routes.add(route("POST", "/v1/marketing/narrative-novelty/score", "/api/marketing/narrative-novelty/score"));
         routes.add(route("GET", "/v1/marketing/narrative-novelty/lookup", "/api/marketing/narrative-novelty/lookup"));
 

@@ -311,7 +311,7 @@ class AuraMathMarketingProxyControllerTest {
                 .andExpect(jsonPath("$.routes[13].wrapperPath").value("/v1/marketing/entity/{entityId}/report"))
                 .andExpect(jsonPath("$.routes[14].wrapperPath").value("/v1/marketing/language/{language}/users"))
                 .andExpect(jsonPath("$.routes[15].wrapperPath").value("/v1/marketing/language/{language}/movie/{movieName}/users"))
-                .andExpect(jsonPath("$.routes[16].wrapperPath").value("/v1/marketing/brand-evangelists/{keyword}"))
+                .andExpect(jsonPath("$.routes[16].wrapperPath").value("/v1/marketing/movie-buffs/{keyword}"))
                 .andExpect(jsonPath("$.routes[17].wrapperPath").value("/v1/marketing/narrative-novelty/score"))
                 .andExpect(jsonPath("$.routes[18].wrapperPath").value("/v1/marketing/narrative-novelty/lookup"));
 
@@ -345,14 +345,14 @@ class AuraMathMarketingProxyControllerTest {
     }
 
     // ==================================================================
-    // Brand evangelists
+    // Movie buffs
     // ==================================================================
 
     @Test
-    void brandEvangelists_happyPath() throws Exception {
+    void movieBuffs_happyPath() throws Exception {
         enqueueJson("{\"keyword\":\"Avengers\",\"totalEvangelists\":0,\"evangelists\":[]}");
 
-        mvc.perform(get("/v1/marketing/brand-evangelists/{k}", "Avengers"))
+        mvc.perform(get("/v1/marketing/movie-buffs/{k}", "Avengers"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalEvangelists").value(0));
 

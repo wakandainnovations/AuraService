@@ -3,7 +3,7 @@ package com.aura.service.service;
 import java.util.List;
 
 /**
- * Keyword-scoped "Brand Evangelist" lookup from AuraMath's {@code /api/marketing/brand-evangelists/*}
+ * Keyword-scoped "movie buff" lookup from AuraMath's {@code /api/marketing/brand-evangelists/*}
  * endpoint — a distinct classification from {@link TopSpreaderLookupService}'s Hawkes-α top-spreader
  * ranking: AuraMath pre-tags authors as {@code audience_classification = 'Brand Evangelist'} (positive
  * tone, high branching ratio) in its own {@code author_categories} table, independent of any one
@@ -14,11 +14,11 @@ import java.util.List;
  * this service directly - this project's Java 25 setup breaks Mockito's inline mocking of concrete
  * classes.
  */
-public interface BrandEvangelistLookupService {
+public interface MovieBuffLookupService {
 
-    record BrandEvangelist(String author, String influenceTier) {
+    record MovieBuff(String author, String influenceTier) {
     }
 
     /** Empty list if AuraMath is unavailable, the response can't be parsed, or there are none. */
-    List<BrandEvangelist> getBrandEvangelists(String keyword);
+    List<MovieBuff> getMovieBuffs(String keyword);
 }

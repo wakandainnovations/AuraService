@@ -17,40 +17,40 @@ import java.util.List;
 
 @Slf4j
 @Service
-public class BrandEvangelistLookupServiceImpl implements BrandEvangelistLookupService {
+public class MovieBuffLookupServiceImpl implements MovieBuffLookupService {
 
     static final Duration CACHE_TTL = Duration.ofMinutes(10);
 
     private final AuraMathProxyService proxy;
     private final ObjectMapper objectMapper;
-    private final TtlCache<List<BrandEvangelist>> cache = new TtlCache<>(1024);
+    private final TtlCache<List<MovieBuff>> cache = new TtlCache<>(1024);
 
-    public BrandEvangelistLookupServiceImpl(AuraMathProxyService proxy, ObjectMapper objectMapper) {
+    public MovieBuffLookupServiceImpl(AuraMathProxyService proxy, ObjectMapper objectMapper) {
         this.proxy = proxy;
         this.objectMapper = objectMapper;
     }
 
     @Override
-    public List<BrandEvangelist> getBrandEvangelists(String keyword) {
+    public List<MovieBuff> getMovieBuffs(String keyword) {
         if (keyword == null || keyword.isBlank()) {
             return Collections.emptyList();
         }
-        List<BrandEvangelist> cached = cache.get(keyword);
+        List<MovieBuff> cached = cache.get(keyword);
         if (cached != null) {
             return cached;
         }
-        List<BrandEvangelist> fresh = fetch(keyword);
+        List<MovieBuff> fresh = fetch(keyword);
         cache.put(keyword, fresh, CACHE_TTL.toNanos());
         return fresh;
     }
 
-    private List<BrandEvangelist> fetch(String keyword) {
+    private List<MovieBuff> fetch(String keyword) {
         ResponseEntity<String> response = proxy.forwardMarketingGet(
-                "/v1/marketing/brand-evangelists/{keyword}",
+                "/v1/marketing/movie-buffs/{keyword}",
                 "/api/marketing/brand-evangelists/" + encodeSegment(keyword),
                 60);
         if (!response.getStatusCode().is2xxSuccessful()) {
-            log.warn("brand-evangelists lookup failed keyword={} status={}", keyword, response.getStatusCode().value());
+            log.warn("movie-buffs lookup failed keyword={} status={}", keyword, response.getStatusCode().value());
             return Collections.emptyList();
         }
         String body = response.getBody();
@@ -63,7 +63,7 @@ public class BrandEvangelistLookupServiceImpl implements BrandEvangelistLookupSe
             if (evangelists == null || !evangelists.isArray()) {
                 return Collections.emptyList();
             }
-            List<BrandEvangelist> result = new ArrayList<>(evangelists.size());
+            List<MovieBuff> result = new ArrayList<>(evangelists.size());
             for (JsonNode element : evangelists) {
                 if (!element.isObject()) {
                     continue;
@@ -72,11 +72,11 @@ public class BrandEvangelistLookupServiceImpl implements BrandEvangelistLookupSe
                 if (author == null || author.isBlank()) {
                     continue;
                 }
-                result.add(new BrandEvangelist(author, textOrNull(element, "influenceTier")));
+                result.add(new MovieBuff(author, textOrNull(element, "influenceTier")));
             }
             return result;
         } catch (Exception e) {
-            log.warn("Failed to parse brand-evangelists payload keyword={}", keyword, e);
+            log.warn("Failed to parse movie-buffs payload keyword={}", keyword, e);
             return Collections.emptyList();
         }
     }

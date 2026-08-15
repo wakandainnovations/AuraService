@@ -233,10 +233,10 @@ class MarketingAggregationControllerTest {
     }
 
     // ------------------------------------------------------------------
-    // Brand Evangelists
+    // Movie Buffs
     // ------------------------------------------------------------------
     @Test
-    void brandEvangelists_flat() throws Exception {
+    void movieBuffs_flat() throws Exception {
         when(entityRepository.findKeywordsByFilters("telugu", null, null, null, null))
                 .thenReturn(List.of(
                         new EntityKeyword("rrr", "media.movie", "Telugu", null, null, null)
@@ -244,7 +244,7 @@ class MarketingAggregationControllerTest {
 
         enqueueJson("[{\"author\":\"evangelist1\"},{\"author\":\"evangelist2\"}]");
 
-        mvc.perform(get("/api/marketing/aggregate/brand-evangelists")
+        mvc.perform(get("/api/marketing/aggregate/movie-buffs")
                         .param("language", "Telugu"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2));

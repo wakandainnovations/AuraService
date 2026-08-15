@@ -80,9 +80,9 @@ public class MarketingAggregationController {
                 language, industry, state, genre, entityId, grouped));
     }
 
-    @Operation(summary = "Get aggregated brand evangelists across matching keywords")
-    @GetMapping("/brand-evangelists")
-    public EntitledResponse<Object> brandEvangelists(
+    @Operation(summary = "Get aggregated movie buffs across matching keywords")
+    @GetMapping("/movie-buffs")
+    public EntitledResponse<Object> movieBuffs(
             @Parameter(description = "Filter by language") @RequestParam(required = false) String language,
             @Parameter(description = "Filter by industry") @RequestParam(required = false) String industry,
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
@@ -92,7 +92,7 @@ public class MarketingAggregationController {
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
-        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedBrandEvangelists(
+        return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedMovieBuffs(
                 language, industry, state, genre, entityId, grouped));
     }
 
