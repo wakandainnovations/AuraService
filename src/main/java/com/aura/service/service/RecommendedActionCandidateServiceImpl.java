@@ -57,6 +57,12 @@ import java.util.stream.Collectors;
  * top-50-spreaders endpoint actually returns), not on {@code influenceTier} - that endpoint never
  * emits it, see {@link TopSpreaderLookupService.SpreaderProfile}. {@link #tierRank} is still used,
  * but only by {@link #movieBuffOutreachCandidate}, whose AuraMath endpoint does emit a tier.
+ *
+ * <p>{@link #peerMarketingTacticCandidates} is the one generator not grounded in
+ * {@link BoxOfficeFactorCatalog} at all: it cites real, verbatim marketing tactics other genre-comparable
+ * movies actually ran, sourced from {@link MovieMarketingTacticsQueryService} (joined to
+ * {@code movies_data_collection} for genre, since {@code movie_marketing_tactics} carries none of its
+ * own) - see that method's own doc for why category/confidence are derived differently there.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -176,6 +182,28 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // marketing to have concrete names to act on without turning the response into a full roster dump.
     static final int TOP_HANDLES_LIMIT = 3;
 
+    // ---- Peer marketing-tactic confidence: tiered by distinct comp-movie count backing a given
+    // (main, sub) classification bucket. Deliberately low-N thresholds compared to compsConfidence's
+    // 5/15/30 - a single real, quoted, verifiable tactic from one comparable movie is still concrete,
+    // actionable evidence (the whole point of this generator), just weaker than a statistical
+    // aggregate over dozens of releases. ----
+    static final long PEER_TACTIC_TIER_MIN = 1;
+    static final long PEER_TACTIC_TIER_MID = 3;
+    static final long PEER_TACTIC_TIER_HIGH = 6;
+    static final int PEER_TACTIC_CONFIDENCE_LOW = 50;
+    static final int PEER_TACTIC_CONFIDENCE_MID = 62;
+    static final int PEER_TACTIC_CONFIDENCE_HIGH = 75;
+
+    // Cap on how many real comp-movie citations ride along in one peer-tactic candidate's
+    // supportingFacts - enough for the LLM (and marketing) to see real precedent without flooding the
+    // candidate with every comp ever recorded for that classification bucket.
+    static final int TACTIC_EXAMPLES_PER_CANDIDATE_LIMIT = 3;
+
+    // movie_marketing_tactics tracks no execution-date column, so no narrower window than a broad
+    // pre-release runway can be honestly claimed - same rationale as LOW_PRESENCE_WINDOW_*.
+    static final int PEER_TACTIC_WINDOW_START_DAYS = -120;
+    static final int PEER_TACTIC_WINDOW_END_DAYS = -1;
+
     private record WindowSpec(int startDays, int endDays) {
     }
 
@@ -265,6 +293,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final GenreMarketingLookupService genreMarketingLookup;
     private final MovieBuffLookupService movieBuffLookup;
     private final ViralSeedLookupService viralSeedLookup;
+    private final MovieMarketingTacticsQueryService tacticsQueryService;
 
     public RecommendedActionCandidateServiceImpl(
             ManagedEntityRepository entityRepository,
@@ -275,7 +304,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             MoviesDataCollectionQueryService moviesDataQueryService,
             GenreMarketingLookupService genreMarketingLookup,
             MovieBuffLookupService movieBuffLookup,
-            ViralSeedLookupService viralSeedLookup) {
+            ViralSeedLookupService viralSeedLookup,
+            MovieMarketingTacticsQueryService tacticsQueryService) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
         this.mobilizeActionRepository = mobilizeActionRepository;
@@ -285,6 +315,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.genreMarketingLookup = genreMarketingLookup;
         this.movieBuffLookup = movieBuffLookup;
         this.viralSeedLookup = viralSeedLookup;
+        this.tacticsQueryService = tacticsQueryService;
     }
 
     @Override
@@ -307,6 +338,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             // tracks, see comparableBudgetCandidates - still gets genre+language comps, just not
             // narrowed to a budget tier.
             candidates.addAll(comparableBudgetCandidates(entity, genre));
+            candidates.addAll(peerMarketingTacticCandidates(entity, genre));
         }
         addIfPresent(candidates, genreAudienceReachCandidate(genre));
 
@@ -524,6 +556,84 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return COMPS_CONFIDENCE_MID;
         }
         return COMPS_CONFIDENCE_LOW;
+    }
+
+    // ==================== Peer marketing-tactic precedent (movie_marketing_tactics) ====================
+
+    // Not grounded in any BoxOfficeFactorCatalog factor, unlike every other generator in this file -
+    // movie_marketing_tactics records real tactics other movies ran, not a calibrated impact range, so
+    // there's no factor number/def to derive factorName/category from here. category is fixed rather
+    // than tiered off a midpoint that doesn't exist for this data source; confidencePct is still
+    // tiered (see PEER_TACTIC_TIER_* above), off the real distinct-comp-movie count instead.
+    private List<RecommendedActionCandidate> peerMarketingTacticCandidates(ManagedEntity entity, String genre) {
+        List<Object[]> rows = tacticsQueryService.findPeerTactics(genre, entity.getLanguage());
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, List<Object[]>> byClassification = new LinkedHashMap<>();
+        for (Object[] row : rows) {
+            String key = row[2] + "|" + row[3];
+            byClassification.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        }
+
+        List<RecommendedActionCandidate> results = new ArrayList<>(byClassification.size());
+        for (Map.Entry<String, List<Object[]>> entry : byClassification.entrySet()) {
+            RecommendedActionCandidate candidate = peerMarketingTacticCandidate(genre, entry.getValue());
+            if (candidate != null) {
+                results.add(candidate);
+            }
+        }
+        return results;
+    }
+
+    private RecommendedActionCandidate peerMarketingTacticCandidate(String genre, List<Object[]> rows) {
+        // Newest comps first - the most recent real precedent is the most relevant one to lead with
+        // and to keep when capping at TACTIC_EXAMPLES_PER_CANDIDATE_LIMIT.
+        List<Object[]> sorted = rows.stream()
+                .sorted(Comparator.comparing((Object[] r) -> (String) r[1]).reversed())
+                .toList();
+
+        Object[] first = sorted.get(0);
+        String mainClassification = (String) first[2];
+        String subClassification = (String) first[3];
+
+        long distinctMovies = sorted.stream().map(r -> (String) r[0]).distinct().count();
+        if (distinctMovies < PEER_TACTIC_TIER_MIN) {
+            return null;
+        }
+
+        List<String> facts = new ArrayList<>();
+        facts.add(String.format(Locale.ROOT,
+                "%d comparable %s movie(s) used a %s tactic in the %s category.",
+                distinctMovies, genre, subClassification, mainClassification));
+        sorted.stream()
+                .limit(TACTIC_EXAMPLES_PER_CANDIDATE_LIMIT)
+                .forEach(r -> facts.add(String.format(Locale.ROOT,
+                        "%s (%s) used a comparable %s tactic: \"%s\"",
+                        r[0], r[1], subClassification, r[4])));
+
+        int confidence = peerTacticConfidence(distinctMovies);
+        return new RecommendedActionCandidate(
+                "peer-tactic-" + slug(mainClassification) + "-" + slug(subClassification),
+                subClassification, RecommendedActionCategory.MEDIUM_IMPACT, confidence,
+                PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
+                buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
+                facts, List.of());
+    }
+
+    static int peerTacticConfidence(long distinctMovieCount) {
+        if (distinctMovieCount >= PEER_TACTIC_TIER_HIGH) {
+            return PEER_TACTIC_CONFIDENCE_HIGH;
+        }
+        if (distinctMovieCount >= PEER_TACTIC_TIER_MID) {
+            return PEER_TACTIC_CONFIDENCE_MID;
+        }
+        return PEER_TACTIC_CONFIDENCE_LOW;
+    }
+
+    private static String slug(String value) {
+        return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
     }
 
     // ==================== Factor 52 - genre audience reach (AuraMath, no budget required) ====================

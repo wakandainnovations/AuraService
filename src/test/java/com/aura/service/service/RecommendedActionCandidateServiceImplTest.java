@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +65,7 @@ class RecommendedActionCandidateServiceImplTest {
     private GenreMarketingLookupService genreMarketingLookup;
     private MovieBuffLookupService movieBuffLookup;
     private ViralSeedLookupService viralSeedLookup;
+    private MovieMarketingTacticsQueryService tacticsQueryService;
     private RecommendedActionCandidateServiceImpl service;
 
     @BeforeEach
@@ -80,15 +82,17 @@ class RecommendedActionCandidateServiceImplTest {
         genreMarketingLookup = mock(GenreMarketingLookupService.class);
         movieBuffLookup = mock(MovieBuffLookupService.class);
         viralSeedLookup = mock(ViralSeedLookupService.class);
+        tacticsQueryService = mock(MovieMarketingTacticsQueryService.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
-                moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup);
+                moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
         stubReleaseDayStats(List.of());
         stubBudgetComps(List.of());
+        stubPeerTactics(List.of());
         stubTotalMentions(1_000L);
         when(genreMarketingLookup.getGenreReach(any())).thenReturn(null);
         when(movieBuffLookup.getMovieBuffs(anyString())).thenReturn(List.of());
@@ -501,6 +505,102 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(releaseDay.supportingFacts().get(0)).contains("Friday").contains("20").contains("500,000,000");
     }
 
+    // ==================== Peer marketing-tactic candidates ====================
+
+    @Test
+    void noPeerTacticsProducesNoPeerTacticCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(List.of());
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("peer-tactic-"));
+    }
+
+    @Test
+    void singlePeerTacticProducesLowTierGroundedCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(List.<Object[]>of(tacticRow(
+                "KD – The Devil", "2026", "Trailer & Video Marketing", "Teaser Trailers",
+                "High-octane teaser focused on atmospheric grit.")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate candidate = findCandidate(candidates, "peer-tactic-trailer-video-marketing-teaser-trailers");
+        assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+        assertThat(candidate.confidencePct()).isEqualTo(50); // 1 comp -> low tier
+        assertThat(candidate.factorName()).isEqualTo("Teaser Trailers");
+        assertThat(candidate.exampleHandles()).isEmpty();
+        assertThat(candidate.supportingFacts()).anyMatch(f ->
+                f.contains("KD – The Devil") && f.contains("2026") && f.contains("High-octane teaser focused on atmospheric grit."));
+        verify(tacticsQueryService).findPeerTactics("Action", "Kannada");
+    }
+
+    @Test
+    void peerTacticConfidenceReachesMidTierAtThreeDistinctMovies() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(List.of(
+                tacticRow("Movie A", "2024", "Trailer & Video Marketing", "Teaser Trailers", "Tactic A"),
+                tacticRow("Movie B", "2025", "Trailer & Video Marketing", "Teaser Trailers", "Tactic B"),
+                tacticRow("Movie C", "2026", "Trailer & Video Marketing", "Teaser Trailers", "Tactic C")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate candidate = findCandidate(candidates, "peer-tactic-trailer-video-marketing-teaser-trailers");
+        assertThat(candidate.confidencePct()).isEqualTo(62); // 3 comps -> mid tier
+    }
+
+    @Test
+    void peerTacticConfidenceReachesHighTierAtSixDistinctMovies() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            rows.add(tacticRow("Movie " + i, "202" + i, "Trailer & Video Marketing", "Teaser Trailers", "Tactic " + i));
+        }
+        stubPeerTactics(rows);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate candidate = findCandidate(candidates, "peer-tactic-trailer-video-marketing-teaser-trailers");
+        assertThat(candidate.confidencePct()).isEqualTo(75); // 6 comps -> high tier
+    }
+
+    @Test
+    void peerTacticCandidateCapsExamplesAtThreeMostRecent() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(List.of(
+                tacticRow("Oldest Movie", "2020", "Trailer & Video Marketing", "Teaser Trailers", "Tactic Old"),
+                tacticRow("Movie B", "2022", "Trailer & Video Marketing", "Teaser Trailers", "Tactic B"),
+                tacticRow("Movie C", "2024", "Trailer & Video Marketing", "Teaser Trailers", "Tactic C"),
+                tacticRow("Newest Movie", "2026", "Trailer & Video Marketing", "Teaser Trailers", "Tactic New")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate candidate = findCandidate(candidates, "peer-tactic-trailer-video-marketing-teaser-trailers");
+        // Summary fact + 3 per-movie facts (capped), newest first, oldest dropped.
+        assertThat(candidate.supportingFacts()).hasSize(4);
+        assertThat(candidate.supportingFacts()).noneMatch(f -> f.contains("Oldest Movie"));
+        assertThat(candidate.supportingFacts()).anyMatch(f -> f.contains("Newest Movie"));
+    }
+
+    @Test
+    void differentClassificationBucketsProduceSeparateCandidates() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(List.of(
+                tacticRow("Movie A", "2026", "Trailer & Video Marketing", "Teaser Trailers", "Tactic A"),
+                tacticRow("Movie B", "2026", "On-Ground Events", "Star Appearances", "Tactic B")));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates.stream().filter(c -> c.candidateId().startsWith("peer-tactic-")).toList()).hasSize(2);
+    }
+
     // ==================== Holiday proximity ====================
 
     @Test
@@ -838,6 +938,15 @@ class RecommendedActionCandidateServiceImplTest {
     private void stubBudgetComps(List<Object[]> rows) {
         when(moviesDataQueryService.findGenreLanguageBudgetComps(any(), any(), anyDouble(), anyDouble()))
                 .thenReturn(rows);
+    }
+
+    private void stubPeerTactics(List<Object[]> rows) {
+        when(tacticsQueryService.findPeerTactics(any(), any())).thenReturn(rows);
+    }
+
+    private static Object[] tacticRow(String movieName, String releaseYear, String mainClassification,
+                                       String subClassification, String tacticText) {
+        return new Object[]{movieName, releaseYear, mainClassification, subClassification, tacticText};
     }
 
     private void stubTotalMentions(long total) {
