@@ -31,8 +31,11 @@ public class TopSpreaderLookupService {
 
     // influenceTier/primaryPlatform are not part of AuraMath's top-50-spreaders response contract and
     // are always null in practice; totalViews (AuraMath's total_views) is the only real reach proxy
-    // that endpoint provides, and is what ranking should key off instead.
-    public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier, long totalViews) {}
+    // that endpoint provides, and is what ranking should key off instead. profileUrl is populated only
+    // when an element carries AuraMath's platform_handles shape (see AuthorProfileLinkResolver) - null
+    // otherwise, never fabricated from globalUserId.
+    public record SpreaderProfile(String globalUserId, String primaryPlatform, String influenceTier, long totalViews,
+                                   String profileUrl) {}
 
     public TopSpreaderLookupService(AuraMathProxyService proxy, ObjectMapper objectMapper) {
         this.proxy = proxy;
@@ -145,7 +148,8 @@ public class TopSpreaderLookupService {
                 String platform = extractField(element, "primaryPlatform", "platform");
                 String tier = extractField(element, "influenceTier", "tier");
                 long totalViews = extractNumericField(element, "total_views", "totalViews");
-                deduped.putIfAbsent(author, new SpreaderProfile(author, platform, tier, totalViews));
+                String profileUrl = AuthorProfileLinkResolver.extractProfileUrl(element);
+                deduped.putIfAbsent(author, new SpreaderProfile(author, platform, tier, totalViews, profileUrl));
             }
             return new ArrayList<>(deduped.values());
         } catch (Exception e) {

@@ -517,6 +517,7 @@ public class RecommendedActionsService {
                 candidate.windowEndDaysFromRelease(),
                 candidate.windowLabel(),
                 candidate.exampleHandles(),
+                candidate.relevantUsers(),
                 RecommendedActionStatus.ACTIVE);
     }
 

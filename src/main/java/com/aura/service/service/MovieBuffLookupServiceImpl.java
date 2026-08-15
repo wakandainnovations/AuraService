@@ -72,7 +72,8 @@ public class MovieBuffLookupServiceImpl implements MovieBuffLookupService {
                 if (author == null || author.isBlank()) {
                     continue;
                 }
-                result.add(new MovieBuff(author, textOrNull(element, "influenceTier")));
+                result.add(new MovieBuff(author, textOrNull(element, "influenceTier"),
+                        AuthorProfileLinkResolver.extractProfileUrl(element)));
             }
             return result;
         } catch (Exception e) {

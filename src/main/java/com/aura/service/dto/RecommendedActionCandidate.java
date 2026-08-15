@@ -24,6 +24,11 @@ import java.util.List;
  *                        viral-seed or positive-sentiment accounts), when the underlying data is
  *                        account-level; empty when it isn't. Never LLM-authored - Phase 2 copies this
  *                        through verbatim.
+ * @param relevantUsers  the fuller, "View Details" roster behind this candidate - up to {@link
+ *                        com.aura.service.service.RecommendedActionCandidateServiceImpl#MAX_RELEVANT_USERS}
+ *                        real accounts (a superset of {@code exampleHandles}), each carrying a platform
+ *                        and profile link when AuraMath's response actually supplied one; empty when the
+ *                        underlying data isn't account-level. Never LLM-authored.
  */
 public record RecommendedActionCandidate(
         String candidateId,
@@ -34,6 +39,7 @@ public record RecommendedActionCandidate(
         int windowEndDaysFromRelease,
         String windowLabel,
         List<String> supportingFacts,
-        List<String> exampleHandles
+        List<String> exampleHandles,
+        List<RecommendedActionUser> relevantUsers
 ) {
 }

@@ -424,12 +424,12 @@ class MentionActionControllerTest {
         when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
 
         spreaderLookup.put("matrix", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L),
-                new TopSpreaderLookupService.SpreaderProfile("bob", "INSTAGRAM", "TIER_2", 0L),
-                new TopSpreaderLookupService.SpreaderProfile("carol", "TIKTOK", "TIER_3", 0L)
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L, null),
+                new TopSpreaderLookupService.SpreaderProfile("bob", "INSTAGRAM", "TIER_2", 0L, null),
+                new TopSpreaderLookupService.SpreaderProfile("carol", "TIKTOK", "TIER_3", 0L, null)
         ));
         spreaderLookup.put("sequel", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("dave", "REDDIT", "TIER_2", 0L)
+                new TopSpreaderLookupService.SpreaderProfile("dave", "REDDIT", "TIER_2", 0L, null)
         ));
 
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
@@ -469,7 +469,7 @@ class MentionActionControllerTest {
         Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
         when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
         spreaderLookup.put("matrix", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L)
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L, null)
         ));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
                 .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
@@ -501,7 +501,7 @@ class MentionActionControllerTest {
         Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
         when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
         spreaderLookup.put("matrix", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L)
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L, null)
         ));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
                 .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
@@ -525,7 +525,7 @@ class MentionActionControllerTest {
         Mention mention = buildMention(Sentiment.POSITIVE, Arrays.asList("matrix"));
         when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
         spreaderLookup.put("matrix", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L)
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L, null)
         ));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
                 .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
@@ -664,7 +664,7 @@ class MentionActionControllerTest {
         when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
         when(userRepository.findAllById(any())).thenReturn(List.of());
         spreaderLookup.put("matrix", List.of(
-                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L)));
+                new TopSpreaderLookupService.SpreaderProfile("alice", "TWITTER", "TIER_1", 0L, null)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any()))
                 .thenReturn(Arrays.<Object[]>asList(new Object[]{"alice", Sentiment.POSITIVE, 5L}));
         when(llmService.generateReply(any())).thenReturn("hi alice");

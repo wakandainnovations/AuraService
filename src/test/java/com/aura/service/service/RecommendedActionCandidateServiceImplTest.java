@@ -356,9 +356,9 @@ class RecommendedActionCandidateServiceImplTest {
         seedSpreaders("lordgaaga", List.of());
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         when(movieBuffLookup.getMovieBuffs("lordgaaga")).thenReturn(List.of(
-                new MovieBuffLookupService.MovieBuff("u1", "TIER_1"),
-                new MovieBuffLookupService.MovieBuff("u2", "TIER_3"),
-                new MovieBuffLookupService.MovieBuff("u3", "TIER_2")));
+                new MovieBuffLookupService.MovieBuff("u1", "TIER_1", "https://twitter.com/u1"),
+                new MovieBuffLookupService.MovieBuff("u2", "TIER_3", null),
+                new MovieBuffLookupService.MovieBuff("u3", "TIER_2", null)));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
@@ -370,6 +370,12 @@ class RecommendedActionCandidateServiceImplTest {
         // marketing team can actually reach out to, not just a count.
         assertThat(outreach.exampleHandles()).containsExactly("u1", "u3", "u2");
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("u1") && f.contains("u3") && f.contains("u2"));
+        // relevantUsers is the fuller "View Details" roster (same tier ranking as exampleHandles),
+        // carrying a profile link only for the account AuraMath actually supplied one for.
+        assertThat(outreach.relevantUsers()).containsExactly(
+                new com.aura.service.dto.RecommendedActionUser("u1", null, "https://twitter.com/u1"),
+                new com.aura.service.dto.RecommendedActionUser("u3", null, null),
+                new com.aura.service.dto.RecommendedActionUser("u2", null, null));
     }
 
     @Test
@@ -404,8 +410,8 @@ class RecommendedActionCandidateServiceImplTest {
         seedSpreaders("lordgaaga", List.of());
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         when(viralSeedLookup.getViralSeeds("lordgaaga")).thenReturn(List.of(
-                new ViralSeedLookupService.ViralSeed("u1", "instagram"),
-                new ViralSeedLookupService.ViralSeed("u2", "x")));
+                new ViralSeedLookupService.ViralSeed("u1", "instagram", "https://instagram.com/u1"),
+                new ViralSeedLookupService.ViralSeed("u2", "x", null)));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
@@ -417,6 +423,11 @@ class RecommendedActionCandidateServiceImplTest {
         // not just a count.
         assertThat(outreach.exampleHandles()).containsExactly("u1", "u2");
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("u1") && f.contains("u2"));
+        // relevantUsers is the fuller "View Details" roster (same AuraMath ranking), carrying platform
+        // and a profile link only for the account AuraMath actually supplied one for.
+        assertThat(outreach.relevantUsers()).containsExactly(
+                new com.aura.service.dto.RecommendedActionUser("u1", "instagram", "https://instagram.com/u1"),
+                new com.aura.service.dto.RecommendedActionUser("u2", "x", null));
     }
 
     @Test
@@ -636,10 +647,10 @@ class RecommendedActionCandidateServiceImplTest {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
         seedSpreaders("MovieKeyword", List.of(
-                new SpreaderProfile("posUser", "X", "TIER_1", 500L),      // pos>neg && pos>=neu -> qualifies
-                new SpreaderProfile("tiedUser", "X", "TIER_2", 500L),     // pos==neu, pos>neg -> qualifies (>=)
-                new SpreaderProfile("negUser", "X", "TIER_3", 500L),      // pos<neg -> excluded
-                new SpreaderProfile("neuHeavyUser", "X", "TIER_1", 500L))); // pos<neu -> excluded
+                new SpreaderProfile("posUser", "X", "TIER_1", 500L, "https://x.com/posUser"), // pos>neg && pos>=neu -> qualifies
+                new SpreaderProfile("tiedUser", "X", "TIER_2", 500L, null),     // pos==neu, pos>neg -> qualifies (>=)
+                new SpreaderProfile("negUser", "X", "TIER_3", 500L, null),      // pos<neg -> excluded
+                new SpreaderProfile("neuHeavyUser", "X", "TIER_1", 500L, null))); // pos<neu -> excluded
 
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L},
@@ -660,6 +671,11 @@ class RecommendedActionCandidateServiceImplTest {
         // the qualifying ones by total_views (tied at 500 here), tiebroken by positive-mention count
         // (posUser has 5, tiedUser has 2) - real handles to mobilize, not just a count.
         assertThat(evangelist.exampleHandles()).containsExactly("posUser", "tiedUser");
+        // relevantUsers is the fuller "View Details" roster (same ranking/exclusions), carrying a
+        // profile link only for the account AuraMath actually supplied one for.
+        assertThat(evangelist.relevantUsers()).containsExactly(
+                new com.aura.service.dto.RecommendedActionUser("posUser", "X", "https://x.com/posUser"),
+                new com.aura.service.dto.RecommendedActionUser("tiedUser", "X", null));
     }
 
     @Test
@@ -668,7 +684,7 @@ class RecommendedActionCandidateServiceImplTest {
         entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("negUser", "X", "TIER_1", 0L)));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("negUser", "X", "TIER_1", 0L, null)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"negUser", Sentiment.NEGATIVE, 5L}));
 
@@ -693,7 +709,7 @@ class RecommendedActionCandidateServiceImplTest {
         entity.setKeywords(List.of(new EntityKeyword("MovieKeyword", null, null, null, null, null)));
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L)));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L, null)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
 
@@ -846,7 +862,7 @@ class RecommendedActionCandidateServiceImplTest {
                 new Object[]{postgresDow(entity.getReleaseDate()), 40L, 300_000_000.0}));
         stubHourlyActivity(600, List.<Object[]>of(new Object[]{10, 600L}));
 
-        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L)));
+        seedSpreaders("MovieKeyword", List.of(new SpreaderProfile("posUser", "X", "TIER_1", 0L, null)));
         when(mentionRepository.countSentimentByAuthorsForEntity(eq(ENTITY_ID), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"posUser", Sentiment.POSITIVE, 5L}));
 

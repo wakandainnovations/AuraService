@@ -19,6 +19,12 @@ import java.util.List;
  * {@link com.aura.service.service.RecommendedActionsService}). Items deserialized from a cache row
  * written before this field existed have a {@code null} candidateId and default to {@link
  * RecommendedActionStatus#ACTIVE}.
+ *
+ * <p>{@code relevantUsers} is the "View Details" expansion of {@code exampleHandles} - up to {@link
+ * com.aura.service.service.RecommendedActionCandidateServiceImpl#MAX_RELEVANT_USERS} real accounts
+ * (rather than {@code exampleHandles}' short inline-text sample), each with a profile link when
+ * AuraMath supplied one. Items deserialized from a cache row written before this field existed have
+ * a {@code null}/empty list, same fallback as an unset {@code exampleHandles}.
  */
 @Data
 @NoArgsConstructor
@@ -34,5 +40,6 @@ public class RecommendedActionItem {
     private int windowEndDaysFromRelease;
     private String windowLabel;
     private List<String> exampleHandles;
+    private List<RecommendedActionUser> relevantUsers;
     private RecommendedActionStatus status = RecommendedActionStatus.ACTIVE;
 }

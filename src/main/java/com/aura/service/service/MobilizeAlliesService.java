@@ -167,7 +167,8 @@ public class MobilizeAlliesService {
                         existing.globalUserId(),
                         existing.primaryPlatform() != null ? existing.primaryPlatform() : incoming.primaryPlatform(),
                         existing.influenceTier() != null ? existing.influenceTier() : incoming.influenceTier(),
-                        Math.max(existing.totalViews(), incoming.totalViews())
+                        Math.max(existing.totalViews(), incoming.totalViews()),
+                        existing.profileUrl() != null ? existing.profileUrl() : incoming.profileUrl()
                 ));
             }
         }

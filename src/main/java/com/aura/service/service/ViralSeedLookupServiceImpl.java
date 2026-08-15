@@ -72,7 +72,8 @@ public class ViralSeedLookupServiceImpl implements ViralSeedLookupService {
                 if (author == null || author.isBlank()) {
                     continue;
                 }
-                result.add(new ViralSeed(author, textOrNull(element, "primaryPlatform")));
+                result.add(new ViralSeed(author, textOrNull(element, "primaryPlatform"),
+                        AuthorProfileLinkResolver.extractProfileUrl(element)));
             }
             return result;
         } catch (Exception e) {

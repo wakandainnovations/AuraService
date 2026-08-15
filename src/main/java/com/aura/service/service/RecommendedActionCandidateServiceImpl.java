@@ -2,6 +2,7 @@ package com.aura.service.service;
 
 import com.aura.service.dto.HourlyActivityResponse;
 import com.aura.service.dto.RecommendedActionCandidate;
+import com.aura.service.dto.RecommendedActionUser;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.MobilizeAction;
@@ -181,6 +182,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // Cap on how many real account handles ride along in a candidate's exampleHandles - enough for
     // marketing to have concrete names to act on without turning the response into a full roster dump.
     static final int TOP_HANDLES_LIMIT = 3;
+
+    // Cap on how many real accounts ride along in a candidate's relevantUsers - the fuller "View
+    // Details" roster a marketing team can page through, one tier up from exampleHandles' short
+    // inline-text sample without turning the response into an unbounded full roster dump.
+    static final int MAX_RELEVANT_USERS = 20;
 
     // ---- Peer marketing-tactic confidence: tiered by distinct comp-movie count backing a given
     // (main, sub) classification bucket. Deliberately low-N thresholds compared to compsConfidence's
@@ -438,7 +444,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         return new RecommendedActionCandidate(
                 "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-holiday-proximity",
                 def.name(), categorize(def), SERVER_COMPUTED_CONFIDENCE, 0, 0,
-                buildWindowLabel(0, 0), List.of(fact), List.of());
+                buildWindowLabel(0, 0), List.of(fact), List.of(), List.of());
     }
 
     // ==================== Factor 61 - best release day-of-week (movies_data_collection) ====================
@@ -469,7 +475,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return new RecommendedActionCandidate(
                     "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-release-day",
                     def.name(), categorize(def), confidence, 0, 0,
-                    buildWindowLabel(0, 0), List.of(fact), List.of());
+                    buildWindowLabel(0, 0), List.of(fact), List.of(), List.of());
         }
         return null;
     }
@@ -619,7 +625,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 subClassification, RecommendedActionCategory.MEDIUM_IMPACT, confidence,
                 PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
                 buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
-                facts, List.of());
+                facts, List.of(), List.of());
     }
 
     static int peerTacticConfidence(long distinctMovieCount) {
@@ -702,11 +708,20 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         Comparator<SpreaderProfile> byViewsThenPositiveCount = Comparator
                 .comparingLong(SpreaderProfile::totalViews).reversed()
                 .thenComparing(p -> positiveCounts.getOrDefault(p.globalUserId(), 0L), Comparator.reverseOrder());
-        List<String> topHandles = spreaders.values().stream()
+        List<SpreaderProfile> rankedQualifying = spreaders.values().stream()
                 .filter(p -> positiveCounts.containsKey(p.globalUserId()))
                 .sorted(byViewsThenPositiveCount)
+                .toList();
+        List<String> topHandles = rankedQualifying.stream()
                 .map(SpreaderProfile::globalUserId)
                 .limit(TOP_HANDLES_LIMIT)
+                .toList();
+        // relevantUsers is the fuller "View Details" roster (up to MAX_RELEVANT_USERS) behind
+        // topHandles' short inline-text sample - same ranking, richer per-account data (platform,
+        // profile link) for the marketing team to page through and act on directly.
+        List<RecommendedActionUser> relevantUsers = rankedQualifying.stream()
+                .limit(MAX_RELEVANT_USERS)
+                .map(p -> new RecommendedActionUser(p.globalUserId(), p.primaryPlatform(), p.profileUrl()))
                 .toList();
 
         List<String> facts = new ArrayList<>();
@@ -725,7 +740,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         int confidence = evangelistConfidence(positiveCounts.size());
         return factorCandidateFromWindowTable(
-                FACTOR_FANBASE_MOBILIZATION, "evangelist-mobilization", confidence, facts, topHandles);
+                FACTOR_FANBASE_MOBILIZATION, "evangelist-mobilization", confidence, facts, topHandles,
+                relevantUsers);
     }
 
     private Map<String, SpreaderProfile> fetchSpreaderProfiles(List<String> keywords) {
@@ -851,29 +867,39 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         if (keywords.isEmpty()) {
             return null;
         }
-        Map<String, String> tierByAuthor = new LinkedHashMap<>();
+        Map<String, MovieBuffLookupService.MovieBuff> buffByAuthor = new LinkedHashMap<>();
         for (String keyword : keywords) {
             for (MovieBuffLookupService.MovieBuff buff : movieBuffLookup.getMovieBuffs(keyword)) {
-                tierByAuthor.putIfAbsent(buff.author(), buff.influenceTier());
+                buffByAuthor.putIfAbsent(buff.author(), buff);
             }
         }
-        if (tierByAuthor.isEmpty()) {
+        if (buffByAuthor.isEmpty()) {
             return null;
         }
 
-        long tier1Or2Count = tierByAuthor.values().stream().filter(t -> tierRank(t) <= 2).count();
+        long tier1Or2Count = buffByAuthor.values().stream()
+                .filter(b -> tierRank(b.influenceTier()) <= 2).count();
 
-        List<String> topHandles = tierByAuthor.entrySet().stream()
-                .sorted(Comparator.comparingInt(e -> tierRank(e.getValue())))
-                .map(Map.Entry::getKey)
+        List<MovieBuffLookupService.MovieBuff> ranked = buffByAuthor.values().stream()
+                .sorted(Comparator.comparingInt(b -> tierRank(b.influenceTier())))
+                .toList();
+        List<String> topHandles = ranked.stream()
+                .map(MovieBuffLookupService.MovieBuff::author)
                 .limit(TOP_HANDLES_LIMIT)
+                .toList();
+        // relevantUsers is the fuller "View Details" roster (up to MAX_RELEVANT_USERS) behind
+        // topHandles' short inline-text sample - same tier ranking, richer per-account data (profile
+        // link) for the marketing team to page through and act on directly.
+        List<RecommendedActionUser> relevantUsers = ranked.stream()
+                .limit(MAX_RELEVANT_USERS)
+                .map(b -> new RecommendedActionUser(b.author(), null, b.profileUrl()))
                 .toList();
 
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
                 "AuraMath has identified %d movie buff(s) (positive-tone, high-branching-ratio accounts) " +
                         "across %d tracked keyword(s) for this movie.",
-                tierByAuthor.size(), keywords.size()));
+                buffByAuthor.size(), keywords.size()));
         if (tier1Or2Count > 0) {
             facts.add(String.format(Locale.ROOT,
                     "%d of these are Tier-1/2 influence accounts - approach these first for the highest expected " +
@@ -885,7 +911,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         }
         return factorCandidateFromWindowTable(
                 FACTOR_INFLUENCER_PROMOTIONS, "movie-buff-outreach", MOVIE_BUFF_CONFIDENCE, facts,
-                topHandles);
+                topHandles, relevantUsers);
     }
 
     // ==================== Factor 53 - viral seed outreach (AuraMath) ====================
@@ -899,24 +925,39 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         if (keywords.isEmpty()) {
             return null;
         }
-        Map<String, String> platformByAuthor = new LinkedHashMap<>();
+        Map<String, ViralSeedLookupService.ViralSeed> seedByAuthor = new LinkedHashMap<>();
         for (String keyword : keywords) {
             for (ViralSeedLookupService.ViralSeed seed : viralSeedLookup.getViralSeeds(keyword)) {
-                platformByAuthor.putIfAbsent(seed.author(), seed.primaryPlatform());
+                seedByAuthor.putIfAbsent(seed.author(), seed);
             }
         }
-        if (platformByAuthor.isEmpty()) {
+        if (seedByAuthor.isEmpty()) {
             return null;
         }
 
-        List<String> topHandles = platformByAuthor.keySet().stream().limit(TOP_HANDLES_LIMIT).toList();
+        // AuraMath's own top-ranked ordering (LinkedHashMap preserves first-seen/insertion order).
+        List<ViralSeedLookupService.ViralSeed> ranked = new ArrayList<>(seedByAuthor.values());
+        List<String> topHandles = ranked.stream()
+                .map(ViralSeedLookupService.ViralSeed::author)
+                .limit(TOP_HANDLES_LIMIT)
+                .toList();
+        // relevantUsers is the fuller "View Details" roster (up to MAX_RELEVANT_USERS) behind
+        // topHandles' short inline-text sample - same AuraMath ranking, richer per-account data
+        // (platform, profile link) for the marketing team to page through and act on directly.
+        List<RecommendedActionUser> relevantUsers = ranked.stream()
+                .limit(MAX_RELEVANT_USERS)
+                .map(s -> new RecommendedActionUser(s.author(), s.primaryPlatform(), s.profileUrl()))
+                .toList();
 
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
                 "AuraMath has identified %d viral-seed account(s) across %d tracked keyword(s) for this movie, " +
                         "ranked by a composite of infectivity, engagement, and reach.",
-                platformByAuthor.size(), keywords.size()));
-        String topPlatform = platformByAuthor.values().stream().filter(p -> p != null && !p.isBlank()).findFirst().orElse(null);
+                seedByAuthor.size(), keywords.size()));
+        String topPlatform = ranked.stream()
+                .map(ViralSeedLookupService.ViralSeed::primaryPlatform)
+                .filter(p -> p != null && !p.isBlank())
+                .findFirst().orElse(null);
         if (topPlatform != null) {
             facts.add(String.format(Locale.ROOT,
                     "The top-ranked seed account's primary platform is %s - consider giving it early or exclusive " +
@@ -927,7 +968,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             facts.add("Top-ranked viral-seed account(s) to approach: " + String.join(", ", topHandles) + ".");
         }
         return factorCandidateFromWindowTable(
-                FACTOR_INFLUENCER_PROMOTIONS, "viral-seed-outreach", VIRAL_SEED_CONFIDENCE, facts, topHandles);
+                FACTOR_INFLUENCER_PROMOTIONS, "viral-seed-outreach", VIRAL_SEED_CONFIDENCE, facts, topHandles,
+                relevantUsers);
     }
 
     // ==================== Factor 52 - peak audience engagement hours ====================
@@ -1036,17 +1078,26 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     private RecommendedActionCandidate factorCandidate(int factorNumber, String slug, int confidencePct,
                                                          int windowStartDays, int windowEndDays, List<String> facts) {
-        return factorCandidate(factorNumber, slug, confidencePct, windowStartDays, windowEndDays, facts, List.of());
+        return factorCandidate(factorNumber, slug, confidencePct, windowStartDays, windowEndDays, facts, List.of(),
+                List.of());
     }
 
     private RecommendedActionCandidate factorCandidate(int factorNumber, String slug, int confidencePct,
                                                          int windowStartDays, int windowEndDays, List<String> facts,
                                                          List<String> exampleHandles) {
+        return factorCandidate(factorNumber, slug, confidencePct, windowStartDays, windowEndDays, facts,
+                exampleHandles, List.of());
+    }
+
+    private RecommendedActionCandidate factorCandidate(int factorNumber, String slug, int confidencePct,
+                                                         int windowStartDays, int windowEndDays, List<String> facts,
+                                                         List<String> exampleHandles,
+                                                         List<RecommendedActionUser> relevantUsers) {
         BoxOfficeFactorCatalog.FactorDefinition def = BoxOfficeFactorCatalog.byNumber(factorNumber);
         return new RecommendedActionCandidate(
                 "factor-" + factorNumber + "-" + slug,
                 def.name(), categorize(def), confidencePct, windowStartDays, windowEndDays,
-                buildWindowLabel(windowStartDays, windowEndDays), facts, exampleHandles);
+                buildWindowLabel(windowStartDays, windowEndDays), facts, exampleHandles, relevantUsers);
     }
 
     private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
@@ -1062,9 +1113,16 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
                                                                         int confidencePct, List<String> facts,
                                                                         List<String> exampleHandles) {
+        return factorCandidateFromWindowTable(factorNumber, slug, confidencePct, facts, exampleHandles, List.of());
+    }
+
+    private RecommendedActionCandidate factorCandidateFromWindowTable(int factorNumber, String slug,
+                                                                        int confidencePct, List<String> facts,
+                                                                        List<String> exampleHandles,
+                                                                        List<RecommendedActionUser> relevantUsers) {
         WindowSpec window = WINDOW_BY_FACTOR.get(factorNumber);
         return factorCandidate(factorNumber, slug, confidencePct, window.startDays(), window.endDays(), facts,
-                exampleHandles);
+                exampleHandles, relevantUsers);
     }
 
     static RecommendedActionCategory categorize(BoxOfficeFactorCatalog.FactorDefinition def) {
