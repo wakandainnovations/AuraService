@@ -93,15 +93,37 @@ class AuthorProfileLinkResolverTest {
         assertThat(AuthorProfileLinkResolver.extractOutreachProfileUrl(element)).isNull();
     }
 
-    // ==================== movie-buffs: genuinely no link data at all ====================
+    // ==================== extractMovieBuffProfileUrl: movie-buffs' flat camelCase profileUrl ====================
 
     @Test
-    void extractProfileUrl_movieBuffShapeHasNoLinkData() throws Exception {
+    void extractMovieBuffProfileUrl_readsFlatCamelCaseProfileUrlField() throws Exception {
+        JsonNode element = json("""
+                {"author": "u3", "influenceTier": "TIER_1", "profileUrl": "https://twitter.com/u3"}
+                """);
+        assertThat(AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element))
+                .isEqualTo("https://twitter.com/u3");
+    }
+
+    @Test
+    void extractMovieBuffProfileUrl_notYetEnrichedAuthorReturnsNull() throws Exception {
         JsonNode element = json("""
                 {"author": "u3", "influenceTier": "TIER_1"}
                 """);
-        assertThat(AuthorProfileLinkResolver.extractProfileUrl(element)).isNull();
-        assertThat(AuthorProfileLinkResolver.extractOutreachProfileUrl(element)).isNull();
+        assertThat(AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element)).isNull();
+    }
+
+    @Test
+    void extractMovieBuffProfileUrl_doesNotFallBackToSnakeCaseOrPlatformHandles() throws Exception {
+        // movie-buffs' shape is flat camelCase profileUrl only - snake_case profile_url and
+        // platform_handles belong to other endpoints (extractProfileUrl) and must not leak in here.
+        JsonNode element = json("""
+                {
+                  "author": "u3",
+                  "profile_url": "https://twitter.com/wrong-shape",
+                  "platform_handles": {"primary_platform": "x", "by_platform": {"x": {"profile_url": "https://twitter.com/also-wrong"}}}
+                }
+                """);
+        assertThat(AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element)).isNull();
     }
 
     // ==================== Never fabricate ====================
@@ -158,7 +180,10 @@ class AuthorProfileLinkResolverTest {
     }
 
     @Test
-    void extractProfileUrl_realMovieBuffsElementHasNoLinkData() throws Exception {
+    void extractMovieBuffProfileUrl_realMovieBuffsElementNotYetEnriched() throws Exception {
+        // Captured against a running AuraMath instance for an author with no marketing_target_profiles
+        // row yet - AuraMath serializes profileUrl/platformHandles as JSON null rather than omitting
+        // them (Jackson's default include-nulls behavior), so both keys are present but null.
         JsonNode element = json("""
                 {
                   "author": "𝗥𝗞 2.0 ᴿᵃʸᵃ",
@@ -170,10 +195,33 @@ class AuthorProfileLinkResolverTest {
                   "branchingRatio": 1.0,
                   "totalPosts": 11,
                   "keywordPostCount": 8,
-                  "keywordEngagement": 2
+                  "keywordEngagement": 2,
+                  "platformHandles": null,
+                  "profileUrl": null
                 }
                 """);
-        assertThat(AuthorProfileLinkResolver.extractProfileUrl(element)).isNull();
+        assertThat(AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element)).isNull();
+    }
+
+    @Test
+    void extractMovieBuffProfileUrl_realMovieBuffsElementEnriched() throws Exception {
+        // Same shape, for an author AuraMath has run through its enrichment pipeline - platformHandles
+        // carries the full tree, profileUrl is that tree's already-resolved primary-platform link.
+        JsonNode element = json("""
+                {
+                  "author": "Honest Review",
+                  "audienceClassification": "Movie Buff",
+                  "influenceTier": "Viral Node",
+                  "primaryPlatform": "x",
+                  "platformHandles": {
+                    "primary_platform": "x",
+                    "by_platform": {"x": {"profile_url": "https://twitter.com/honestreview01"}}
+                  },
+                  "profileUrl": "https://twitter.com/honestreview01"
+                }
+                """);
+        assertThat(AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element))
+                .isEqualTo("https://twitter.com/honestreview01");
     }
 
     @Test

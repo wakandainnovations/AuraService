@@ -356,9 +356,9 @@ class RecommendedActionCandidateServiceImplTest {
         seedSpreaders("lordgaaga", List.of());
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         when(movieBuffLookup.getMovieBuffs("lordgaaga")).thenReturn(List.of(
-                new MovieBuffLookupService.MovieBuff("u1", "TIER_1", "https://twitter.com/u1"),
-                new MovieBuffLookupService.MovieBuff("u2", "TIER_3", null),
-                new MovieBuffLookupService.MovieBuff("u3", "TIER_2", null)));
+                new MovieBuffLookupService.MovieBuff("u1", "TIER_1", "x", "https://twitter.com/u1"),
+                new MovieBuffLookupService.MovieBuff("u2", "TIER_3", null, null),
+                new MovieBuffLookupService.MovieBuff("u3", "TIER_2", "instagram", null)));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
@@ -371,10 +371,10 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(outreach.exampleHandles()).containsExactly("u1", "u3", "u2");
         assertThat(outreach.supportingFacts()).anyMatch(f -> f.contains("u1") && f.contains("u3") && f.contains("u2"));
         // relevantUsers is the fuller "View Details" roster (same tier ranking as exampleHandles),
-        // carrying a profile link only for the account AuraMath actually supplied one for.
+        // carrying platform/profile link only for the accounts AuraMath actually supplied them for.
         assertThat(outreach.relevantUsers()).containsExactly(
-                new com.aura.service.dto.RecommendedActionUser("u1", null, "https://twitter.com/u1"),
-                new com.aura.service.dto.RecommendedActionUser("u3", null, null),
+                new com.aura.service.dto.RecommendedActionUser("u1", "x", "https://twitter.com/u1"),
+                new com.aura.service.dto.RecommendedActionUser("u3", "instagram", null),
                 new com.aura.service.dto.RecommendedActionUser("u2", null, null));
     }
 

@@ -888,11 +888,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 .limit(TOP_HANDLES_LIMIT)
                 .toList();
         // relevantUsers is the fuller "View Details" roster (up to MAX_RELEVANT_USERS) behind
-        // topHandles' short inline-text sample - same tier ranking, richer per-account data (profile
-        // link) for the marketing team to page through and act on directly.
+        // topHandles' short inline-text sample - same tier ranking, richer per-account data (platform,
+        // profile link) for the marketing team to page through and act on directly.
         List<RecommendedActionUser> relevantUsers = ranked.stream()
                 .limit(MAX_RELEVANT_USERS)
-                .map(b -> new RecommendedActionUser(b.author(), null, b.profileUrl()))
+                .map(b -> new RecommendedActionUser(b.author(), b.platform(), b.profileUrl()))
                 .toList();
 
         List<String> facts = new ArrayList<>();

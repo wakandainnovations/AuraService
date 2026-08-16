@@ -16,12 +16,14 @@ import java.util.List;
  */
 public interface MovieBuffLookupService {
 
-    /** {@code profileUrl} is always null today - AuraMath's movie-buffs query never joins its
-     *  profile-handles table (confirmed against AuraMath's own source), so this endpoint carries no
-     *  profile-link data to extract, unlike {@link TopSpreaderLookupService.SpreaderProfile} or
-     *  {@link ViralSeedLookupService.ViralSeed}. Kept as a field (rather than dropped) so a future
-     *  AuraMath change that adds it doesn't require another API shape change here. */
-    record MovieBuff(String author, String influenceTier, String profileUrl) {
+    /** {@code platform} is read from AuraMath's flat {@code primaryPlatform} field - null for
+     *  "bypass" admissions (authors with too few total posts to have an {@code author_categories}
+     *  row) since that field comes from that same table. {@code profileUrl} is read from the flat,
+     *  already-resolved {@code profileUrl} field (see
+     *  {@link AuthorProfileLinkResolver#extractMovieBuffProfileUrl}) - null when AuraMath has no
+     *  {@code marketing_target_profiles} row for that author yet, never fabricated from
+     *  {@code author}. */
+    record MovieBuff(String author, String influenceTier, String platform, String profileUrl) {
     }
 
     /** Empty list if AuraMath is unavailable, the response can't be parsed, or there are none. */

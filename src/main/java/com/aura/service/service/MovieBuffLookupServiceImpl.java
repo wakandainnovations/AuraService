@@ -73,7 +73,8 @@ public class MovieBuffLookupServiceImpl implements MovieBuffLookupService {
                     continue;
                 }
                 result.add(new MovieBuff(author, textOrNull(element, "influenceTier"),
-                        AuthorProfileLinkResolver.extractProfileUrl(element)));
+                        textOrNull(element, "primaryPlatform"),
+                        AuthorProfileLinkResolver.extractMovieBuffProfileUrl(element)));
             }
             return result;
         } catch (Exception e) {

@@ -15,8 +15,10 @@ import com.fasterxml.jackson.databind.JsonNode;
  *         flat field.</li>
  *     <li>{@code viral-seeds} elements carry neither of the above - the link lives one level down at
  *         {@code outreachHandle.profile_url} - see {@link #extractOutreachProfileUrl}.</li>
- *     <li>{@code movie-buffs} elements carry no profile-link data at all (that endpoint's query never
- *         joins AuraMath's profile-handles table) - every extractor here correctly returns null for it.</li>
+ *     <li>{@code movie-buffs} elements carry a flat, already-resolved {@code profileUrl} (camelCase,
+ *         distinct from top-50-spreaders' snake_case {@code profile_url}) - null when AuraMath has no
+ *         {@code marketing_target_profiles} row for that author yet - see
+ *         {@link #extractMovieBuffProfileUrl}.</li>
  * </ul>
  * Shared so {@link TopSpreaderLookupService}, {@link MovieBuffLookupServiceImpl}, and
  * {@link ViralSeedLookupServiceImpl} don't each re-derive this. Never fabricates a URL from a bare
@@ -51,6 +53,17 @@ final class AuthorProfileLinkResolver {
             return null;
         }
         String url = textField(outreachHandle, "profile_url");
+        return (url != null && !url.isBlank()) ? url : null;
+    }
+
+    /** For movie-buffs, whose profile link is a flat, camelCase {@code profileUrl} field - already
+     *  resolved server-side by AuraMath from its own {@code platform_handles} join, unlike
+     *  top-50-spreaders' snake_case {@code profile_url} handled by {@link #extractProfileUrl}. */
+    static String extractMovieBuffProfileUrl(JsonNode element) {
+        if (element == null || !element.isObject()) {
+            return null;
+        }
+        String url = textField(element, "profileUrl");
         return (url != null && !url.isBlank()) ? url : null;
     }
 
