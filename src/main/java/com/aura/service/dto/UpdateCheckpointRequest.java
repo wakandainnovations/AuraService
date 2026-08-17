@@ -1,5 +1,6 @@
 package com.aura.service.dto;
 
+import com.aura.service.enums.CheckpointType;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -16,4 +17,7 @@ public class UpdateCheckpointRequest {
 
     @Size(max = 20, message = "description must be at most 20 characters")
     private String description;
+
+    /** Optional; leaves the existing type unchanged when omitted. */
+    private CheckpointType checkpointType;
 }

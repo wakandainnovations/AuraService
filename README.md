@@ -1170,6 +1170,14 @@ Checkpoints mark significant dates for a managed entity (e.g., trailer release, 
 > `preview` for reads; a plain locked envelope with the mutation skipped for writes). Admins are always
 > entitled. See [Premium Feature Tier Gating](#premium-feature-tier-gating).
 
+The `checkpoints` table (like `graph_nodes`/`graph_edges`) is Hibernate-managed via `ddl-auto=update`
+rather than the manual init script above, so it isn't in the `CREATE TABLE` block. Its `checkpoint_type`
+column classifies each checkpoint as one of `TEASER`, `TRAILER`, `MUSIC_LAUNCH`, `PROMO_EVENT`,
+`CAST_ANNOUNCEMENT`, `PRESS_MEET`, or `OTHER`, making the checkpoint a structured, queryable control
+variable instead of freeform text. The column is nullable at the DB level so it can be added to an
+already-populated table; a startup backfill (`CheckpointTypeBackfill`) then sets any legacy null
+`checkpoint_type` to `OTHER`. On a fresh database it is always populated.
+
 ### 7a. Create Checkpoint
 
 **Endpoint:** `POST /api/checkpoints`
@@ -1187,7 +1195,8 @@ Content-Type: application/json
 {
   "entityId": 1,
   "checkpointDate": "2026-03-15",
-  "description": "Trailer Launch"
+  "description": "Trailer Launch",
+  "checkpointType": "TRAILER"
 }
 ```
 
@@ -1195,6 +1204,7 @@ Content-Type: application/json
 - `entityId` — required.
 - `checkpointDate` — required (ISO-8601 date).
 - `description` — required, non-blank, max 20 characters.
+- `checkpointType` — optional; one of `TEASER`, `TRAILER`, `MUSIC_LAUNCH`, `PROMO_EVENT`, `CAST_ANNOUNCEMENT`, `PRESS_MEET`, `OTHER`. Defaults to `OTHER` when omitted.
 
 **Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope.
 ```json
@@ -1206,7 +1216,8 @@ Content-Type: application/json
     "entityId": 1,
     "entityName": "The Quantum Paradox",
     "checkpointDate": "2026-03-15",
-    "description": "Trailer Launch"
+    "description": "Trailer Launch",
+    "checkpointType": "TRAILER"
   },
   "preview": null
 }
@@ -1243,14 +1254,16 @@ Authorization: Bearer {jwt_token}
       "entityId": 1,
       "entityName": "The Quantum Paradox",
       "checkpointDate": "2026-03-15",
-      "description": "Trailer Launch"
+      "description": "Trailer Launch",
+      "checkpointType": "TRAILER"
     },
     {
       "id": 11,
       "entityId": 1,
       "entityName": "The Quantum Paradox",
       "checkpointDate": "2026-04-01",
-      "description": "Opening Weekend"
+      "description": "Opening Weekend",
+      "checkpointType": "PROMO_EVENT"
     }
   ],
   "preview": null
@@ -1264,7 +1277,7 @@ A caller below **SILVER** instead gets `entitled: false`, `data: null`, and a ma
   "requiredTier": "SILVER",
   "data": null,
   "preview": [
-    { "id": "a handful", "entityId": "a handful", "entityName": "★★★★★", "checkpointDate": "★★★★★", "description": "★★★★★" }
+    { "id": "a handful", "entityId": "a handful", "entityName": "★★★★★", "checkpointDate": "★★★★★", "description": "★★★★★", "checkpointType": "★★★★★" }
   ]
 }
 ```
@@ -1292,13 +1305,15 @@ Content-Type: application/json
 ```json
 {
   "checkpointDate": "2026-03-20",
-  "description": "Trailer v2"
+  "description": "Trailer v2",
+  "checkpointType": "TRAILER"
 }
 ```
 
 **Field Rules:**
 - `checkpointDate` — optional (ISO-8601 date). When provided, must not collide with another checkpoint for the same entity (entity + date is unique).
 - `description` — optional; when provided, must be non-blank and at most 20 characters.
+- `checkpointType` — optional; one of `TEASER`, `TRAILER`, `MUSIC_LAUNCH`, `PROMO_EVENT`, `CAST_ANNOUNCEMENT`, `PRESS_MEET`, `OTHER`. Left unchanged when omitted.
 
 **Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; the updated checkpoint is the `data` field.
 ```json
@@ -1310,7 +1325,8 @@ Content-Type: application/json
     "entityId": 1,
     "entityName": "The Quantum Paradox",
     "checkpointDate": "2026-03-20",
-    "description": "Trailer v2"
+    "description": "Trailer v2",
+    "checkpointType": "TRAILER"
   },
   "preview": null
 }

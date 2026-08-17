@@ -5,6 +5,7 @@ import com.aura.service.dto.CreateCheckpointRequest;
 import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.CheckpointType;
 import com.aura.service.repository.CheckpointRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,10 +25,14 @@ public class CheckpointService {
     public CheckpointResponse create(CreateCheckpointRequest request) {
         ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(request.getEntityId());
 
+        CheckpointType type = request.getCheckpointType() != null
+                ? request.getCheckpointType() : CheckpointType.OTHER;
+
         Checkpoint checkpoint = Checkpoint.builder()
                 .managedEntity(entity)
                 .checkpointDate(request.getCheckpointDate())
                 .description(request.getDescription())
+                .checkpointType(type)
                 .build();
 
         Checkpoint saved = checkpointRepository.save(checkpoint);
@@ -68,6 +73,10 @@ public class CheckpointService {
             checkpoint.setDescription(request.getDescription());
         }
 
+        if (request.getCheckpointType() != null) {
+            checkpoint.setCheckpointType(request.getCheckpointType());
+        }
+
         Checkpoint saved = checkpointRepository.save(checkpoint);
         return toResponse(saved);
     }
@@ -88,6 +97,7 @@ public class CheckpointService {
         r.setEntityName(c.getManagedEntity().getName());
         r.setCheckpointDate(c.getCheckpointDate());
         r.setDescription(c.getDescription());
+        r.setCheckpointType(c.getCheckpointType());
         return r;
     }
 }

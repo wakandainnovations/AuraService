@@ -1,5 +1,6 @@
 package com.aura.service.dto;
 
+import com.aura.service.enums.CheckpointType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -23,4 +24,7 @@ public class CreateCheckpointRequest {
     @NotBlank(message = "description is required")
     @Size(max = 20, message = "description must be at most 20 characters")
     private String description;
+
+    /** Optional; defaults to {@link CheckpointType#OTHER} when omitted. */
+    private CheckpointType checkpointType;
 }

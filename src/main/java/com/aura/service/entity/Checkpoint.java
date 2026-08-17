@@ -1,5 +1,6 @@
 package com.aura.service.entity;
 
+import com.aura.service.enums.CheckpointType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,4 +31,11 @@ public class Checkpoint {
 
     @Column(nullable = false, length = 20)
     private String description;
+
+    // Nullable so that under ddl-auto=update (no Flyway) the column can be added to an already-
+    // populated table; a startup backfill (CheckpointTypeBackfill) then sets any legacy null to
+    // OTHER. On a fresh database it is always populated.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "checkpoint_type", length = 30)
+    private CheckpointType checkpointType;
 }

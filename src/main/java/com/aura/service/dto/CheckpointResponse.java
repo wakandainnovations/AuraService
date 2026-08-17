@@ -1,5 +1,6 @@
 package com.aura.service.dto;
 
+import com.aura.service.enums.CheckpointType;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -15,4 +16,5 @@ public class CheckpointResponse {
     private String entityName;
     private LocalDate checkpointDate;
     private String description;
+    private CheckpointType checkpointType;
 }

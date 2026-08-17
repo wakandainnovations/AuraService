@@ -2,6 +2,7 @@ package com.aura.service.controller;
 
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.CheckpointType;
 import com.aura.service.enums.LicenseTier;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.service.CheckpointService;
@@ -16,6 +17,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
@@ -127,6 +129,59 @@ class CheckpointControllerTest {
     }
 
     @Test
+    void create_roundTripsExplicitCheckpointType() throws Exception {
+        when(entityAccess.assertOwnedByCurrentUser(ENTITY_ID)).thenReturn(entity());
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> {
+            Checkpoint c = inv.getArgument(0);
+            c.setId(1L);
+            return c;
+        });
+
+        String body = mapper.writeValueAsString(Map.of(
+                "entityId", ENTITY_ID,
+                "checkpointDate", "2026-06-15",
+                "description", "Trailer drop",
+                "checkpointType", "TRAILER"));
+
+        mvcFor(true).perform(post("/api/checkpoints")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.checkpointType").value("TRAILER"));
+
+        ArgumentCaptor<Checkpoint> captor = ArgumentCaptor.forClass(Checkpoint.class);
+        verify(checkpointRepository).save(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getCheckpointType())
+                .isEqualTo(CheckpointType.TRAILER);
+    }
+
+    @Test
+    void create_omittingCheckpointType_defaultsToOther() throws Exception {
+        when(entityAccess.assertOwnedByCurrentUser(ENTITY_ID)).thenReturn(entity());
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> {
+            Checkpoint c = inv.getArgument(0);
+            c.setId(1L);
+            return c;
+        });
+
+        String body = mapper.writeValueAsString(Map.of(
+                "entityId", ENTITY_ID,
+                "checkpointDate", "2026-06-15",
+                "description", "Audio release"));
+
+        mvcFor(true).perform(post("/api/checkpoints")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.checkpointType").value("OTHER"));
+
+        ArgumentCaptor<Checkpoint> captor = ArgumentCaptor.forClass(Checkpoint.class);
+        verify(checkpointRepository).save(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getCheckpointType())
+                .isEqualTo(CheckpointType.OTHER);
+    }
+
+    @Test
     void create_returns400WhenDescriptionExceeds20Chars() throws Exception {
         String body = mapper.writeValueAsString(Map.of(
                 "entityId", ENTITY_ID,
@@ -196,6 +251,25 @@ class CheckpointControllerTest {
                 .andExpect(jsonPath("$.data.description").value("Trailer drop"));
 
         verify(checkpointRepository).save(existing);
+    }
+
+    @Test
+    void update_roundTripsCheckpointType() throws Exception {
+        Checkpoint existing = checkpoint(10L, LocalDate.of(2026, 6, 15), "Audio release");
+        existing.setCheckpointType(CheckpointType.OTHER);
+        when(checkpointRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        String body = mapper.writeValueAsString(Map.of("checkpointType", "MUSIC_LAUNCH"));
+
+        mvcFor(true).perform(patch("/api/checkpoints/{checkpointId}", 10L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.checkpointType").value("MUSIC_LAUNCH"));
+
+        org.assertj.core.api.Assertions.assertThat(existing.getCheckpointType())
+                .isEqualTo(CheckpointType.MUSIC_LAUNCH);
     }
 
     @Test
