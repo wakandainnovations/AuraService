@@ -21,9 +21,11 @@ public interface MoviesDataCollectionQueryService {
     List<Object[]> findGenreLanguageBudgetComps(String genre, String language, double minBudget, double maxBudget);
 
     /**
-     * Rows of {@code [dayOfWeek, count, avgRevenue]} (Postgres {@code EXTRACT(DOW ...)}, 0 = Sunday)
-     * for overlapping-genre (see {@link MoviesDataCollectionQueryServiceImpl#genreOverlaps}) + same
-     * language releases, grouped by release day-of-week.
+     * Rows of {@code [dayOfWeek, count, avgRevenue, exampleTitles]} (Postgres {@code EXTRACT(DOW
+     * ...)}, 0 = Sunday; {@code exampleTitles} a {@code List<String>} of a few real comparable-movie
+     * names in that bucket) for overlapping-genre (see
+     * {@link MoviesDataCollectionQueryServiceImpl#genreOverlaps}) + same language releases, grouped by
+     * release day-of-week.
      */
     List<Object[]> findReleaseDayOfWeekStats(String genre, String language);
 }

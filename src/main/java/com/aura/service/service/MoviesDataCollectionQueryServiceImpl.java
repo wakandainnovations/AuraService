@@ -43,10 +43,14 @@ public class MoviesDataCollectionQueryServiceImpl implements MoviesDataCollectio
     // CAST(... AS date), not the "::date" shorthand — Hibernate's native-query parameter parser
     // treats a bare "::" as a bind-parameter prefix and mangles it into invalid SQL.
     private static final String RELEASE_DAY_OF_WEEK_SQL =
-            "SELECT EXTRACT(DOW FROM CAST(release_date AS date)) AS dow, genre, revenue " +
+            "SELECT EXTRACT(DOW FROM CAST(release_date AS date)) AS dow, genre, revenue, movie_name " +
             "FROM movies_data_collection " +
             "WHERE LOWER(language) = LOWER(:language) " +
             "AND release_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND revenue IS NOT NULL";
+
+    // Cap on how many real comparable-movie titles ride along per day-of-week bucket - enough for
+    // marketing to see concrete precedent without flooding the candidate with every comp on file.
+    private static final int TITLES_PER_DOW_LIMIT = 3;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -92,6 +96,7 @@ public class MoviesDataCollectionQueryServiceImpl implements MoviesDataCollectio
 
         Map<Integer, Long> countByDow = new LinkedHashMap<>();
         Map<Integer, Double> revenueSumByDow = new LinkedHashMap<>();
+        Map<Integer, List<String>> titlesByDow = new LinkedHashMap<>();
         for (Object[] row : rows) {
             if (!genreOverlaps(genreTokens, (String) row[1])) {
                 continue;
@@ -99,13 +104,21 @@ public class MoviesDataCollectionQueryServiceImpl implements MoviesDataCollectio
             int dow = ((Number) row[0]).intValue();
             countByDow.merge(dow, 1L, Long::sum);
             revenueSumByDow.merge(dow, ((Number) row[2]).doubleValue(), Double::sum);
+            String title = row.length > 3 ? (String) row[3] : null;
+            if (title != null && !title.isBlank()) {
+                List<String> titles = titlesByDow.computeIfAbsent(dow, k -> new ArrayList<>());
+                if (titles.size() < TITLES_PER_DOW_LIMIT && !titles.contains(title)) {
+                    titles.add(title);
+                }
+            }
         }
 
         List<Object[]> result = new ArrayList<>();
         for (Map.Entry<Integer, Long> entry : countByDow.entrySet()) {
             int dow = entry.getKey();
             long count = entry.getValue();
-            result.add(new Object[]{dow, count, revenueSumByDow.get(dow) / count});
+            result.add(new Object[]{
+                    dow, count, revenueSumByDow.get(dow) / count, titlesByDow.getOrDefault(dow, List.of())});
         }
         return result;
     }

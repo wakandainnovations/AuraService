@@ -363,14 +363,15 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         ManagedEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new ResourceNotFoundException("Entity not found: " + entityId));
 
+        String genre = resolveGenre(entity);
+        boolean hasLanguage = entity.getLanguage() != null && !entity.getLanguage().isBlank();
+
         List<RecommendedActionCandidate> candidates = new ArrayList<>();
         addIfPresent(candidates, trailerTeaserTimingCandidate(entity));
         addIfPresent(candidates, firstSingleTimingCandidate(entity));
-        addIfPresent(candidates, holidayWindowCandidate(entity));
+        addIfPresent(candidates, holidayWindowCandidate(entity, genre));
         addIfPresent(candidates, lowOnlinePresenceCandidate(entity));
 
-        String genre = resolveGenre(entity);
-        boolean hasLanguage = entity.getLanguage() != null && !entity.getLanguage().isBlank();
         List<RecommendedActionCandidate> commonTacticCandidates = List.of();
         if (genre != null && hasLanguage) {
             addIfPresent(candidates, releaseDayCandidate(entity, genre));
@@ -442,7 +443,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // ==================== Factor 46 / 47 - server-computed calendar math ====================
 
     private RecommendedActionCandidate trailerTeaserTimingCandidate(ManagedEntity entity) {
-        if (entity.getReleaseDate() == null) {
+        if (entity.getReleaseDate() == null || !isNotYetReleased(entity)) {
             return null;
         }
         int start = -OPTIMAL_MAX_DAYS_46;
@@ -461,7 +462,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     }
 
     private RecommendedActionCandidate firstSingleTimingCandidate(ManagedEntity entity) {
-        if (entity.getReleaseDate() == null) {
+        if (entity.getReleaseDate() == null || !isNotYetReleased(entity)) {
             return null;
         }
         int start = -OPTIMAL_MAX_DAYS_47;
@@ -480,14 +481,38 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     // ==================== Factor 61 - holiday proximity (calendar math) ====================
 
-    private RecommendedActionCandidate holidayWindowCandidate(ManagedEntity entity) {
+    // Genre-specific ideal release window that takes priority over the generic HOLIDAYS scan below
+    // when it applies - a Romance release landing numerically close to Republic Day would be
+    // calendar-correct but genre-wrong; Romance belongs near Valentine's Day instead. Extend with more
+    // genre -> window mappings as they're identified.
+    private static final List<Holiday> ROMANCE_IDEAL_WINDOW = List.of(
+            new Holiday("Valentine's Day", LocalDate.of(2024, 2, 14)),
+            new Holiday("Valentine's Day", LocalDate.of(2025, 2, 14)),
+            new Holiday("Valentine's Day", LocalDate.of(2026, 2, 14)),
+            new Holiday("Valentine's Day", LocalDate.of(2027, 2, 14))
+    );
+
+    private static boolean isRomanceGenre(String genre) {
+        if (genre == null) {
+            return false;
+        }
+        for (String token : genre.split(",")) {
+            if (token.trim().toLowerCase(Locale.ROOT).startsWith("roman")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private RecommendedActionCandidate holidayWindowCandidate(ManagedEntity entity, String genre) {
         LocalDate releaseDate = entity.getReleaseDate();
-        if (releaseDate == null) {
+        if (releaseDate == null || !isNotYetReleased(entity)) {
             return null;
         }
+        List<Holiday> candidateHolidays = isRomanceGenre(genre) ? ROMANCE_IDEAL_WINDOW : HOLIDAYS;
         Holiday nearest = null;
         long nearestDistance = Long.MAX_VALUE;
-        for (Holiday holiday : HOLIDAYS) {
+        for (Holiday holiday : candidateHolidays) {
             long distance = Math.abs(ChronoUnit.DAYS.between(releaseDate, holiday.date()));
             if (distance <= HOLIDAY_PROXIMITY_DAYS && distance < nearestDistance) {
                 nearest = holiday;
@@ -512,38 +537,63 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // ==================== Factor 61 - best release day-of-week (movies_data_collection) ====================
 
     private RecommendedActionCandidate releaseDayCandidate(ManagedEntity entity, String genre) {
-        if (entity.getReleaseDate() == null) {
+        if (entity.getReleaseDate() == null || !isNotYetReleased(entity)) {
             return null;
         }
         List<Object[]> rows = moviesDataQueryService.findReleaseDayOfWeekStats(genre, entity.getLanguage());
 
-        int targetDow = postgresDayOfWeek(entity.getReleaseDate().getDayOfWeek());
+        // The best-performing day of week by average revenue, among buckets with a confidence-worthy
+        // sample - not just whichever day this movie already happens to be scheduled on, so this
+        // candidate can actually recommend a day to marketing rather than merely describe one.
+        Object[] best = null;
+        Integer bestConfidence = null;
         for (Object[] row : rows) {
-            int dow = ((Number) row[0]).intValue();
-            if (dow != targetDow || row[2] == null) {
+            if (row[2] == null) {
                 continue;
             }
             long sampleCount = ((Number) row[1]).longValue();
             Integer confidence = compsConfidence(sampleCount);
             if (confidence == null) {
-                return null;
+                continue;
             }
             double avgRevenue = ((Number) row[2]).doubleValue();
-            BoxOfficeFactorCatalog.FactorDefinition def = BoxOfficeFactorCatalog.byNumber(FACTOR_HOLIDAY_RELEASE_WINDOWS);
-            String fact = String.format(Locale.ROOT,
-                    "%d comparable %s %s releases on a %s averaged $%,.0f in revenue.",
-                    sampleCount, entity.getLanguage(), genre, capitalize(entity.getReleaseDate().getDayOfWeek()),
-                    avgRevenue);
-            return new RecommendedActionCandidate(
-                    "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-release-day",
-                    def.name(), categorize(def), confidence, 0, 0,
-                    buildWindowLabel(0, 0), List.of(fact), List.of(), List.of());
+            if (best == null || avgRevenue > ((Number) best[2]).doubleValue()) {
+                best = row;
+                bestConfidence = confidence;
+            }
         }
-        return null;
+        if (best == null) {
+            return null;
+        }
+
+        DayOfWeek bestDayOfWeek = fromPostgresDayOfWeek(((Number) best[0]).intValue());
+        DayOfWeek actualDayOfWeek = entity.getReleaseDate().getDayOfWeek();
+        long sampleCount = ((Number) best[1]).longValue();
+        double avgRevenue = ((Number) best[2]).doubleValue();
+        @SuppressWarnings("unchecked")
+        List<String> exampleTitles = best.length > 3 && best[3] != null ? (List<String>) best[3] : List.of();
+        String titleSuffix = exampleTitles.isEmpty() ? "" : " (e.g. " + String.join(", ", exampleTitles) + ")";
+
+        String fact = bestDayOfWeek == actualDayOfWeek
+                ? String.format(Locale.ROOT,
+                        "Your scheduled release day (%s) already matches the best-performing release day for %d " +
+                                "comparable %s %s releases%s, which averaged $%,.0f in revenue.",
+                        capitalize(bestDayOfWeek), sampleCount, entity.getLanguage(), genre, titleSuffix, avgRevenue)
+                : String.format(Locale.ROOT,
+                        "Consider releasing on a %s instead of a %s: %d comparable %s %s releases on a %s%s " +
+                                "averaged $%,.0f in revenue.",
+                        capitalize(bestDayOfWeek), capitalize(actualDayOfWeek), sampleCount, entity.getLanguage(),
+                        genre, capitalize(bestDayOfWeek), titleSuffix, avgRevenue);
+
+        return new RecommendedActionCandidate(
+                "factor-" + FACTOR_HOLIDAY_RELEASE_WINDOWS + "-release-day",
+                "Best Release Day of Week",
+                categorize(BoxOfficeFactorCatalog.byNumber(FACTOR_HOLIDAY_RELEASE_WINDOWS)),
+                bestConfidence, 0, 0, buildWindowLabel(0, 0), List.of(fact), List.of(), List.of());
     }
 
-    private static int postgresDayOfWeek(DayOfWeek javaDayOfWeek) {
-        return javaDayOfWeek == DayOfWeek.SUNDAY ? 0 : javaDayOfWeek.getValue();
+    private static DayOfWeek fromPostgresDayOfWeek(int postgresDow) {
+        return postgresDow == 0 ? DayOfWeek.SUNDAY : DayOfWeek.of(postgresDow);
     }
 
     private static String capitalize(DayOfWeek dayOfWeek) {
@@ -777,12 +827,12 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         List<String> facts = new ArrayList<>();
         if (reach.totalViewers() != null) {
             facts.add(String.format(Locale.ROOT,
-                    "AuraMath tracks %,d potential viewers with an affinity for %s content on this platform.",
+                    "This platform tracks %,d potential viewers with an affinity for %s content.",
                     reach.totalViewers(), primaryGenre));
         }
         if (reach.topChannel() != null) {
             facts.add(String.format(Locale.ROOT,
-                    "AuraMath's channel-strategy model recommends %s as the top channel to reach %s audiences.",
+                    "This platform's channel-strategy model recommends %s as the top channel to reach %s audiences.",
                     reach.topChannel(), primaryGenre));
         }
         if (facts.isEmpty()) {
@@ -1013,7 +1063,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
-                "AuraMath has identified %d movie buff(s) (positive-tone, high-branching-ratio accounts) " +
+                "This platform has identified %d movie buff(s) (positive-tone, high-branching-ratio accounts) " +
                         "across %d tracked keyword(s) for this movie.",
                 buffByAuthor.size(), keywords.size()));
         if (tier1Or2Count > 0) {
@@ -1067,8 +1117,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         List<String> facts = new ArrayList<>();
         facts.add(String.format(Locale.ROOT,
-                "AuraMath has identified %d viral-seed account(s) across %d tracked keyword(s) for this movie, " +
-                        "ranked by a composite of infectivity, engagement, and reach.",
+                "This platform has identified %d viral-seed account(s) across %d tracked keyword(s) for this " +
+                        "movie, ranked by a composite of infectivity, engagement, and reach.",
                 seedByAuthor.size(), keywords.size()));
         String topPlatform = ranked.stream()
                 .map(ViralSeedLookupService.ViralSeed::primaryPlatform)

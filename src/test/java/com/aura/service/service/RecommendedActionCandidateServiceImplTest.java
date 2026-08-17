@@ -271,6 +271,19 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("first-single"));
     }
 
+    @Test
+    void alreadyReleasedMovieOmitsTrailerTeaserAndFirstSingleCandidates() {
+        // Before the fixed test clock's "now" (2020-01-01) -> already released, so recommending a
+        // pre-release trailer/teaser or first-single window no longer makes sense.
+        ManagedEntity entity = movie(LocalDate.of(2019, 6, 1), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("trailer-teaser"));
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("first-single"));
+    }
+
     // ==================== Low online presence (absence of mention data as the signal) ====================
 
     // Regression coverage for the "Lord Gaaga" bug: a movie with near-zero tracked mentions and no
@@ -351,6 +364,29 @@ class RecommendedActionCandidateServiceImplTest {
 
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("genre-audience-reach"));
         verify(genreMarketingLookup, never()).getGenreReach(anyString());
+    }
+
+    // "AuraMath" is this platform's internal upstream provider name and must never leak into a
+    // supportingFacts string - those flow verbatim into the LLM prompt and, on any LLM failure, straight
+    // into the user-facing reason text via fallbackActions.
+    @Test
+    void supportingFactsNeverNameTheInternalUpstreamProvider() {
+        ManagedEntity entity = movie(null, "Action,Adventure", null, null);
+        entity.setKeywords(List.of(new EntityKeyword("lordgaaga", null, null, null, null, null)));
+        seedSpreaders("lordgaaga", List.of());
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(genreMarketingLookup.getGenreReach("Action"))
+                .thenReturn(new GenreMarketingLookupService.GenreReach(52_000L, "Instagram"));
+        when(movieBuffLookup.getMovieBuffs("lordgaaga")).thenReturn(List.of(
+                new MovieBuffLookupService.MovieBuff("buff1", "TIER_1", "x", null)));
+        when(viralSeedLookup.getViralSeeds("lordgaaga")).thenReturn(List.of(
+                new ViralSeedLookupService.ViralSeed("seed1", "x", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates)
+                .flatExtracting(RecommendedActionCandidate::supportingFacts)
+                .noneMatch(f -> f.contains("AuraMath"));
     }
 
     // ==================== Movie-buff outreach (AuraMath) ====================
@@ -507,19 +543,49 @@ class RecommendedActionCandidateServiceImplTest {
     }
 
     @Test
-    void releaseDayCandidateUsesMatchingDayOfWeekBucket() {
-        // 2026-06-05 is a Friday -> Postgres DOW 5.
+    void releaseDayCandidateRecommendsBestPerformingDayOverActualDay() {
+        // 2026-06-05 is a Friday -> Postgres DOW 5; Saturday (DOW 6) outperforms it and should be
+        // recommended instead, with real comparable titles cited.
         ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         stubReleaseDayStats(List.of(
-                new Object[]{5, 20L, 500_000_000.0},
-                new Object[]{6, 99L, 999_000_000.0}));
+                new Object[]{5, 20L, 500_000_000.0, List.of("Movie A")},
+                new Object[]{6, 99L, 999_000_000.0, List.of("Movie B", "Movie C")}));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         RecommendedActionCandidate releaseDay = findCandidate(candidates, "factor-61-release-day");
-        assertThat(releaseDay.confidencePct()).isEqualTo(70); // 20 comps -> mid tier (15-29)
-        assertThat(releaseDay.supportingFacts().get(0)).contains("Friday").contains("20").contains("500,000,000");
+        assertThat(releaseDay.confidencePct()).isEqualTo(85); // 99 comps -> high tier
+        assertThat(releaseDay.supportingFacts().get(0))
+                .contains("Saturday").contains("Friday").contains("99").contains("999,000,000")
+                .contains("Movie B").contains("Movie C");
+    }
+
+    @Test
+    void releaseDayCandidateConfirmsWhenActualDayIsAlreadyBest() {
+        // 2026-06-05 is a Friday -> Postgres DOW 5, and it's the best-performing day here.
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubReleaseDayStats(List.of(
+                new Object[]{5, 20L, 999_000_000.0, List.of()},
+                new Object[]{6, 20L, 500_000_000.0, List.of()}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate releaseDay = findCandidate(candidates, "factor-61-release-day");
+        assertThat(releaseDay.supportingFacts().get(0)).contains("already matches").contains("Friday");
+    }
+
+    @Test
+    void releaseDayCandidateOmittedOnceMovieHasAlreadyReleased() {
+        // Before the fixed test clock's "now" (2020-01-01) -> already released.
+        ManagedEntity entity = movie(LocalDate.of(2019, 6, 7), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubReleaseDayStats(List.<Object[]>of(new Object[]{5, 20L, 500_000_000.0, List.of()}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("release-day"));
     }
 
     // ==================== Peer marketing-tactic candidates ====================
@@ -736,6 +802,41 @@ class RecommendedActionCandidateServiceImplTest {
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         assertThat(candidates).noneMatch(c -> c.candidateId().contains("holiday-proximity"));
+    }
+
+    @Test
+    void alreadyReleasedMovieOmitsHolidayCandidate() {
+        // Diwali 2019-10-27ish is irrelevant here - what matters is the releaseDate falling before the
+        // fixed test clock's "now" (2020-01-01), i.e. already released.
+        ManagedEntity entity = movie(LocalDate.of(2019, 11, 5), null, null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("holiday-proximity"));
+    }
+
+    @Test
+    void romanceGenreNearGenericHolidayButFarFromValentinesOmitsHolidayCandidate() {
+        // Republic Day 2026-01-26; a Romance movie should not get this generic holiday recommended -
+        // it's far from Valentine's Day, its own genre-appropriate window.
+        ManagedEntity entity = movie(LocalDate.of(2026, 1, 26), "Romance", null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("holiday-proximity"));
+    }
+
+    @Test
+    void romanceGenreNearValentinesDayProducesGenreAppropriateHolidayCandidate() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 2, 12), "Romance,Drama", null, null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate holiday = findCandidate(candidates, "factor-61-holiday-proximity");
+        assertThat(holiday.supportingFacts().get(0)).contains("Valentine's Day");
     }
 
     // ==================== Evangelist positive-sentiment filter and tier ranking ====================
