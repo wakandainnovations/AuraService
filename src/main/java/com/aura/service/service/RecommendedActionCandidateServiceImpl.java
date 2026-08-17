@@ -16,6 +16,7 @@ import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -26,6 +27,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -63,7 +65,12 @@ import java.util.stream.Collectors;
  * {@link BoxOfficeFactorCatalog} at all: it cites real, verbatim marketing tactics other genre-comparable
  * movies actually ran, sourced from {@link MovieMarketingTacticsQueryService} (joined to
  * {@code movies_data_collection} for genre, since {@code movie_marketing_tactics} carries none of its
- * own) - see that method's own doc for why category/confidence are derived differently there.
+ * own) - see that method's own doc for why category/confidence are derived differently there. It also
+ * splits its output into "rare" (always surfaced) and "common" candidates - a tactic nearly every
+ * comparable movie ran (a teaser/trailer release, say) is withheld by default and only added back in
+ * {@link #buildCandidateActions} as a fallback for a movie whose plan is otherwise too thin, still
+ * pre-release, and for which tracked posts don't already evidence the tactic - see
+ * {@link #isCommonTactic}/{@link #alreadyPostedTacticSignal}.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -210,6 +217,30 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int PEER_TACTIC_WINDOW_START_DAYS = -120;
     static final int PEER_TACTIC_WINDOW_END_DAYS = -1;
 
+    // ---- Common-tactic filtering: a (main, sub) classification bucket run by most genre+language
+    // peer movies (a teaser or trailer release, say) is something a marketing team already knows to
+    // do without this platform prompting it - see peerMarketingTacticCandidates/isCommonTactic. Such
+    // a bucket is withheld by default and only surfaced as a low-inventory fallback
+    // (COMMON_TACTIC_FILLER_MIN_ACTIONS) when this movie otherwise has too few grounded actions, and
+    // only pre-release - never useful once a movie has already released, and pointless if tracked
+    // posts already show the tactic happened (see alreadyPostedTacticSignal).
+    // COMMON_TACTIC_MIN_PEER_SAMPLE guards against a tiny peer pool (e.g. 2 comps that both happened
+    // to run the same tactic) reading as "almost every movie does this" off too little evidence.
+    static final double COMMON_TACTIC_PREVALENCE_THRESHOLD = 0.70;
+    static final long COMMON_TACTIC_MIN_PEER_SAMPLE = 5;
+    static final int COMMON_TACTIC_FILLER_MIN_ACTIONS = 3;
+
+    // Generic marketing vocabulary stripped before matching a common tactic's classification name
+    // against tracked post content (see tacticSignalKeywords/alreadyPostedTacticSignal) - without
+    // this, a sub-classification like "Teaser Release" would search posts for the word "release",
+    // which shows up in unrelated box-office/release-date chatter and would falsely read as the
+    // tactic already having happened.
+    private static final Set<String> TACTIC_KEYWORD_STOPWORDS = Set.of(
+            "release", "releases", "released", "campaign", "campaigns", "promotion", "promotions",
+            "promotional", "marketing", "content", "media", "social", "video", "launch", "launches",
+            "event", "events", "activity", "activities", "drive", "reveal", "week", "date", "official",
+            "movie", "film", "strategy", "digital", "online");
+
     private record WindowSpec(int startDays, int endDays) {
     }
 
@@ -300,6 +331,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final MovieBuffLookupService movieBuffLookup;
     private final ViralSeedLookupService viralSeedLookup;
     private final MovieMarketingTacticsQueryService tacticsQueryService;
+    private final Clock clock;
 
     public RecommendedActionCandidateServiceImpl(
             ManagedEntityRepository entityRepository,
@@ -311,7 +343,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             GenreMarketingLookupService genreMarketingLookup,
             MovieBuffLookupService movieBuffLookup,
             ViralSeedLookupService viralSeedLookup,
-            MovieMarketingTacticsQueryService tacticsQueryService) {
+            MovieMarketingTacticsQueryService tacticsQueryService,
+            Clock clock) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
         this.mobilizeActionRepository = mobilizeActionRepository;
@@ -322,6 +355,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.movieBuffLookup = movieBuffLookup;
         this.viralSeedLookup = viralSeedLookup;
         this.tacticsQueryService = tacticsQueryService;
+        this.clock = clock;
     }
 
     @Override
@@ -337,6 +371,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
         String genre = resolveGenre(entity);
         boolean hasLanguage = entity.getLanguage() != null && !entity.getLanguage().isBlank();
+        List<RecommendedActionCandidate> commonTacticCandidates = List.of();
         if (genre != null && hasLanguage) {
             addIfPresent(candidates, releaseDayCandidate(entity, genre));
             // No budget gate here (unlike the pre-loosening version of this method): a movie with no
@@ -344,7 +379,9 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             // tracks, see comparableBudgetCandidates - still gets genre+language comps, just not
             // narrowed to a budget tier.
             candidates.addAll(comparableBudgetCandidates(entity, genre));
-            candidates.addAll(peerMarketingTacticCandidates(entity, genre));
+            PeerTacticCandidates peerTactics = peerMarketingTacticCandidates(entity, genre);
+            candidates.addAll(peerTactics.rare());
+            commonTacticCandidates = peerTactics.common();
         }
         addIfPresent(candidates, genreAudienceReachCandidate(genre));
 
@@ -354,7 +391,32 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, viralSeedCandidate(keywords));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
+
+        // Common tactics are withheld above (see COMMON_TACTIC_PREVALENCE_THRESHOLD) - only worth
+        // adding back as a fallback once every other generator has had its say, when this movie's
+        // plan is otherwise too thin and it hasn't released yet, and even then only for the ones
+        // tracked posts don't already show as done.
+        if (!commonTacticCandidates.isEmpty() && candidates.size() < COMMON_TACTIC_FILLER_MIN_ACTIONS
+                && isNotYetReleased(entity)) {
+            for (RecommendedActionCandidate candidate : commonTacticCandidates) {
+                if (!alreadyPostedTacticSignal(entity.getId(), candidate.factorName())) {
+                    candidates.add(candidate);
+                }
+            }
+        }
         return candidates;
+    }
+
+    // "Not yet released" mirrors RecommendedActionsService.todayOffsetFromRelease's sign convention
+    // (daysToRelease > 0 means released). An entity with no releaseDate on file is treated as not yet
+    // released rather than excluded - there's no evidence it has released.
+    private boolean isNotYetReleased(ManagedEntity entity) {
+        LocalDate releaseDate = entity.getReleaseDate();
+        if (releaseDate == null) {
+            return true;
+        }
+        long daysToRelease = ChronoUnit.DAYS.between(releaseDate, LocalDate.now(clock));
+        return daysToRelease <= 0;
     }
 
     /** Tracked keyword strings for this entity, or empty if it has none - the gate shared by every
@@ -571,10 +633,19 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // there's no factor number/def to derive factorName/category from here. category is fixed rather
     // than tiered off a midpoint that doesn't exist for this data source; confidencePct is still
     // tiered (see PEER_TACTIC_TIER_* above), off the real distinct-comp-movie count instead.
-    private List<RecommendedActionCandidate> peerMarketingTacticCandidates(ManagedEntity entity, String genre) {
+    private record PeerTacticCandidates(List<RecommendedActionCandidate> rare, List<RecommendedActionCandidate> common) {
+    }
+
+    // Splits peer-tactic candidates into "rare" (always surfaced - real, uncommon precedent the
+    // marketing team likely hasn't considered) and "common" (withheld by default - see
+    // COMMON_TACTIC_PREVALENCE_THRESHOLD) buckets, off the same peer rows already fetched for the
+    // genre+language comparable pool. Prevalence is measured against that same pool
+    // (totalDistinctPeerMovies), not a global count, so "almost every movie" means "almost every
+    // comparable movie" - consistent with every other peer-comps candidate in this file.
+    private PeerTacticCandidates peerMarketingTacticCandidates(ManagedEntity entity, String genre) {
         List<Object[]> rows = tacticsQueryService.findPeerTactics(genre, entity.getLanguage());
         if (rows.isEmpty()) {
-            return List.of();
+            return new PeerTacticCandidates(List.of(), List.of());
         }
 
         Map<String, List<Object[]>> byClassification = new LinkedHashMap<>();
@@ -582,15 +653,60 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             String key = row[2] + "|" + row[3];
             byClassification.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
         }
+        long totalDistinctPeerMovies = rows.stream().map(r -> (String) r[0]).distinct().count();
 
-        List<RecommendedActionCandidate> results = new ArrayList<>(byClassification.size());
-        for (Map.Entry<String, List<Object[]>> entry : byClassification.entrySet()) {
-            RecommendedActionCandidate candidate = peerMarketingTacticCandidate(genre, entry.getValue());
-            if (candidate != null) {
-                results.add(candidate);
+        List<RecommendedActionCandidate> rare = new ArrayList<>();
+        List<RecommendedActionCandidate> common = new ArrayList<>();
+        for (List<Object[]> bucketRows : byClassification.values()) {
+            RecommendedActionCandidate candidate = peerMarketingTacticCandidate(genre, bucketRows);
+            if (candidate == null) {
+                continue;
+            }
+            long distinctMovies = bucketRows.stream().map(r -> (String) r[0]).distinct().count();
+            if (isCommonTactic(distinctMovies, totalDistinctPeerMovies)) {
+                common.add(candidate);
+            } else {
+                rare.add(candidate);
             }
         }
-        return results;
+        return new PeerTacticCandidates(rare, common);
+    }
+
+    static boolean isCommonTactic(long distinctMovies, long totalDistinctPeerMovies) {
+        return totalDistinctPeerMovies >= COMMON_TACTIC_MIN_PEER_SAMPLE
+                && (double) distinctMovies / totalDistinctPeerMovies >= COMMON_TACTIC_PREVALENCE_THRESHOLD;
+    }
+
+    // Extracts search-worthy tokens from a common tactic's classification name (e.g. "Teaser
+    // Trailers" -> {"teaser", "trailers"}) for matching against tracked post content - see
+    // alreadyPostedTacticSignal. Generic marketing vocabulary and short tokens are stripped so the
+    // search doesn't false-positive on unrelated posts.
+    static Set<String> tacticSignalKeywords(String classificationText) {
+        if (classificationText == null) {
+            return Set.of();
+        }
+        Set<String> keywords = new LinkedHashSet<>();
+        for (String token : classificationText.toLowerCase(Locale.ROOT).split("[^a-z]+")) {
+            if (token.length() >= 4 && !TACTIC_KEYWORD_STOPWORDS.contains(token)) {
+                keywords.add(token);
+            }
+        }
+        return keywords;
+    }
+
+    // Whether tracked posts for this entity already show signs of this common tactic having
+    // happened (e.g. a "teaser" mention once the classification is "Teaser Trailers") - checked
+    // before adding a common-tactic candidate as a low-inventory fallback, so this platform never
+    // recommends releasing something posts already show has been released. No keywords extracted
+    // (e.g. an all-stopword classification name) means no evidence either way, so the candidate is
+    // not held back.
+    private boolean alreadyPostedTacticSignal(Long entityId, String classificationText) {
+        for (String keyword : tacticSignalKeywords(classificationText)) {
+            if (mentionRepository.existsByManagedEntityIdAndContentContainingIgnoreCase(entityId, keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private RecommendedActionCandidate peerMarketingTacticCandidate(String genre, List<Object[]> rows) {

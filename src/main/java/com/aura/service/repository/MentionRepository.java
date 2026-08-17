@@ -652,6 +652,20 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             nativeQuery = true)
     List<Object[]> findTotalViewsForEntities(@Param("entityIds") List<Long> entityIds);
 
+    /**
+     * Whether any tracked post for {@code entityId} contains {@code keyword} as a case-insensitive
+     * substring. {@code mentions.content} already holds each platform's raw post text regardless of
+     * which of the four ingestion tables it came from, so unlike the classification breakdowns above
+     * this needs no per-platform join. Used by {@code RecommendedActionCandidateServiceImpl} to
+     * detect a common marketing tactic (e.g. a teaser/trailer release) that's already happened for
+     * this movie, so it isn't recommended again.
+     */
+    @Query("SELECT COUNT(m) > 0 FROM Mention m WHERE EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
+            "AND LOWER(m.content) LIKE LOWER(CONCAT('%', :keyword, '%'))")
+    boolean existsByManagedEntityIdAndContentContainingIgnoreCase(
+            @Param("entityId") Long entityId, @Param("keyword") String keyword);
+
     @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
             "  SELECT x.topic_category FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +

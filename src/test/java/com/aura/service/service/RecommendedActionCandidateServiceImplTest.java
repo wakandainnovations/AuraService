@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,6 +68,9 @@ class RecommendedActionCandidateServiceImplTest {
     private MovieBuffLookupService movieBuffLookup;
     private ViralSeedLookupService viralSeedLookup;
     private MovieMarketingTacticsQueryService tacticsQueryService;
+    // Fixed well before every releaseDate used across this file's tests, so "not yet released" (the
+    // common-tactic filler gate) holds for them by default without each test having to think about it.
+    private final Clock clock = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
     private RecommendedActionCandidateServiceImpl service;
 
     @BeforeEach
@@ -86,7 +91,8 @@ class RecommendedActionCandidateServiceImplTest {
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
-                moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService);
+                moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
+                clock);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
@@ -610,6 +616,100 @@ class RecommendedActionCandidateServiceImplTest {
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         assertThat(candidates.stream().filter(c -> c.candidateId().startsWith("peer-tactic-")).toList()).hasSize(2);
+    }
+
+    // ==================== Common-tactic filtering ====================
+
+    private static List<Object[]> sixMovieCommonTacticBucket() {
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            rows.add(tacticRow("Movie " + i, "202" + i, "Trailer & Video Marketing", "Teaser Trailers", "Tactic " + i));
+        }
+        return rows;
+    }
+
+    @Test
+    void isCommonTacticRequiresMinimumPeerSampleDespiteFullPrevalence() {
+        assertThat(RecommendedActionCandidateServiceImpl.isCommonTactic(4, 4)).isFalse();
+        assertThat(RecommendedActionCandidateServiceImpl.isCommonTactic(5, 5)).isTrue();
+    }
+
+    @Test
+    void isCommonTacticRequiresPrevalenceThreshold() {
+        assertThat(RecommendedActionCandidateServiceImpl.isCommonTactic(6, 10)).isFalse(); // 60%
+        assertThat(RecommendedActionCandidateServiceImpl.isCommonTactic(7, 10)).isTrue(); // 70%
+    }
+
+    @Test
+    void tacticSignalKeywordsStripsGenericMarketingVocabulary() {
+        Set<String> keywords = RecommendedActionCandidateServiceImpl.tacticSignalKeywords("Teaser Release");
+        assertThat(keywords).containsExactly("teaser");
+    }
+
+    @Test
+    void tacticSignalKeywordsIsEmptyWhenEveryTokenIsGenericOrShort() {
+        assertThat(RecommendedActionCandidateServiceImpl.tacticSignalKeywords("Digital Marketing Campaign")).isEmpty();
+    }
+
+    @Test
+    void commonTacticWithheldWhenPlanAlreadyHasEnoughActions() {
+        // Near Diwali 2026 -> trailer-teaser-timing + first-single-timing + holiday-proximity = 3
+        // grounded actions already, so the low-inventory fallback should not fire.
+        ManagedEntity entity = movie(LocalDate.of(2026, 11, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(sixMovieCommonTacticBucket());
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("peer-tactic-"));
+    }
+
+    @Test
+    void commonTacticSurfacedAsFallbackWhenPlanIsThinAndNotYetReleased() {
+        // Far from any holiday -> only trailer-teaser-timing + first-single-timing = 2 grounded
+        // actions, below COMMON_TACTIC_FILLER_MIN_ACTIONS, and the fixed test clock is well before
+        // this releaseDate, so the common tactic should be added back as a fallback.
+        ManagedEntity entity = movie(LocalDate.of(2026, 2, 17), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(sixMovieCommonTacticBucket());
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        RecommendedActionCandidate candidate = findCandidate(candidates, "peer-tactic-trailer-video-marketing-teaser-trailers");
+        assertThat(candidate.confidencePct()).isEqualTo(75); // 6 comps -> high tier, unaffected by the filler path
+    }
+
+    @Test
+    void commonTacticWithheldWhenTrackedPostsAlreadyShowItHappened() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 2, 17), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(sixMovieCommonTacticBucket());
+        when(mentionRepository.existsByManagedEntityIdAndContentContainingIgnoreCase(ENTITY_ID, "teaser"))
+                .thenReturn(true);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("peer-tactic-"));
+    }
+
+    @Test
+    void commonTacticWithheldOnceMovieHasAlreadyReleased() {
+        Clock pastReleaseClock = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
+        RecommendedActionCandidateServiceImpl releasedMovieService = new RecommendedActionCandidateServiceImpl(
+                entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup,
+                new DashboardService(mentionRepository, entityRepository, mock(ReplyDraftRepository.class),
+                        mock(CrisisPlanRepository.class), mock(CheckpointRepository.class), null),
+                moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
+                pastReleaseClock);
+        // Far from any holiday and thin plan (2 grounded actions), but releaseDate is before the
+        // fixed clock's "now" -> already released, so no fallback regardless of low inventory.
+        ManagedEntity entity = movie(LocalDate.of(2019, 2, 17), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubPeerTactics(sixMovieCommonTacticBucket());
+
+        List<RecommendedActionCandidate> candidates = releasedMovieService.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("peer-tactic-"));
     }
 
     // ==================== Holiday proximity ====================
