@@ -11,6 +11,7 @@ import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.RecommendedActionsCacheRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -175,6 +176,64 @@ class RecommendedActionsServiceTest {
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
+    }
+
+    // ==================== statisticalEvidence prompt construction ====================
+
+    // Covers the F9 contract: buildPrompt must serialize exactly the StatisticalEvidence fields present
+    // on the candidate, unmodified - never omit one that's set, never fabricate one that's null.
+    @Test
+    void prompt_includesOnlyStatisticalEvidenceFieldsPresentOnCandidate_unmodified() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate.StatisticalEvidence evidence = new RecommendedActionCandidate.StatisticalEvidence(
+                "trailer_before_friday", "HIGHER_IN_OVERPERFORMERS", 0.0041, 0.031, 57L, null, null, null);
+        RecommendedActionCandidate c1 = new RecommendedActionCandidate(
+                "nonobvious-lever-trailer-before-friday", "trailer_before_friday", RecommendedActionCategory.MEDIUM_IMPACT,
+                70, -120, -1, "label", List.of(), List.of(), List.of(), evidence);
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"nonobvious-lever-trailer-before-friday\", " +
+                        "\"reason\": \"This is 3.1% (q=0.031) with 57 comparable entities.\"}]");
+
+        service.getRecommendedActions(ENTITY_ID, false, true);
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(llmService).generateReply(promptCaptor.capture());
+        JsonNode candidateNode = MAPPER.readTree(promptCaptor.getValue()).get("candidates").get(0);
+        JsonNode se = candidateNode.get("statisticalEvidence");
+
+        assertThat(se.get("featureName").asText()).isEqualTo("trailer_before_friday");
+        assertThat(se.get("direction").asText()).isEqualTo("HIGHER_IN_OVERPERFORMERS");
+        assertThat(se.get("pValue").asDouble()).isEqualTo(0.0041);
+        assertThat(se.get("fdrQValue").asDouble()).isEqualTo(0.031);
+        assertThat(se.get("nEntities").asLong()).isEqualTo(57L);
+        // Fields not present on this candidate's StatisticalEvidence (playbook-only fields) must not
+        // appear at all - the Java layer never backfills or computes a value the candidate didn't carry.
+        assertThat(se.has("patternSequence")).isFalse();
+        assertThat(se.has("supportTopTier")).isFalse();
+        assertThat(se.has("supportBottomTier")).isFalse();
+    }
+
+    @Test
+    void prompt_omitsStatisticalEvidenceEntirelyForOrdinaryCandidate() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "factor-46-teaser", "Teaser/Trailer Timing", 90, -45, -30, "label", "some fact");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-46-teaser\", \"reason\": \"Grounded reason.\"}]");
+
+        service.getRecommendedActions(ENTITY_ID, false, true);
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(llmService).generateReply(promptCaptor.capture());
+        JsonNode candidateNode = MAPPER.readTree(promptCaptor.getValue()).get("candidates").get(0);
+        assertThat(candidateNode.has("statisticalEvidence")).isFalse();
     }
 
     // ==================== Example handles guaranteed in reason text ====================

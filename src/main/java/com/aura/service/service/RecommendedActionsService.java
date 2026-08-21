@@ -477,7 +477,7 @@ public class RecommendedActionsService {
             if (title.isEmpty()) {
                 title = candidate.factorName();
             }
-            warnIfReasonHasUngroundedNumber(candidateId, reason, candidate.supportingFacts(), entityId);
+            warnIfReasonHasUngroundedNumber(candidateId, reason, candidate, entityId);
             if (BRACKET_PLACEHOLDER.matcher(reason).find() || BRACKET_PLACEHOLDER.matcher(title).find()) {
                 log.warn("Recommended actions LLM output a literal bracket placeholder for candidate '{}' " +
                         "(entity {}) — using this candidate's generic fallback reason instead. title=\"{}\" reason=\"{}\"",
@@ -539,17 +539,35 @@ public class RecommendedActionsService {
     // appear somewhere in that candidate's own supportingFacts. A mismatch doesn't block the reason
     // from being used - it's logged so an invented number can be caught and investigated.
     private static void warnIfReasonHasUngroundedNumber(
-            String candidateId, String reason, List<String> supportingFacts, Long entityId) {
-        String factsJoined = String.join(" ", supportingFacts);
+            String candidateId, String reason, RecommendedActionCandidate candidate, Long entityId) {
+        String groundedText = String.join(" ", candidate.supportingFacts()) + " "
+                + statisticalEvidenceAsText(candidate.statisticalEvidence());
         Matcher matcher = DIGIT_SEQUENCE.matcher(reason);
         while (matcher.find()) {
             String digits = matcher.group();
-            if (!factsJoined.contains(digits)) {
+            if (!groundedText.contains(digits)) {
                 log.warn("Recommended actions LLM reason for candidate '{}' (entity {}) contains digit sequence " +
                                 "'{}' not found in its own supporting facts — possible invented number. Reason: \"{}\"",
                         candidateId, entityId, digits, reason);
             }
         }
+    }
+
+    // Statistical candidates carry their numbers in statisticalEvidence rather than supportingFacts
+    // prose (see RecommendedActionCandidateServiceImpl.generateNonObviousLeverCandidates/
+    // generatePlaybookCandidates) - fold its fields into the grounding text so a factually-phrased
+    // p-value/q-value/sample-size isn't flagged as an invented number.
+    private static String statisticalEvidenceAsText(RecommendedActionCandidate.StatisticalEvidence evidence) {
+        if (evidence == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        if (evidence.pValue() != null) text.append(' ').append(evidence.pValue());
+        if (evidence.fdrQValue() != null) text.append(' ').append(evidence.fdrQValue());
+        if (evidence.nEntities() != null) text.append(' ').append(evidence.nEntities());
+        if (evidence.supportTopTier() != null) text.append(' ').append(evidence.supportTopTier());
+        if (evidence.supportBottomTier() != null) text.append(' ').append(evidence.supportBottomTier());
+        return text.toString();
     }
 
     private String buildPrompt(ManagedEntity entity, List<RecommendedActionCandidate> candidates) {
@@ -580,6 +598,7 @@ public class RecommendedActionsService {
             n.put("windowLabel", c.windowLabel());
             ArrayNode facts = n.putArray("supportingFacts");
             c.supportingFacts().forEach(facts::add);
+            putStatisticalEvidence(n, c.statisticalEvidence());
         }
 
         return llmPrompt.replace(CANDIDATE_DATA_PLACEHOLDER, root.toString());
@@ -588,6 +607,36 @@ public class RecommendedActionsService {
     private static void putIfPresent(ObjectNode node, String field, String value) {
         if (value != null && !value.isBlank()) {
             node.put(field, value);
+        }
+    }
+
+    // Only the fields actually present on this candidate's StatisticalEvidence are serialized - never
+    // backfilled or computed here, so the LLM never sees a number this service invented for the prompt.
+    private static void putStatisticalEvidence(ObjectNode candidateNode, RecommendedActionCandidate.StatisticalEvidence evidence) {
+        if (evidence == null) {
+            return;
+        }
+        ObjectNode n = candidateNode.putObject("statisticalEvidence");
+        putIfPresent(n, "featureName", evidence.featureName());
+        putIfPresent(n, "direction", evidence.direction());
+        if (evidence.pValue() != null) {
+            n.put("pValue", evidence.pValue());
+        }
+        if (evidence.fdrQValue() != null) {
+            n.put("fdrQValue", evidence.fdrQValue());
+        }
+        if (evidence.nEntities() != null) {
+            n.put("nEntities", evidence.nEntities());
+        }
+        if (evidence.patternSequence() != null) {
+            ArrayNode seq = n.putArray("patternSequence");
+            evidence.patternSequence().forEach(seq::add);
+        }
+        if (evidence.supportTopTier() != null) {
+            n.put("supportTopTier", evidence.supportTopTier());
+        }
+        if (evidence.supportBottomTier() != null) {
+            n.put("supportBottomTier", evidence.supportBottomTier());
         }
     }
 

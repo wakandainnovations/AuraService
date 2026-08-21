@@ -29,6 +29,11 @@ import java.util.List;
  *                        real accounts (a superset of {@code exampleHandles}), each carrying a platform
  *                        and profile link when AuraMath's response actually supplied one; empty when the
  *                        underlying data isn't account-level. Never LLM-authored.
+ * @param statisticalEvidence AuraMath F5/F7 statistical-mining evidence (p-value, FDR q-value, sample
+ *                        size, direction, or a mined pattern sequence) backing this candidate, copied
+ *                        verbatim from AuraMath's response; null for every candidate not sourced from
+ *                        those endpoints. Carried as structured data rather than prose so Phase 2 states
+ *                        it factually instead of paraphrasing a number out of a sentence.
  */
 public record RecommendedActionCandidate(
         String candidateId,
@@ -40,6 +45,42 @@ public record RecommendedActionCandidate(
         String windowLabel,
         List<String> supportingFacts,
         List<String> exampleHandles,
-        List<RecommendedActionUser> relevantUsers
+        List<RecommendedActionUser> relevantUsers,
+        StatisticalEvidence statisticalEvidence
 ) {
+
+    /** Compatibility constructor for every candidate not backed by AuraMath's F5/F7 statistical mining. */
+    public RecommendedActionCandidate(
+            String candidateId,
+            String factorName,
+            RecommendedActionCategory category,
+            int confidencePct,
+            int windowStartDaysFromRelease,
+            int windowEndDaysFromRelease,
+            String windowLabel,
+            List<String> supportingFacts,
+            List<String> exampleHandles,
+            List<RecommendedActionUser> relevantUsers) {
+        this(candidateId, factorName, category, confidencePct, windowStartDaysFromRelease,
+                windowEndDaysFromRelease, windowLabel, supportingFacts, exampleHandles, relevantUsers, null);
+    }
+
+    /**
+     * Statistical-mining evidence copied verbatim from AuraMath - never computed or rounded by this
+     * service. {@code featureName}/{@code direction}/{@code pValue} are populated for a nonobvious-lever
+     * candidate; {@code patternSequence}/{@code supportTopTier}/{@code supportBottomTier} for a
+     * playbook-sequence candidate; {@code fdrQValue}/{@code nEntities} are populated for both. Fields not
+     * applicable to a given candidate are null.
+     */
+    public record StatisticalEvidence(
+            String featureName,
+            String direction,
+            Double pValue,
+            Double fdrQValue,
+            Long nEntities,
+            List<String> patternSequence,
+            Long supportTopTier,
+            Long supportBottomTier
+    ) {
+    }
 }

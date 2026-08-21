@@ -32,12 +32,14 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -68,6 +70,8 @@ class RecommendedActionCandidateServiceImplTest {
     private MovieBuffLookupService movieBuffLookup;
     private ViralSeedLookupService viralSeedLookup;
     private MovieMarketingTacticsQueryService tacticsQueryService;
+    private NonObviousLeverLookupService nonObviousLeverLookup;
+    private PlaybookLookupService playbookLookup;
     // Fixed well before every releaseDate used across this file's tests, so "not yet released" (the
     // common-tactic filler gate) holds for them by default without each test having to think about it.
     private final Clock clock = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
@@ -88,11 +92,13 @@ class RecommendedActionCandidateServiceImplTest {
         movieBuffLookup = mock(MovieBuffLookupService.class);
         viralSeedLookup = mock(ViralSeedLookupService.class);
         tacticsQueryService = mock(MovieMarketingTacticsQueryService.class);
+        nonObviousLeverLookup = mock(NonObviousLeverLookupService.class);
+        playbookLookup = mock(PlaybookLookupService.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                clock);
+                nonObviousLeverLookup, playbookLookup, clock);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
@@ -106,6 +112,8 @@ class RecommendedActionCandidateServiceImplTest {
         when(mobilizeActionRepository.findByEntityIdIn(any())).thenReturn(List.of());
         when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(any(), any(), any(), any()))
                 .thenReturn(List.of());
+        when(nonObviousLeverLookup.getNonObviousLevers(anyLong())).thenReturn(List.of());
+        when(playbookLookup.getPlaybookPatterns(any(), any())).thenReturn(List.of());
     }
 
     // ==================== Category threshold boundaries ====================
@@ -766,7 +774,7 @@ class RecommendedActionCandidateServiceImplTest {
                 new DashboardService(mentionRepository, entityRepository, mock(ReplyDraftRepository.class),
                         mock(CrisisPlanRepository.class), mock(CheckpointRepository.class), null),
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                pastReleaseClock);
+                nonObviousLeverLookup, playbookLookup, pastReleaseClock);
         // Far from any holiday and thin plan (2 grounded actions), but releaseDate is before the
         // fixed clock's "now" -> already released, so no fallback regardless of low inventory.
         ManagedEntity entity = movie(LocalDate.of(2019, 2, 17), "Action", "Kannada", null);
@@ -1088,6 +1096,110 @@ class RecommendedActionCandidateServiceImplTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.buildCandidateActions(ENTITY_ID))
                 .isInstanceOf(com.aura.service.exception.ResourceNotFoundException.class);
+    }
+
+    // ==================== Non-obvious lever (AuraMath F5) ====================
+
+    @Test
+    void nonObviousLever_findingAtOrAboveQValueBar_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, null, null)));
+        when(nonObviousLeverLookup.getNonObviousLevers(ENTITY_ID)).thenReturn(List.of(
+                new NonObviousLeverLookupService.LeverFinding(
+                        "trailer_before_friday", "HIGHER_IN_OVERPERFORMERS", 0.02, 0.10, 40)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("nonobvious-lever-"));
+    }
+
+    @Test
+    void nonObviousLever_qualifyingFinding_carriesExactFieldsUnmodified() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, null, null)));
+        when(nonObviousLeverLookup.getNonObviousLevers(ENTITY_ID)).thenReturn(List.of(
+                new NonObviousLeverLookupService.LeverFinding(
+                        "trailer_before_friday", "HIGHER_IN_OVERPERFORMERS", 0.0041, 0.031, 57)));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "nonobvious-lever-trailer-before-friday");
+
+        assertThat(candidate.supportingFacts()).isEmpty();
+        RecommendedActionCandidate.StatisticalEvidence evidence = candidate.statisticalEvidence();
+        assertThat(evidence).isNotNull();
+        assertThat(evidence.featureName()).isEqualTo("trailer_before_friday");
+        assertThat(evidence.direction()).isEqualTo("HIGHER_IN_OVERPERFORMERS");
+        assertThat(evidence.pValue()).isEqualTo(0.0041);
+        assertThat(evidence.fdrQValue()).isEqualTo(0.031);
+        assertThat(evidence.nEntities()).isEqualTo(57L);
+        assertThat(evidence.patternSequence()).isNull();
+    }
+
+    // ==================== Playbook sequence (AuraMath F7) ====================
+
+    @Test
+    void playbook_entityMissingIndustryOrLanguage_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Hindi", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("playbook-sequence-"));
+        verifyNoInteractions(playbookLookup);
+    }
+
+    @Test
+    void playbook_patternAtOrAboveQValueBar_neverProducesCandidate() {
+        ManagedEntity entity = movie(null, null, "Hindi", null);
+        entity.setIndustry("Bollywood");
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
+                new PlaybookLookupService.PlaybookPattern(
+                        List.of("TEASER", "TRAILER"), 30, 4, 0.02, 0.10, 25)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("playbook-sequence-"));
+    }
+
+    @Test
+    void playbook_qualifyingPattern_carriesExactFieldsUnmodified() {
+        ManagedEntity entity = movie(null, null, "Hindi", null);
+        entity.setIndustry("Bollywood");
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        List<String> sequence = List.of("CAST_ANNOUNCEMENT", "TEASER", "TRAILER");
+        when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
+                new PlaybookLookupService.PlaybookPattern(sequence, 30, 4, 0.0018, 0.024, 63)));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "playbook-sequence-bollywood-hindi");
+
+        assertThat(candidate.supportingFacts()).isEmpty();
+        RecommendedActionCandidate.StatisticalEvidence evidence = candidate.statisticalEvidence();
+        assertThat(evidence).isNotNull();
+        assertThat(evidence.patternSequence()).containsExactlyElementsOf(sequence);
+        assertThat(evidence.supportTopTier()).isEqualTo(30L);
+        assertThat(evidence.supportBottomTier()).isEqualTo(4L);
+        assertThat(evidence.fdrQValue()).isEqualTo(0.024);
+        assertThat(evidence.nEntities()).isEqualTo(63L);
+        assertThat(evidence.pValue()).isNull();
+        assertThat(evidence.featureName()).isNull();
+    }
+
+    @Test
+    void playbook_multipleQualifyingPatternsForSameCohort_getDistinctCandidateIds() {
+        ManagedEntity entity = movie(null, null, "Hindi", null);
+        entity.setIndustry("Bollywood");
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
+                new PlaybookLookupService.PlaybookPattern(List.of("TEASER", "TRAILER"), 30, 4, 0.001, 0.02, 63),
+                new PlaybookLookupService.PlaybookPattern(List.of("MUSIC_LAUNCH", "PROMO_EVENT"), 22, 6, 0.004, 0.05, 40)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        List<String> playbookIds = candidates.stream()
+                .map(RecommendedActionCandidate::candidateId)
+                .filter(id -> id.startsWith("playbook-sequence-"))
+                .toList();
+        assertThat(playbookIds).containsExactlyInAnyOrder(
+                "playbook-sequence-bollywood-hindi", "playbook-sequence-bollywood-hindi-2");
     }
 
     // ==================== Helpers ====================

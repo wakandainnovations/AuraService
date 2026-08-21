@@ -71,6 +71,14 @@ import java.util.stream.Collectors;
  * {@link #buildCandidateActions} as a fallback for a movie whose plan is otherwise too thin, still
  * pre-release, and for which tracked posts don't already evidence the tactic - see
  * {@link #isCommonTactic}/{@link #alreadyPostedTacticSignal}.
+ *
+ * <p>{@link #generateNonObviousLeverCandidates} and {@link #generatePlaybookCandidates} are likewise not
+ * grounded in {@link BoxOfficeFactorCatalog}: they read AuraMath's F5/F7 statistical-mining tables
+ * ({@link NonObviousLeverLookupService}, {@link PlaybookLookupService}) and carry their p-value/FDR
+ * q-value/sample-size evidence as {@link com.aura.service.dto.RecommendedActionCandidate.StatisticalEvidence}
+ * rather than a prose {@code supportingFacts} sentence - Phase 2 phrases it. Both withhold any finding at
+ * or above {@link #STATISTICAL_EVIDENCE_Q_VALUE_BAR}, the same "don't surface what didn't clear a
+ * threshold" convention as every comps/sample-size gate above.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -217,6 +225,21 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int PEER_TACTIC_WINDOW_START_DAYS = -120;
     static final int PEER_TACTIC_WINDOW_END_DAYS = -1;
 
+    // ---- Non-obvious lever / playbook-sequence: neither has a per-day execution window of its own
+    // (a mined behavioral feature or checkpoint sequence, not a calendar fact), so both reuse the same
+    // broad pre-release runway as PEER_TACTIC_WINDOW_*. A finding at or above STATISTICAL_EVIDENCE_Q_VALUE_BAR
+    // never produces a candidate at all - the same "don't surface what didn't clear a threshold"
+    // convention as compsConfidence/peerTacticConfidence. Confidence is tiered by FDR q-value itself
+    // (lower = stronger evidence, so the tier comparisons run the opposite direction from every other
+    // *_TIER_* threshold in this file), not by sample size - AuraMath's F5/F7 miners already fold sample
+    // size into the q-value via multiple-testing correction. ----
+    static final double STATISTICAL_EVIDENCE_Q_VALUE_BAR = 0.10;
+    static final double STATISTICAL_EVIDENCE_Q_TIER_HIGH = 0.01;
+    static final double STATISTICAL_EVIDENCE_Q_TIER_MID = 0.05;
+    static final int STATISTICAL_EVIDENCE_CONFIDENCE_LOW = 55;
+    static final int STATISTICAL_EVIDENCE_CONFIDENCE_MID = 70;
+    static final int STATISTICAL_EVIDENCE_CONFIDENCE_HIGH = 85;
+
     // ---- Common-tactic filtering: a (main, sub) classification bucket run by most genre+language
     // peer movies (a teaser or trailer release, say) is something a marketing team already knows to
     // do without this platform prompting it - see peerMarketingTacticCandidates/isCommonTactic. Such
@@ -331,6 +354,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final MovieBuffLookupService movieBuffLookup;
     private final ViralSeedLookupService viralSeedLookup;
     private final MovieMarketingTacticsQueryService tacticsQueryService;
+    private final NonObviousLeverLookupService nonObviousLeverLookup;
+    private final PlaybookLookupService playbookLookup;
     private final Clock clock;
 
     public RecommendedActionCandidateServiceImpl(
@@ -344,6 +369,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             MovieBuffLookupService movieBuffLookup,
             ViralSeedLookupService viralSeedLookup,
             MovieMarketingTacticsQueryService tacticsQueryService,
+            NonObviousLeverLookupService nonObviousLeverLookup,
+            PlaybookLookupService playbookLookup,
             Clock clock) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
@@ -355,6 +382,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.movieBuffLookup = movieBuffLookup;
         this.viralSeedLookup = viralSeedLookup;
         this.tacticsQueryService = tacticsQueryService;
+        this.nonObviousLeverLookup = nonObviousLeverLookup;
+        this.playbookLookup = playbookLookup;
         this.clock = clock;
     }
 
@@ -392,6 +421,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, viralSeedCandidate(keywords));
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
+        candidates.addAll(generateNonObviousLeverCandidates(entity));
+        candidates.addAll(generatePlaybookCandidates(entity));
 
         // Common tactics are withheld above (see COMMON_TACTIC_PREVALENCE_THRESHOLD) - only worth
         // adding back as a fallback once every other generator has had its say, when this movie's
@@ -1228,6 +1259,81 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return WORD_OF_MOUTH_CONFIDENCE_MID;
         }
         return WORD_OF_MOUTH_CONFIDENCE_LOW;
+    }
+
+    // ==================== Non-obvious lever (AuraMath F5, pooled 'ALL' cohort) ====================
+
+    // Not grounded in BoxOfficeFactorCatalog, like peerMarketingTacticCandidates above: AuraMath's F5
+    // lever-miner findings have their own statistical evidence (p-value, FDR q-value, direction, sample
+    // size), so category is fixed rather than tiered off a catalog midpoint that doesn't exist for this
+    // data source. No prose supportingFacts here - the numbers ride along as statisticalEvidence, and
+    // RecommendedActionsService's LLM pass phrases them into a sentence.
+    private List<RecommendedActionCandidate> generateNonObviousLeverCandidates(ManagedEntity entity) {
+        List<RecommendedActionCandidate> candidates = new ArrayList<>();
+        for (NonObviousLeverLookupService.LeverFinding finding : nonObviousLeverLookup.getNonObviousLevers(entity.getId())) {
+            if (finding.fdrQValue() >= STATISTICAL_EVIDENCE_Q_VALUE_BAR) {
+                continue;
+            }
+            RecommendedActionCandidate.StatisticalEvidence evidence = new RecommendedActionCandidate.StatisticalEvidence(
+                    finding.featureName(), finding.direction(), finding.pValue(), finding.fdrQValue(),
+                    finding.nEntities(), null, null, null);
+            candidates.add(new RecommendedActionCandidate(
+                    "nonobvious-lever-" + slug(finding.featureName()),
+                    finding.featureName(), RecommendedActionCategory.MEDIUM_IMPACT,
+                    statisticalEvidenceConfidence(finding.fdrQValue()),
+                    PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
+                    buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
+                    List.of(), List.of(), List.of(), evidence));
+        }
+        return candidates;
+    }
+
+    // ==================== Playbook sequence (AuraMath F7, entity's (industry, language) cohort) ====================
+
+    // Same "not grounded in BoxOfficeFactorCatalog, no prose supportingFacts" reasoning as
+    // generateNonObviousLeverCandidates above. Skipped entirely (like every other genre/language-gated
+    // generator in this file) when the entity has no industry or language on file - AuraMath's playbook
+    // endpoint requires both to resolve a cohort. candidateId is suffixed with a running index past the
+    // first qualifying pattern for this cohort, so two distinct mined sequences for the same cohort never
+    // collide on the same id (playbook_patterns can hold more than one qualifying row per cohort, unlike
+    // nonobvious_lever_findings' one-row-per-feature shape).
+    private List<RecommendedActionCandidate> generatePlaybookCandidates(ManagedEntity entity) {
+        String industry = entity.getIndustry();
+        String language = entity.getLanguage();
+        if (industry == null || industry.isBlank() || language == null || language.isBlank()) {
+            return List.of();
+        }
+
+        String cohortSlug = slug(industry + "-" + language);
+        List<RecommendedActionCandidate> candidates = new ArrayList<>();
+        int qualifying = 0;
+        for (PlaybookLookupService.PlaybookPattern pattern : playbookLookup.getPlaybookPatterns(industry, language)) {
+            if (pattern.fdrQValue() >= STATISTICAL_EVIDENCE_Q_VALUE_BAR) {
+                continue;
+            }
+            qualifying++;
+            String candidateId = "playbook-sequence-" + cohortSlug + (qualifying == 1 ? "" : "-" + qualifying);
+            RecommendedActionCandidate.StatisticalEvidence evidence = new RecommendedActionCandidate.StatisticalEvidence(
+                    null, null, null, pattern.fdrQValue(), pattern.nEntities(),
+                    pattern.patternSequence(), pattern.supportTopTier(), pattern.supportBottomTier());
+            candidates.add(new RecommendedActionCandidate(
+                    candidateId, industry + " / " + language + " playbook sequence",
+                    RecommendedActionCategory.MEDIUM_IMPACT, statisticalEvidenceConfidence(pattern.fdrQValue()),
+                    PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
+                    buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
+                    List.of(), List.of(), List.of(), evidence));
+        }
+        return candidates;
+    }
+
+    static int statisticalEvidenceConfidence(double fdrQValue) {
+        if (fdrQValue < STATISTICAL_EVIDENCE_Q_TIER_HIGH) {
+            return STATISTICAL_EVIDENCE_CONFIDENCE_HIGH;
+        }
+        if (fdrQValue < STATISTICAL_EVIDENCE_Q_TIER_MID) {
+            return STATISTICAL_EVIDENCE_CONFIDENCE_MID;
+        }
+        return STATISTICAL_EVIDENCE_CONFIDENCE_LOW;
     }
 
     // ==================== Genre resolution ====================
