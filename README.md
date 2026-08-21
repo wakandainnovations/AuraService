@@ -6937,6 +6937,18 @@ com.aura.service
 - **GlobalExceptionHandler:** Centralized error handling
 - **Mock Services:** LLM, Social Media, and Analytics mock implementations
 
+### Standalone Python Batch Jobs
+
+`python-batch-jobs/` (repo root) holds scheduled offline analyses that connect directly to the
+shared `aura` Postgres DB and are **not** part of this Java build — see
+`docs/AUDIENCE_BEHAVIOR_PATTERN_FEATURE_BREAKDOWN.md` for the full design (features F4, F5, F7).
+So far only **F7**, `playbook_pattern_miner.py`, is built: it mines ordered
+`CheckpointType`/`SPILLOVER_<platform>`/`SENTIMENT_SPIKE` symbol sequences per tracked movie and
+finds which subsequences are statistically associated (Fisher's exact + BH-FDR, `q < 0.10`) with
+landing in the top vs. bottom tertile of a movie's `(industry, language)` cohort by cumulative
+engagement volume, persisting surviving patterns to `playbook_patterns`. See
+`python-batch-jobs/README.md` for setup, run, and scheduling instructions.
+
 ---
 
 ## Production Deployment

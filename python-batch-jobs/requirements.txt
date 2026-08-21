@@ -1,0 +1,15 @@
+# Shared requirements for the standalone Python batch jobs described in
+# docs/AUDIENCE_BEHAVIOR_PATTERN_FEATURE_BREAKDOWN.md (F4, F5, F7). Only F7
+# (playbook_pattern_miner.py) is built so far -- add to this file, don't replace it,
+# when F4 (causal precedence engine) or F5 (non-obvious lever miner) land.
+
+psycopg2-binary>=2.9
+scipy>=1.18
+statsmodels>=0.14
+prefixspan>=0.5   # F7 only (sequential pattern mining)
+
+# F4 will additionally need: pandas, networkx
+# F5 will additionally need: pandas
+
+# Dev/test only
+pytest>=9.0
