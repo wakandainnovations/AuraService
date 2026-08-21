@@ -265,6 +265,7 @@ def mine_and_test_cohort(
         )
         table = [[appears_high, appears_low], [not_high, not_low]]
         _odds_ratio, p_value = fisher_exact(table)
+        p_value = float(p_value)  # scipy returns numpy.float64, which psycopg2 can't adapt
         results.append(
             PatternResult(
                 cohort=cohort_label,

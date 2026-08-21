@@ -98,6 +98,28 @@ def test_pooled_fallback_skipped_when_globally_still_under_minimum():
     assert groups == {}
 
 
+def test_p_value_and_q_value_are_plain_python_floats_not_numpy_scalars():
+    # psycopg2 can't adapt numpy.float64 (it fails to match the registered `float` adapter by
+    # exact type even though float64 subclasses float) -- caught via a real run against Postgres
+    # where fisher_exact's raw p_value slipped through uncast. type(x) is float, not isinstance,
+    # is the check that actually distinguishes the two.
+    entities = {}
+    eid = 1
+    for i in range(6):
+        entities[eid] = make_entity(eid, "X", "Y", ["TRAILER", "SPILLOVER_X"], 1000.0 + i)
+        eid += 1
+    for i in range(6):
+        entities[eid] = make_entity(eid, "X", "Y", ["TEASER"], 10.0 + i)
+        eid += 1
+
+    surviving, _ = run_pipeline(entities)
+
+    assert surviving
+    for r in surviving:
+        assert type(r.p_value) is float
+        assert type(r.fdr_q_value) is float
+
+
 def test_contingency_table_counts_entity_absent_from_both_mined_sets_as_no_in_both_tiers():
     # entity 3 (high tier) and entity 6 (low tier) contain neither TRAILER nor SPILLOVER_X at all
     # -- they were never candidates for either mined pattern, but must still count as a "no" in
