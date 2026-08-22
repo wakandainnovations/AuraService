@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.EntityLanguageSpreaderSnapshot;
+import com.aura.service.entity.EntityViralSeedSnapshot;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.enums.RecommendedActionCategory;
@@ -10,11 +11,13 @@ import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.EntityLanguageSpreaderSnapshotRepository;
+import com.aura.service.repository.EntityViralSeedSnapshotRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
+import com.aura.service.service.ViralSeedLookupService.ViralSeed;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +78,7 @@ class RecommendedActionCandidateServiceImplTest {
     private NonObviousLeverLookupService nonObviousLeverLookup;
     private PlaybookLookupService playbookLookup;
     private EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository;
+    private EntityViralSeedSnapshotRepository viralSeedSnapshotRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     // Fixed well before every releaseDate used across this file's tests, so "not yet released" (the
     // common-tactic filler gate) holds for them by default without each test having to think about it.
@@ -99,11 +103,13 @@ class RecommendedActionCandidateServiceImplTest {
         nonObviousLeverLookup = mock(NonObviousLeverLookupService.class);
         playbookLookup = mock(PlaybookLookupService.class);
         spreaderSnapshotRepository = mock(EntityLanguageSpreaderSnapshotRepository.class);
+        viralSeedSnapshotRepository = mock(EntityViralSeedSnapshotRepository.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, objectMapper, clock);
+                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, viralSeedSnapshotRepository,
+                objectMapper, clock);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
@@ -780,7 +786,8 @@ class RecommendedActionCandidateServiceImplTest {
                 new DashboardService(mentionRepository, entityRepository, mock(ReplyDraftRepository.class),
                         mock(CrisisPlanRepository.class), mock(CheckpointRepository.class), null),
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, objectMapper, pastReleaseClock);
+                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, viralSeedSnapshotRepository,
+                objectMapper, pastReleaseClock);
         // Far from any holiday and thin plan (2 grounded actions), but releaseDate is before the
         // fixed clock's "now" -> already released, so no fallback regardless of low inventory.
         ManagedEntity entity = movie(LocalDate.of(2019, 2, 17), "Action", "Kannada", null);
@@ -1332,6 +1339,103 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(10_000_000.0)).isTrue();
     }
 
+    // ==================== Cumulative view-count gap + viral-seed outreach ====================
+
+    @Test
+    void viralSeedViewCountGap_noBudgetOnFile_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().equals("viral-seed-view-count-gap"));
+        verify(mentionRepository, never()).findTotalViewsForEntity(any());
+        verifyNoInteractions(viralSeedSnapshotRepository);
+    }
+
+    @Test
+    void viralSeedViewCountGap_zeroOwnViews_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(0L);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().equals("viral-seed-view-count-gap"));
+        verifyNoInteractions(viralSeedSnapshotRepository);
+    }
+
+    @Test
+    void viralSeedViewCountGap_noComparableMovieHasRealBudget_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(1_000L);
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(movieWithId(2L, null, "Tamil", 404.0), movieWithId(3L, null, "Tamil", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().equals("viral-seed-view-count-gap"));
+        verify(mentionRepository, never()).findTotalViewsForEntities(any());
+    }
+
+    @Test
+    void viralSeedViewCountGap_gapBelowThreshold_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(1_000L);
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(movieWithId(2L, null, "Tamil", 11_000_000.0)));
+        // Only 5% more than this movie's own 1,000 views - below VIEW_GAP_MIN_PCT_MORE_FRACTION (15%).
+        when(mentionRepository.findTotalViewsForEntities(List.of(2L)))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, 1_050L}));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().equals("viral-seed-view-count-gap"));
+    }
+
+    @Test
+    void viralSeedViewCountGap_meaningfulGap_producesCandidateCitingComparableMovieAndNewOutreachTargets() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(1_000L);
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(
+                        movieWithId(2L, null, "Tamil", 11_000_000.0),
+                        namedMovie(3L, "Peer Movie", "Tamil", 12_000_000.0)));
+        // Movie 2 is only 5% ahead (doesn't qualify); Peer Movie (3) is 100% ahead and is the only
+        // qualifying comp, so it's the one cited regardless of the daily reselection shuffle.
+        when(mentionRepository.findTotalViewsForEntities(List.of(2L, 3L)))
+                .thenReturn(List.of(new Object[]{2L, 1_050L}, new Object[]{3L, 2_000L}));
+        when(viralSeedSnapshotRepository.findByEntityIdIn(List.of(3L)))
+                .thenReturn(List.of(viralSeedSnapshot(3L, viralSeeds(3))));
+        // seed-0 has already commented on this movie - must be excluded from the outreach roster.
+        when(mentionRepository.existsByManagedEntityIdAndAuthorIgnoreCase(ENTITY_ID, "seed-0")).thenReturn(true);
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "viral-seed-view-count-gap");
+
+        assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+        assertThat(candidate.supportingFacts().get(0))
+                .contains("Peer Movie")
+                .contains("2,000")
+                .contains("100%");
+        assertThat(candidate.exampleHandles()).doesNotContain("seed-0");
+        assertThat(candidate.exampleHandles()).containsExactly("seed-1", "seed-2");
+        assertThat(candidate.relevantUsers()).hasSize(2);
+    }
+
+    @Test
+    void viewGapConfidenceLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.viewGapConfidence(1)).isEqualTo(50);
+    }
+
+    @Test
+    void viewGapConfidenceMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.viewGapConfidence(3)).isEqualTo(65);
+    }
+
+    @Test
+    void viewGapConfidenceHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.viewGapConfidence(6)).isEqualTo(80);
+    }
+
     // ==================== Helpers ====================
 
     private static ManagedEntity movie(LocalDate releaseDate, String genre, String language, Double budget) {
@@ -1378,6 +1482,28 @@ class RecommendedActionCandidateServiceImplTest {
         snapshot.setSpreaderCount(profiles.size());
         try {
             snapshot.setSpreadersJson(objectMapper.writeValueAsString(profiles));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        snapshot.setGeneratedAt(Instant.now());
+        return snapshot;
+    }
+
+    /** {@code count} distinct ViralSeeds ("seed-0".."seed-{count-1}"), in that order. */
+    private static List<ViralSeed> viralSeeds(int count) {
+        List<ViralSeed> seeds = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            seeds.add(new ViralSeed("seed-" + i, "TWITTER", null));
+        }
+        return seeds;
+    }
+
+    private EntityViralSeedSnapshot viralSeedSnapshot(Long entityId, List<ViralSeed> seeds) {
+        EntityViralSeedSnapshot snapshot = new EntityViralSeedSnapshot();
+        snapshot.setEntityId(entityId);
+        snapshot.setSeedCount(seeds.size());
+        try {
+            snapshot.setSeedsJson(objectMapper.writeValueAsString(seeds));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

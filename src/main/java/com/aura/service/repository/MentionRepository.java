@@ -666,6 +666,17 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     boolean existsByManagedEntityIdAndContentContainingIgnoreCase(
             @Param("entityId") Long entityId, @Param("keyword") String keyword);
 
+    /**
+     * Whether {@code author} has already posted/commented about this entity at all. Used by
+     * {@code RecommendedActionCandidateServiceImpl}'s cumulative-view-count-gap candidate to filter a
+     * comparable, higher-viewed movie's viral-seed accounts down to genuinely new outreach prospects -
+     * ones who haven't already engaged with this movie.
+     */
+    @Query("SELECT COUNT(m) > 0 FROM Mention m WHERE LOWER(m.author) = LOWER(:author) AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId)")
+    boolean existsByManagedEntityIdAndAuthorIgnoreCase(
+            @Param("entityId") Long entityId, @Param("author") String author);
+
     @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
             "  SELECT x.topic_category FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +

@@ -5,6 +5,7 @@ import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.dto.RecommendedActionUser;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.EntityLanguageSpreaderSnapshot;
+import com.aura.service.entity.EntityViralSeedSnapshot;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.enums.RecommendedActionCategory;
@@ -12,6 +13,7 @@ import com.aura.service.enums.Sentiment;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.exception.ResourceNotFoundException;
 import com.aura.service.repository.EntityLanguageSpreaderSnapshotRepository;
+import com.aura.service.repository.EntityViralSeedSnapshotRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
@@ -34,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -90,6 +93,13 @@ import java.util.stream.Collectors;
  * {@link #comparableBudgetCandidates}, a missing/undisclosed budget on this movie skips the candidate
  * entirely rather than falling back to an unscoped comparison - "of similar budget" is the whole point
  * of this candidate. See {@link #hasRealBudget} for the {@code 404}-as-undisclosed sentinel convention.
+ *
+ * <p>{@link #viralSeedViewCountGapCandidate} is the budget-comparable sibling of
+ * {@link #topSpreaderGapCandidates}: it compares this movie's own cumulative view count (summed
+ * across all four tracked platforms, see {@link MentionRepository#findTotalViewsForEntity}) against
+ * budget-comparable movies', and when one or more are meaningfully ahead, offers that movie's
+ * {@link EntityViralSeedSnapshot} (populated by {@link ViralSeedSyncService}'s periodic AuraMath
+ * viral-seeds sweep) as outreach targets who haven't already commented on this movie.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -265,6 +275,26 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // considered meaningful enough to surface - avoids flagging noise like "1 vs 2".
     static final int SPREADER_GAP_MIN_ABSOLUTE_SHORTFALL = 3;
 
+    // ---- Cumulative view-count gap: tiered by how many budget-comparable movies have a meaningfully
+    // higher cumulative view count than this movie - same reasoning/tiering as SPREADER_GAP_TIER_*. ----
+    static final long VIEW_GAP_TIER_MIN = 1;
+    static final long VIEW_GAP_TIER_MID = 3;
+    static final long VIEW_GAP_TIER_HIGH = 6;
+    static final int VIEW_GAP_CONFIDENCE_LOW = 50;
+    static final int VIEW_GAP_CONFIDENCE_MID = 65;
+    static final int VIEW_GAP_CONFIDENCE_HIGH = 80;
+
+    // Minimum fractional view-count lead a comparable movie needs over this movie's own cumulative
+    // view count before the gap is considered meaningful enough to surface - avoids flagging noise
+    // like "1,010 vs 1,000".
+    static final double VIEW_GAP_MIN_PCT_MORE_FRACTION = 0.15;
+
+    // How many comparable movies' view-count lead get cited by name in one candidate - kept small
+    // (like TOP_HANDLES_LIMIT) so the recommendation stays concrete rather than listing every
+    // qualifying comp; also which of the qualifying comps get chosen is reselected once per day (see
+    // viralSeedViewCountGapCandidate), so a periodic re-run surfaces a different real example over time.
+    static final int VIEW_GAP_MAX_EXAMPLES = 2;
+
     // When a movie underperforms, production houses often decline to disclose its budget, and that
     // refusal is recorded as the literal value 404 in managed_entities.budget rather than left null.
     // hasRealBudget treats it identically to "no budget on file" everywhere in this generator.
@@ -387,6 +417,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final NonObviousLeverLookupService nonObviousLeverLookup;
     private final PlaybookLookupService playbookLookup;
     private final EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository;
+    private final EntityViralSeedSnapshotRepository viralSeedSnapshotRepository;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -404,6 +435,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             NonObviousLeverLookupService nonObviousLeverLookup,
             PlaybookLookupService playbookLookup,
             EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository,
+            EntityViralSeedSnapshotRepository viralSeedSnapshotRepository,
             ObjectMapper objectMapper,
             Clock clock) {
         this.entityRepository = entityRepository;
@@ -419,6 +451,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.nonObviousLeverLookup = nonObviousLeverLookup;
         this.playbookLookup = playbookLookup;
         this.spreaderSnapshotRepository = spreaderSnapshotRepository;
+        this.viralSeedSnapshotRepository = viralSeedSnapshotRepository;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -460,6 +493,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         candidates.addAll(generateNonObviousLeverCandidates(entity));
         candidates.addAll(generatePlaybookCandidates(entity));
         candidates.addAll(topSpreaderGapCandidates(entity));
+        addIfPresent(candidates, viralSeedViewCountGapCandidate(entity));
 
         // Common tactics are withheld above (see COMMON_TACTIC_PREVALENCE_THRESHOLD) - only worth
         // adding back as a fallback once every other generator has had its say, when this movie's
@@ -1498,6 +1532,140 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         try {
             SpreaderProfile[] profiles = objectMapper.readValue(snapshot.getSpreadersJson(), SpreaderProfile[].class);
             return List.of(profiles);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    // ==================== Cumulative view-count gap + viral-seed outreach (this platform's own view
+    // totals, see MentionRepository.findTotalViewsForEntity(s), and ViralSeedSyncService's periodic
+    // AuraMath viral-seeds sweep, see EntityViralSeedSnapshot) ====================
+
+    // Compares this movie's own cumulative view count against budget-comparable movies' totals - the
+    // same "similar movie" pool topSpreaderGapCandidates uses above, not a genre/language comp. When
+    // one or more comparable movies are meaningfully ahead (VIEW_GAP_MIN_PCT_MORE_FRACTION or more), up
+    // to VIEW_GAP_MAX_EXAMPLES of them are cited by name with their real view counts, and the outreach
+    // roster offered is that movie's viral-seed accounts (from its EntityViralSeedSnapshot) who haven't
+    // already commented on this movie - concrete new prospects, not accounts already talking about it.
+    // Which qualifying comparable movie(s) get cited is reselected once per day (seeded by entity id +
+    // the current day), not always the single biggest gap, so a re-run of RecommendedActionsService's
+    // periodic refresh cycle can surface a different real example over time instead of repeating the
+    // same one indefinitely. No budget on file - see hasRealBudget - means there's no real budget to
+    // scope comparable movies by, so this generator produces nothing at all, same reasoning as
+    // topSpreaderGapCandidates. A zero own-view-count also produces nothing - there's no honest
+    // percentage to compute against a zero denominator.
+    private RecommendedActionCandidate viralSeedViewCountGapCandidate(ManagedEntity entity) {
+        if (!hasRealBudget(entity.getBudget())) {
+            return null;
+        }
+        long ownViews = mentionRepository.findTotalViewsForEntity(entity.getId());
+        if (ownViews <= 0) {
+            return null;
+        }
+
+        double minBudget = entity.getBudget() * (1 - BUDGET_RANGE_FRACTION);
+        double maxBudget = entity.getBudget() * (1 + BUDGET_RANGE_FRACTION);
+        List<ManagedEntity> comparableMovies = entityRepository
+                .findByTypeAndBudgetBetweenAndIdNot(MOVIE_TYPE, minBudget, maxBudget, entity.getId()).stream()
+                .filter(m -> hasRealBudget(m.getBudget()))
+                .toList();
+        if (comparableMovies.isEmpty()) {
+            return null;
+        }
+        List<Long> comparableIds = comparableMovies.stream().map(ManagedEntity::getId).toList();
+        Map<Long, ManagedEntity> comparableById = comparableMovies.stream()
+                .collect(Collectors.toMap(ManagedEntity::getId, m -> m));
+
+        Map<Long, Long> viewsByComparable = new LinkedHashMap<>();
+        for (Object[] row : mentionRepository.findTotalViewsForEntities(comparableIds)) {
+            Long id = ((Number) row[0]).longValue();
+            long views = row[1] == null ? 0L : ((Number) row[1]).longValue();
+            viewsByComparable.put(id, views);
+        }
+
+        // Comparable movies at least VIEW_GAP_MIN_PCT_MORE_FRACTION ahead of this movie's own view
+        // count, ranked by the size of that gap - the strongest real precedent first, before the daily
+        // reselection below narrows it down.
+        List<Long> qualifyingIds = viewsByComparable.entrySet().stream()
+                .filter(e -> e.getValue() >= ownViews * (1 + VIEW_GAP_MIN_PCT_MORE_FRACTION))
+                .sorted(Map.Entry.<Long, Long>comparingByValue().reversed())
+                .map(Map.Entry::getKey)
+                .toList();
+        if (qualifyingIds.isEmpty()) {
+            return null;
+        }
+
+        List<Long> shuffled = new ArrayList<>(qualifyingIds);
+        Collections.shuffle(shuffled, new Random(entity.getId() * 1_000_003L + LocalDate.now(clock).toEpochDay()));
+        List<Long> chosenIds = shuffled.stream().limit(VIEW_GAP_MAX_EXAMPLES).toList();
+
+        Map<Long, EntityViralSeedSnapshot> snapshotById = viralSeedSnapshotRepository.findByEntityIdIn(chosenIds)
+                .stream().collect(Collectors.toMap(EntityViralSeedSnapshot::getEntityId, s -> s));
+
+        List<String> facts = new ArrayList<>();
+        Map<String, ViralSeedLookupService.ViralSeed> outreachByAuthor = new LinkedHashMap<>();
+        for (Long compId : chosenIds) {
+            ManagedEntity compEntity = comparableById.get(compId);
+            long compViews = viewsByComparable.get(compId);
+            double pctMore = ((double) compViews - ownViews) / ownViews * 100.0;
+            facts.add(String.format(Locale.ROOT,
+                    "%s has a cumulative view count of %,d, which is %.0f%% more than this movie (similar " +
+                            "budget, within +/-%.0f%%). Reach out to more viral seeds to spread the impact of " +
+                            "this movie to more audience.",
+                    compEntity.getName(), compViews, pctMore, BUDGET_RANGE_FRACTION * 100));
+
+            EntityViralSeedSnapshot snapshot = snapshotById.get(compId);
+            if (snapshot == null) {
+                continue;
+            }
+            for (ViralSeedLookupService.ViralSeed seed : readViralSeeds(snapshot)) {
+                if (seed.author() == null || seed.author().isBlank() || mentionRepository
+                        .existsByManagedEntityIdAndAuthorIgnoreCase(entity.getId(), seed.author())) {
+                    continue;
+                }
+                outreachByAuthor.putIfAbsent(seed.author(), seed);
+            }
+        }
+
+        List<ViralSeedLookupService.ViralSeed> outreachTargets = new ArrayList<>(outreachByAuthor.values());
+        List<String> topHandles = outreachTargets.stream()
+                .map(ViralSeedLookupService.ViralSeed::author)
+                .limit(TOP_HANDLES_LIMIT)
+                .toList();
+        List<RecommendedActionUser> relevantUsers = outreachTargets.stream()
+                .limit(MAX_RELEVANT_USERS)
+                .map(s -> new RecommendedActionUser(s.author(), s.primaryPlatform(), s.profileUrl()))
+                .toList();
+        if (!topHandles.isEmpty()) {
+            facts.add("Potential viral-seed account(s) who haven't yet commented on this movie: "
+                    + String.join(", ", topHandles) + ".");
+        }
+
+        int confidence = viewGapConfidence(qualifyingIds.size());
+        return new RecommendedActionCandidate(
+                "viral-seed-view-count-gap",
+                "Cumulative view-count gap vs. comparable movies",
+                RecommendedActionCategory.MEDIUM_IMPACT, confidence,
+                PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
+                buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
+                facts, topHandles, relevantUsers);
+    }
+
+    static int viewGapConfidence(long qualifyingComparableMovieCount) {
+        if (qualifyingComparableMovieCount >= VIEW_GAP_TIER_HIGH) {
+            return VIEW_GAP_CONFIDENCE_HIGH;
+        }
+        if (qualifyingComparableMovieCount >= VIEW_GAP_TIER_MID) {
+            return VIEW_GAP_CONFIDENCE_MID;
+        }
+        return VIEW_GAP_CONFIDENCE_LOW;
+    }
+
+    private List<ViralSeedLookupService.ViralSeed> readViralSeeds(EntityViralSeedSnapshot snapshot) {
+        try {
+            ViralSeedLookupService.ViralSeed[] seeds = objectMapper.readValue(
+                    snapshot.getSeedsJson(), ViralSeedLookupService.ViralSeed[].class);
+            return List.of(seeds);
         } catch (Exception e) {
             return List.of();
         }
