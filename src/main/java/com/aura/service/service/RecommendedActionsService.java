@@ -578,8 +578,17 @@ public class RecommendedActionsService {
         putIfPresent(movie, "genre", entity.getGenre());
         putIfPresent(movie, "language", entity.getLanguage());
         putIfPresent(movie, "industry", entity.getIndustry());
-        if (entity.getBudget() != null) {
+        // A budget of exactly UNDISCLOSED_BUDGET_SENTINEL (404) means the production house declined to
+        // disclose it, not that the movie's real budget is $404 - see RecommendedActionCandidateServiceImpl
+        // .hasRealBudget. Passing that sentinel through as a number would tell the LLM this is a
+        // near-zero-budget production and could itself justify a financing-tactic candidate (e.g.
+        // crowdfunding) that doesn't actually fit.
+        if (RecommendedActionCandidateServiceImpl.hasRealBudget(entity.getBudget())) {
             movie.put("budget", entity.getBudget());
+        }
+        if (entity.getActors() != null && !entity.getActors().isEmpty()) {
+            ArrayNode cast = movie.putArray("cast");
+            entity.getActors().forEach(cast::add);
         }
         Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
         if (daysToRelease != null) {
