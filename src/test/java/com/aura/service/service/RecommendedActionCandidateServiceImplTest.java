@@ -1146,73 +1146,28 @@ class RecommendedActionCandidateServiceImplTest {
         assertThat(evidence.patternSequence()).isNull();
     }
 
-    // ==================== Playbook sequence (AuraMath F7) ====================
+    // ==================== Playbook sequence (AuraMath F7) - deliberately disabled ====================
 
+    // generatePlaybookCandidates is no longer wired into buildCandidateActions - marketing feedback was
+    // that its raw statistical phrasing (a pattern-sequence of internal AuraMath event codes and an
+    // unrounded FDR q-value) reads as mathematical jargon, not an actionable recommendation, and this
+    // codebase has no glossary for what those event codes mean. See buildCandidateActions's call-site
+    // comment. The method/service themselves are left in place for a possible future revisit, so this
+    // now locks in "never reaches the LLM prompt" rather than exercising generatePlaybookCandidates's
+    // own field-mapping logic (which was covered here before this was disabled).
     @Test
-    void playbook_entityMissingIndustryOrLanguage_neverProducesCandidate() {
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Hindi", null)));
-
-        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
-
-        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("playbook-sequence-"));
-        verifyNoInteractions(playbookLookup);
-    }
-
-    @Test
-    void playbook_patternAtOrAboveQValueBar_neverProducesCandidate() {
+    void playbook_neverProducesCandidateEvenWithQualifyingData() {
         ManagedEntity entity = movie(null, null, "Hindi", null);
         entity.setIndustry("Bollywood");
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
                 new PlaybookLookupService.PlaybookPattern(
-                        List.of("TEASER", "TRAILER"), 30, 4, 0.02, 0.10, 25)));
+                        List.of("CAST_ANNOUNCEMENT", "TEASER", "TRAILER"), 30, 4, 0.0018, 0.024, 63)));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("playbook-sequence-"));
-    }
-
-    @Test
-    void playbook_qualifyingPattern_carriesExactFieldsUnmodified() {
-        ManagedEntity entity = movie(null, null, "Hindi", null);
-        entity.setIndustry("Bollywood");
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
-        List<String> sequence = List.of("CAST_ANNOUNCEMENT", "TEASER", "TRAILER");
-        when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
-                new PlaybookLookupService.PlaybookPattern(sequence, 30, 4, 0.0018, 0.024, 63)));
-
-        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
-                "playbook-sequence-bollywood-hindi");
-
-        assertThat(candidate.supportingFacts()).isEmpty();
-        RecommendedActionCandidate.StatisticalEvidence evidence = candidate.statisticalEvidence();
-        assertThat(evidence).isNotNull();
-        assertThat(evidence.patternSequence()).containsExactlyElementsOf(sequence);
-        assertThat(evidence.supportTopTier()).isEqualTo(30L);
-        assertThat(evidence.supportBottomTier()).isEqualTo(4L);
-        assertThat(evidence.fdrQValue()).isEqualTo(0.024);
-        assertThat(evidence.nEntities()).isEqualTo(63L);
-        assertThat(evidence.pValue()).isNull();
-        assertThat(evidence.featureName()).isNull();
-    }
-
-    @Test
-    void playbook_multipleQualifyingPatternsForSameCohort_getDistinctCandidateIds() {
-        ManagedEntity entity = movie(null, null, "Hindi", null);
-        entity.setIndustry("Bollywood");
-        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
-        when(playbookLookup.getPlaybookPatterns("Bollywood", "Hindi")).thenReturn(List.of(
-                new PlaybookLookupService.PlaybookPattern(List.of("TEASER", "TRAILER"), 30, 4, 0.001, 0.02, 63),
-                new PlaybookLookupService.PlaybookPattern(List.of("MUSIC_LAUNCH", "PROMO_EVENT"), 22, 6, 0.004, 0.05, 40)));
-
-        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
-
-        List<String> playbookIds = candidates.stream()
-                .map(RecommendedActionCandidate::candidateId)
-                .filter(id -> id.startsWith("playbook-sequence-"))
-                .toList();
-        assertThat(playbookIds).containsExactlyInAnyOrder(
-                "playbook-sequence-bollywood-hindi", "playbook-sequence-bollywood-hindi-2");
+        verifyNoInteractions(playbookLookup);
     }
 
     // ==================== Top-spreader language-coverage gap ====================

@@ -496,7 +496,16 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, peakEngagementHoursCandidate(entity));
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
         candidates.addAll(generateNonObviousLeverCandidates(entity));
-        candidates.addAll(generatePlaybookCandidates(entity));
+        // generatePlaybookCandidates (AuraMath F7 playbook-sequence findings) is deliberately not
+        // wired in here - marketing feedback was that its raw statistical phrasing (a pattern-sequence
+        // of internal AuraMath event codes and an unrounded FDR q-value) reads as mathematical jargon,
+        // not an actionable recommendation, and there's no glossary anywhere in this codebase for what
+        // those event codes mean, so neither this service nor the LLM can honestly translate them into
+        // plain language without inventing a meaning. The method/service/AuraMath integration is left
+        // in place (not deleted) in case a better-phrased version of this candidate is worth revisiting
+        // later. See generateNonObviousLeverCandidates's own doc comment - it shares this candidate's
+        // "computed by AuraMath, not this platform" statisticalEvidence framing, but was NOT withheld;
+        // revisit it separately if it turns out to have the same readability problem.
         candidates.addAll(topSpreaderGapCandidates(entity));
         addIfPresent(candidates, viralSeedViewCountGapCandidate(entity));
 
