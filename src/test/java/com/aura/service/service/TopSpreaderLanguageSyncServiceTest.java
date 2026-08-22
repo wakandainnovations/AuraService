@@ -48,6 +48,11 @@ class TopSpreaderLanguageSyncServiceTest {
         snapshotRepository = mock(EntityLanguageSpreaderSnapshotRepository.class);
         spreaderLookup = new TopSpreaderLookupService(null, objectMapper);
         service = new TopSpreaderLanguageSyncService(entityRepository, snapshotRepository, spreaderLookup, objectMapper, clock);
+        // No Spring context in this test, so self-invocation through the proxy (see the `self` field's
+        // doc comment on the service) isn't exercised here - wiring it to the instance itself keeps
+        // refreshOneEntity() reachable without needing a real @Transactional interceptor, which is
+        // framework behavior, not this class's logic.
+        ReflectionTestUtils.setField(service, "self", service);
 
         when(snapshotRepository.findByEntityIdAndLanguageIgnoreCase(any(), any())).thenReturn(Optional.empty());
     }
@@ -57,7 +62,7 @@ class TopSpreaderLanguageSyncServiceTest {
         ManagedEntity entity = movieWithKeywords(1L,
                 keyword("kw-tamil-1", "Tamil"),
                 keyword("kw-tamil-2", "Tamil"));
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(entity));
+        stubEntities(entity);
         seedSpreaders("kw-tamil-1", List.of(
                 new SpreaderProfile("handle-a", "TWITTER", null, 100L, null),
                 new SpreaderProfile("handle-b", "TWITTER", null, 200L, null)));
@@ -79,7 +84,7 @@ class TopSpreaderLanguageSyncServiceTest {
     @Test
     void keywordsWithNoLanguageTagAreSkippedEntirely() {
         ManagedEntity entity = movieWithKeywords(1L, keyword("untagged-keyword", null));
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(entity));
+        stubEntities(entity);
 
         service.refreshAllEntityLanguageSpreaders();
 
@@ -91,7 +96,7 @@ class TopSpreaderLanguageSyncServiceTest {
         ManagedEntity entity = movieWithKeywords(1L,
                 keyword("kw-tamil", "Tamil"),
                 keyword("kw-kannada", "Kannada"));
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(entity));
+        stubEntities(entity);
         seedSpreaders("kw-tamil", List.of(new SpreaderProfile("t1", "TWITTER", null, 10L, null)));
         seedSpreaders("kw-kannada", List.of(
                 new SpreaderProfile("k1", "TWITTER", null, 10L, null),
@@ -110,7 +115,7 @@ class TopSpreaderLanguageSyncServiceTest {
     @Test
     void updatesExistingSnapshotRowInsteadOfInsertingADuplicate() {
         ManagedEntity entity = movieWithKeywords(1L, keyword("kw-tamil", "Tamil"));
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(entity));
+        stubEntities(entity);
         seedSpreaders("kw-tamil", List.of(new SpreaderProfile("t1", "TWITTER", null, 10L, null)));
         EntityLanguageSpreaderSnapshot existing = new EntityLanguageSpreaderSnapshot();
         existing.setId(99L);
@@ -129,7 +134,7 @@ class TopSpreaderLanguageSyncServiceTest {
     void oneEntitysFailureDoesNotAbortTheRestOfTheBatch() {
         ManagedEntity failing = movieWithKeywords(2L, keyword("kw-fail", "Tamil"));
         ManagedEntity healthy = movieWithKeywords(3L, keyword("kw-ok", "Tamil"));
-        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(failing, healthy));
+        stubEntities(failing, healthy);
         seedSpreaders("kw-fail", List.of(new SpreaderProfile("h-fail", "TWITTER", null, 1L, null)));
         seedSpreaders("kw-ok", List.of(new SpreaderProfile("h-ok", "TWITTER", null, 1L, null)));
         // Simulate a persistence failure for entity 2's row (e.g. a transient DB error) without mocking
@@ -143,6 +148,15 @@ class TopSpreaderLanguageSyncServiceTest {
     }
 
     // ==================== Helpers ====================
+
+    /** Stubs both findByType (the batch listing) and findById (refreshOneEntity's re-fetch, needed to
+     *  read ManagedEntity.keywords inside its own @Transactional boundary - see that method's doc). */
+    private void stubEntities(ManagedEntity... entities) {
+        when(entityRepository.findByType("MOVIE")).thenReturn(List.of(entities));
+        for (ManagedEntity entity : entities) {
+            when(entityRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        }
+    }
 
     private static EntityLanguageSpreaderSnapshot argThatEntityId(Long entityId) {
         return org.mockito.ArgumentMatchers.argThat(s -> s != null && entityId.equals(s.getEntityId()));

@@ -8,8 +8,11 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -42,6 +45,16 @@ public class TopSpreaderLanguageSyncService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
+    // Self-injected proxy: calls to refreshOneEntity() below must go through Spring's proxy (not a
+    // direct this.refreshOneEntity(...) self-call) for its @Transactional advice to actually apply -
+    // required because these calls run off a scheduler thread, which has no request-bound Hibernate
+    // session, so ManagedEntity.keywords (a lazy @ElementCollection) can't be read without one. Same
+    // pattern as RecommendedActionsService.self - see that field's doc comment. @Lazy avoids the
+    // circular-bean chicken/egg problem at construction time.
+    @Autowired
+    @Lazy
+    private TopSpreaderLanguageSyncService self;
+
     public TopSpreaderLanguageSyncService(
             ManagedEntityRepository entityRepository,
             EntityLanguageSpreaderSnapshotRepository snapshotRepository,
@@ -61,14 +74,20 @@ public class TopSpreaderLanguageSyncService {
         log.info("Refreshing top-spreader language snapshots for {} movie entities", entities.size());
         for (ManagedEntity entity : entities) {
             try {
-                refreshOneEntity(entity);
+                self.refreshOneEntity(entity.getId());
             } catch (Exception e) {
                 log.error("Failed to refresh top-spreader language snapshots for entity {}", entity.getId(), e);
             }
         }
     }
 
-    private void refreshOneEntity(ManagedEntity entity) {
+    /** Must be called via {@link #self}, not directly - see that field's doc comment. */
+    @Transactional
+    void refreshOneEntity(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId).orElse(null);
+        if (entity == null) {
+            return;
+        }
         for (Map.Entry<String, List<String>> entry : keywordsByLanguage(entity).entrySet()) {
             String language = entry.getKey();
             try {
