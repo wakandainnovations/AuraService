@@ -59,7 +59,7 @@ class CheckpointTrendTest {
                 new ImpressionsResolver(mentionRepository));
 
         DashboardController controller = new DashboardController(
-                dashboardService, null, null, null, mock(EntityAccessService.class), null, null, null);
+                dashboardService, null, null, null, mock(EntityAccessService.class), null, null, null, null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

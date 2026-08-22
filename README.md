@@ -3148,6 +3148,96 @@ GET /api/dashboard/21/awareness
 
 ---
 
+### 18r. Get Top Spreaders' Content
+
+**Endpoint:** `GET /api/dashboard/{entityId}/top-spreaders/content`
+
+**Description:** For the entity's top spreaders — AuraMath's top-50-spreaders identities, cached per (entity, language) in `EntityLanguageSpreaderSnapshot` and refreshed every 2 days by `TopSpreaderLanguageSyncService` — resolves what each spreader has actually posted about this entity: view count, engagement rate, and sentiment per post. A spreader's `globalUserId` is matched directly against `mentions.author` (the same identity equivalence the evangelist-mobilization recommended-action candidate already relies on), so a spreader with no post found under that exact author string still appears in the response (for context, via AuraMath's own `totalViews`) but with an empty `topContent`.
+
+`views` is a per-platform proxy, not a uniform metric — same formulas `GET /{entityId}/awareness` and `findTotalViewsForEntity` use, just returned per post instead of summed: X is a real view count (`x_posts.views_count`); Instagram uses the `views` column, falling back to `like_count + comments_count` when null/0; YouTube shows the post's video's total view count, shared by every comment under that video (`mentions.post_id` for platform `YOUTUBE` points at a comment row, not the video); Reddit shows its subreddit's subscriber count (Reddit exposes no per-post view metric), so every post from the same subreddit shows the same figure. `engagementRate` is `(likes + comments) / views` and is `null` when `views` is `null` or `0`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `language` (optional) - restricts spreaders to this language's snapshot. Omitted: spreaders are deduped across every language the entity is tracked in.
+- `spreaderLimit` (optional, default `10`, 1-50) - max spreaders returned, ranked by AuraMath's `totalViews` descending.
+- `postsPerSpreader` (optional, default `5`, 1-50) - max posts returned per spreader, ranked by resolved `views` descending.
+
+**Example Request:**
+```
+GET /api/dashboard/21/top-spreaders/content?language=Tamil&spreaderLimit=5&postsPerSpreader=3
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "language": "Tamil",
+  "spreaders": [
+    {
+      "globalUserId": "Rocking Ashu",
+      "profileUrl": "https://x.com/rocking_ashu",
+      "totalViews": 10179,
+      "topContent": [
+        {
+          "mentionId": 5031,
+          "platform": "X",
+          "postId": "184920",
+          "content": "This trailer is INSANE. Madhavan is back with a bang!",
+          "permalink": "https://x.com/rocking_ashu/status/184920",
+          "postDate": "2026-08-10T14:22:00Z",
+          "views": 4521,
+          "likes": 312,
+          "comments": 48,
+          "engagementRate": 0.0796,
+          "sentiment": "POSITIVE",
+          "sentimentScore": 82
+        },
+        {
+          "mentionId": 5090,
+          "platform": "INSTAGRAM",
+          "postId": "ig-77213",
+          "content": "Can't wait for this one 🔥",
+          "permalink": "https://instagram.com/p/ig-77213",
+          "postDate": "2026-08-09T09:03:00Z",
+          "views": 2100,
+          "likes": 190,
+          "comments": 11,
+          "engagementRate": 0.0957,
+          "sentiment": "POSITIVE",
+          "sentimentScore": 74
+        }
+      ]
+    },
+    {
+      "globalUserId": "TamilCinemaBuzz",
+      "profileUrl": null,
+      "totalViews": 5400,
+      "topContent": []
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `spreaders` — ranked by AuraMath's `totalViews` descending; a spreader stays in the list with `topContent: []` when no local post matches their identity.
+- `spreaders[].topContent[].views` — `null` when no proxy could be resolved for that post (e.g. the underlying platform row wasn't found).
+- `spreaders[].topContent[].engagementRate` — `(likes + comments) / views`, `null` when `views` is `null` or `0`.
+- `spreaders[].topContent[].sentiment` / `sentimentScore` — same `Mention.sentiment` (`POSITIVE`/`NEGATIVE`/`NEUTRAL`) and numeric score used throughout the Dashboard APIs.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply

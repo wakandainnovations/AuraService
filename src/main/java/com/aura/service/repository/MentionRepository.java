@@ -677,6 +677,48 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     boolean existsByManagedEntityIdAndAuthorIgnoreCase(
             @Param("entityId") Long entityId, @Param("author") String author);
 
+    /**
+     * Posts authored by any of {@code authors} that are attributed to {@code entityId} - the "top
+     * spreader's top content" join. A spreader's {@code globalUserId} (from AuraMath's top-50-spreaders
+     * payload, see {@code TopSpreaderLookupService.SpreaderProfile}) is treated as directly comparable
+     * to {@code mentions.author}, the same identity equivalence
+     * {@code RecommendedActionCandidateServiceImpl}'s evangelist-mobilization candidate and
+     * {@link #countSentimentByAuthorsForEntity} already rely on. Ordered by post date descending only
+     * as a stable tie-break; callers re-rank by resolved view count.
+     */
+    @Query("SELECT m FROM Mention m WHERE m.author IN :authors AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
+            "ORDER BY m.postDate DESC")
+    List<Mention> findByManagedEntityIdAndAuthorIn(
+            @Param("entityId") Long entityId, @Param("authors") Collection<String> authors);
+
+    // ---- Per-post view proxies, used alongside findXPostViewsCounts to rank a spreader's own posts.
+    // Same per-platform formulas as findTotalViewsForEntity, returned per row instead of summed.
+
+    /** Instagram's views column, falling back to like_count + comments_count when NULL/0 (photo posts). */
+    @Query(value = "SELECT i.id, COALESCE(NULLIF(i.views, 0), COALESCE(i.like_count, 0) + COALESCE(i.comments_count, 0)) " +
+            "FROM instagram_posts i WHERE i.id IN (:postIds)", nativeQuery = true)
+    List<Object[]> findInstagramPostViews(@Param("postIds") Collection<String> postIds);
+
+    /**
+     * Reddit exposes no per-post view count; subreddit_subscribers (the community's reach) is reused as
+     * the closest available proxy, same as findTotalViewsForEntity - every post in the same subreddit
+     * shows the same figure.
+     */
+    @Query(value = "SELECT r.id, r.subreddit_subscribers FROM reddit_posts r WHERE r.id IN (:postIds)",
+           nativeQuery = true)
+    List<Object[]> findRedditPostViews(@Param("postIds") Collection<String> postIds);
+
+    /**
+     * {@code mentions.post_id} for platform YOUTUBE points at a comment row, not the video itself, so
+     * every comment under the same video shows that video's view_count - same per-video (not
+     * per-comment) attribution findTotalViewsForEntity uses.
+     */
+    @Query(value = "SELECT yc.id, yv.view_count FROM youtube_comments yc " +
+            "JOIN (SELECT video_id, MAX(view_count) AS view_count FROM youtube_videos GROUP BY video_id) yv " +
+            "ON yv.video_id = yc.video_id WHERE yc.id IN (:postIds)", nativeQuery = true)
+    List<Object[]> findYoutubePostViews(@Param("postIds") Collection<String> postIds);
+
     @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
             "  SELECT x.topic_category FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
