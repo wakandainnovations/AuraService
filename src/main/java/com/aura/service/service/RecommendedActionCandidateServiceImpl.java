@@ -289,6 +289,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // like "1,010 vs 1,000".
     static final double VIEW_GAP_MIN_PCT_MORE_FRACTION = 0.15;
 
+    // Minimum absolute view count a comparable movie needs when this movie's own cumulative view count
+    // is zero - a percentage lead can't be honestly computed against a zero denominator, so this floor
+    // takes its place, still avoiding noise like "62 views" reading as a meaningful precedent.
+    static final long VIEW_GAP_MIN_ABSOLUTE_VIEWS_WHEN_OWN_ZERO = 100;
+
     // How many comparable movies' view-count lead get cited by name in one candidate - kept small
     // (like TOP_HANDLES_LIMIT) so the recommendation stays concrete rather than listing every
     // qualifying comp; also which of the qualifying comps get chosen is reselected once per day (see
@@ -1543,25 +1548,26 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
 
     // Compares this movie's own cumulative view count against budget-comparable movies' totals - the
     // same "similar movie" pool topSpreaderGapCandidates uses above, not a genre/language comp. When
-    // one or more comparable movies are meaningfully ahead (VIEW_GAP_MIN_PCT_MORE_FRACTION or more), up
-    // to VIEW_GAP_MAX_EXAMPLES of them are cited by name with their real view counts, and the outreach
-    // roster offered is that movie's viral-seed accounts (from its EntityViralSeedSnapshot) who haven't
-    // already commented on this movie - concrete new prospects, not accounts already talking about it.
-    // Which qualifying comparable movie(s) get cited is reselected once per day (seeded by entity id +
-    // the current day), not always the single biggest gap, so a re-run of RecommendedActionsService's
-    // periodic refresh cycle can surface a different real example over time instead of repeating the
-    // same one indefinitely. No budget on file - see hasRealBudget - means there's no real budget to
-    // scope comparable movies by, so this generator produces nothing at all, same reasoning as
-    // topSpreaderGapCandidates. A zero own-view-count also produces nothing - there's no honest
-    // percentage to compute against a zero denominator.
+    // one or more comparable movies are meaningfully ahead (VIEW_GAP_MIN_PCT_MORE_FRACTION or more, or
+    // - when this movie has zero tracked views of its own, where a percentage can't be honestly
+    // computed against a zero denominator - at least VIEW_GAP_MIN_ABSOLUTE_VIEWS_WHEN_OWN_ZERO views;
+    // real production data skews toward small/independent movies with no tracked views at all, and
+    // those are exactly the ones this candidate should still reach, see
+    // RecommendedActionCandidateServiceImplTest's zero-own-views coverage), up to VIEW_GAP_MAX_EXAMPLES
+    // of them are cited by name with their real view counts, and the outreach roster offered is that
+    // movie's viral-seed accounts (from its EntityViralSeedSnapshot) who haven't already commented on
+    // this movie - concrete new prospects, not accounts already talking about it. Which qualifying
+    // comparable movie(s) get cited is reselected once per day (seeded by entity id + the current day),
+    // not always the single biggest gap, so a re-run of RecommendedActionsService's periodic refresh
+    // cycle can surface a different real example over time instead of repeating the same one
+    // indefinitely. No budget on file - see hasRealBudget - means there's no real budget to scope
+    // comparable movies by, so this generator produces nothing at all, same reasoning as
+    // topSpreaderGapCandidates.
     private RecommendedActionCandidate viralSeedViewCountGapCandidate(ManagedEntity entity) {
         if (!hasRealBudget(entity.getBudget())) {
             return null;
         }
         long ownViews = mentionRepository.findTotalViewsForEntity(entity.getId());
-        if (ownViews <= 0) {
-            return null;
-        }
 
         double minBudget = entity.getBudget() * (1 - BUDGET_RANGE_FRACTION);
         double maxBudget = entity.getBudget() * (1 + BUDGET_RANGE_FRACTION);
@@ -1584,10 +1590,14 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         }
 
         // Comparable movies at least VIEW_GAP_MIN_PCT_MORE_FRACTION ahead of this movie's own view
-        // count, ranked by the size of that gap - the strongest real precedent first, before the daily
-        // reselection below narrows it down.
+        // count (or, when this movie has zero views of its own, at least
+        // VIEW_GAP_MIN_ABSOLUTE_VIEWS_WHEN_OWN_ZERO - see this method's own doc comment), ranked by the
+        // size of that gap - the strongest real precedent first, before the daily reselection below
+        // narrows it down.
         List<Long> qualifyingIds = viewsByComparable.entrySet().stream()
-                .filter(e -> e.getValue() >= ownViews * (1 + VIEW_GAP_MIN_PCT_MORE_FRACTION))
+                .filter(e -> ownViews > 0
+                        ? e.getValue() >= ownViews * (1 + VIEW_GAP_MIN_PCT_MORE_FRACTION)
+                        : e.getValue() >= VIEW_GAP_MIN_ABSOLUTE_VIEWS_WHEN_OWN_ZERO)
                 .sorted(Map.Entry.<Long, Long>comparingByValue().reversed())
                 .map(Map.Entry::getKey)
                 .toList();
@@ -1607,12 +1617,19 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         for (Long compId : chosenIds) {
             ManagedEntity compEntity = comparableById.get(compId);
             long compViews = viewsByComparable.get(compId);
-            double pctMore = ((double) compViews - ownViews) / ownViews * 100.0;
-            facts.add(String.format(Locale.ROOT,
-                    "%s has a cumulative view count of %,d, which is %.0f%% more than this movie (similar " +
-                            "budget, within +/-%.0f%%). Reach out to more viral seeds to spread the impact of " +
-                            "this movie to more audience.",
-                    compEntity.getName(), compViews, pctMore, BUDGET_RANGE_FRACTION * 100));
+            String fact = ownViews > 0
+                    ? String.format(Locale.ROOT,
+                            "%s has a cumulative view count of %,d, which is %.0f%% more than this movie (similar " +
+                                    "budget, within +/-%.0f%%). Reach out to more viral seeds to spread the impact " +
+                                    "of this movie to more audience.",
+                            compEntity.getName(), compViews, ((double) compViews - ownViews) / ownViews * 100.0,
+                            BUDGET_RANGE_FRACTION * 100)
+                    : String.format(Locale.ROOT,
+                            "%s has a cumulative view count of %,d, while this movie hasn't yet been tracked with " +
+                                    "any views across platforms (similar budget, within +/-%.0f%%). Reach out to " +
+                                    "more viral seeds to spread the impact of this movie to more audience.",
+                            compEntity.getName(), compViews, BUDGET_RANGE_FRACTION * 100);
+            facts.add(fact);
 
             EntityViralSeedSnapshot snapshot = snapshotById.get(compId);
             if (snapshot == null) {

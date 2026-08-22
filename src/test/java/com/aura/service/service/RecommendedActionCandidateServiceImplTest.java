@@ -1353,14 +1353,36 @@ class RecommendedActionCandidateServiceImplTest {
     }
 
     @Test
-    void viralSeedViewCountGap_zeroOwnViews_neverProducesCandidate() {
+    void viralSeedViewCountGap_zeroOwnViewsBelowAbsoluteFloor_neverProducesCandidate() {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
         when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(0L);
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(movieWithId(2L, null, "Tamil", 11_000_000.0)));
+        // Below VIEW_GAP_MIN_ABSOLUTE_VIEWS_WHEN_OWN_ZERO (100) - too little to read as real precedent.
+        when(mentionRepository.findTotalViewsForEntities(List.of(2L)))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, 62L}));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         assertThat(candidates).noneMatch(c -> c.candidateId().equals("viral-seed-view-count-gap"));
-        verifyNoInteractions(viralSeedSnapshotRepository);
+    }
+
+    @Test
+    void viralSeedViewCountGap_zeroOwnViewsMeetsAbsoluteFloor_producesCandidateWithZeroViewsPhrasing() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntity(ENTITY_ID)).thenReturn(0L);
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(namedMovie(2L, "Peer Movie", "Tamil", 11_000_000.0)));
+        when(mentionRepository.findTotalViewsForEntities(List.of(2L)))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, 500L}));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "viral-seed-view-count-gap");
+
+        assertThat(candidate.supportingFacts().get(0))
+                .contains("Peer Movie")
+                .contains("500")
+                .contains("hasn't yet been tracked with any views");
     }
 
     @Test
