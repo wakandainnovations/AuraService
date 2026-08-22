@@ -4,16 +4,19 @@ import com.aura.service.dto.HourlyActivityResponse;
 import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.dto.RecommendedActionUser;
 import com.aura.service.entity.EntityKeyword;
+import com.aura.service.entity.EntityLanguageSpreaderSnapshot;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.enums.RecommendedActionCategory;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.exception.ResourceNotFoundException;
+import com.aura.service.repository.EntityLanguageSpreaderSnapshotRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.service.TopSpreaderLookupService.SpreaderProfile;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -79,6 +82,14 @@ import java.util.stream.Collectors;
  * rather than a prose {@code supportingFacts} sentence - Phase 2 phrases it. Both withhold any finding at
  * or above {@link #STATISTICAL_EVIDENCE_Q_VALUE_BAR}, the same "don't surface what didn't clear a
  * threshold" convention as every comps/sample-size gate above.
+ *
+ * <p>{@link #topSpreaderGapCandidates} reads {@link EntityLanguageSpreaderSnapshot} rows populated by
+ * {@link TopSpreaderLanguageSyncService}'s periodic (every 2 days) AuraMath top-50-spreaders sweep -
+ * one candidate per language this movie is actually being marketed in, comparing its own spreader count
+ * against the best-covered budget-comparable movie for that same language. Unlike
+ * {@link #comparableBudgetCandidates}, a missing/undisclosed budget on this movie skips the candidate
+ * entirely rather than falling back to an unscoped comparison - "of similar budget" is the whole point
+ * of this candidate. See {@link #hasRealBudget} for the {@code 404}-as-undisclosed sentinel convention.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -240,6 +251,25 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     static final int STATISTICAL_EVIDENCE_CONFIDENCE_MID = 70;
     static final int STATISTICAL_EVIDENCE_CONFIDENCE_HIGH = 85;
 
+    // ---- Top-spreader language-coverage gap: tiered by how many budget-comparable movies had a
+    // spreader snapshot for the language in question - a single real comparable movie is still
+    // concrete, actionable evidence (same reasoning as PEER_TACTIC_TIER_*), just weaker than several. ----
+    static final long SPREADER_GAP_TIER_MIN = 1;
+    static final long SPREADER_GAP_TIER_MID = 3;
+    static final long SPREADER_GAP_TIER_HIGH = 6;
+    static final int SPREADER_GAP_CONFIDENCE_LOW = 50;
+    static final int SPREADER_GAP_CONFIDENCE_MID = 65;
+    static final int SPREADER_GAP_CONFIDENCE_HIGH = 80;
+
+    // Minimum shortfall (best comparable movie's count minus this movie's own count) before the gap is
+    // considered meaningful enough to surface - avoids flagging noise like "1 vs 2".
+    static final int SPREADER_GAP_MIN_ABSOLUTE_SHORTFALL = 3;
+
+    // When a movie underperforms, production houses often decline to disclose its budget, and that
+    // refusal is recorded as the literal value 404 in managed_entities.budget rather than left null.
+    // hasRealBudget treats it identically to "no budget on file" everywhere in this generator.
+    static final double UNDISCLOSED_BUDGET_SENTINEL = 404.0;
+
     // ---- Common-tactic filtering: a (main, sub) classification bucket run by most genre+language
     // peer movies (a teaser or trailer release, say) is something a marketing team already knows to
     // do without this platform prompting it - see peerMarketingTacticCandidates/isCommonTactic. Such
@@ -356,6 +386,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     private final MovieMarketingTacticsQueryService tacticsQueryService;
     private final NonObviousLeverLookupService nonObviousLeverLookup;
     private final PlaybookLookupService playbookLookup;
+    private final EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository;
+    private final ObjectMapper objectMapper;
     private final Clock clock;
 
     public RecommendedActionCandidateServiceImpl(
@@ -371,6 +403,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             MovieMarketingTacticsQueryService tacticsQueryService,
             NonObviousLeverLookupService nonObviousLeverLookup,
             PlaybookLookupService playbookLookup,
+            EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository,
+            ObjectMapper objectMapper,
             Clock clock) {
         this.entityRepository = entityRepository;
         this.mentionRepository = mentionRepository;
@@ -384,6 +418,8 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         this.tacticsQueryService = tacticsQueryService;
         this.nonObviousLeverLookup = nonObviousLeverLookup;
         this.playbookLookup = playbookLookup;
+        this.spreaderSnapshotRepository = spreaderSnapshotRepository;
+        this.objectMapper = objectMapper;
         this.clock = clock;
     }
 
@@ -423,6 +459,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, organicWordOfMouthCandidate(entity));
         candidates.addAll(generateNonObviousLeverCandidates(entity));
         candidates.addAll(generatePlaybookCandidates(entity));
+        candidates.addAll(topSpreaderGapCandidates(entity));
 
         // Common tactics are withheld above (see COMMON_TACTIC_PREVALENCE_THRESHOLD) - only worth
         // adding back as a fallback once every other generator has had its say, when this movie's
@@ -1334,6 +1371,136 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return STATISTICAL_EVIDENCE_CONFIDENCE_MID;
         }
         return STATISTICAL_EVIDENCE_CONFIDENCE_LOW;
+    }
+
+    // ==================== Top-spreader language-coverage gap (this platform's periodic AuraMath
+    // top-spreaders sync, see TopSpreaderLanguageSyncService/EntityLanguageSpreaderSnapshot) ====================
+
+    // One candidate per language this movie is actually being marketed in (i.e. has a stored
+    // EntityLanguageSpreaderSnapshot, itself only populated for languages the entity has a tracked
+    // keyword tagged with), comparing this movie's own top-spreader count in that language against the
+    // best-covered budget-comparable movie's. No budget on file - null or the UNDISCLOSED_BUDGET_SENTINEL
+    // production houses' non-disclosure gets recorded as - means there's no real budget to scope
+    // comparable movies by, so this generator produces nothing for the movie at all rather than falling
+    // back to an unscoped comparison like comparableBudgetCandidates does: "of similar budget" is the
+    // entire premise of this candidate, not an optional narrowing.
+    private List<RecommendedActionCandidate> topSpreaderGapCandidates(ManagedEntity entity) {
+        if (!hasRealBudget(entity.getBudget())) {
+            return List.of();
+        }
+        List<EntityLanguageSpreaderSnapshot> ownSnapshots = spreaderSnapshotRepository.findByEntityId(entity.getId());
+        if (ownSnapshots.isEmpty()) {
+            return List.of();
+        }
+
+        double minBudget = entity.getBudget() * (1 - BUDGET_RANGE_FRACTION);
+        double maxBudget = entity.getBudget() * (1 + BUDGET_RANGE_FRACTION);
+        List<Long> comparableIds = entityRepository
+                .findByTypeAndBudgetBetweenAndIdNot(MOVIE_TYPE, minBudget, maxBudget, entity.getId()).stream()
+                .filter(m -> hasRealBudget(m.getBudget()))
+                .map(ManagedEntity::getId)
+                .toList();
+        if (comparableIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<RecommendedActionCandidate> candidates = new ArrayList<>();
+        for (EntityLanguageSpreaderSnapshot ownSnapshot : ownSnapshots) {
+            addIfPresent(candidates, topSpreaderGapCandidate(ownSnapshot, comparableIds));
+        }
+        return candidates;
+    }
+
+    // A budget value of null, non-positive, or the UNDISCLOSED_BUDGET_SENTINEL (404) all mean "no real
+    // budget figure to compare against" - the 404 case is a production house declining to disclose the
+    // budget for an underperforming movie, recorded as that literal number rather than left null.
+    static boolean hasRealBudget(Double budget) {
+        return budget != null && budget > 0 && budget != UNDISCLOSED_BUDGET_SENTINEL;
+    }
+
+    private RecommendedActionCandidate topSpreaderGapCandidate(EntityLanguageSpreaderSnapshot ownSnapshot,
+                                                                  List<Long> comparableIds) {
+        String language = ownSnapshot.getLanguage();
+        List<EntityLanguageSpreaderSnapshot> compSnapshots = spreaderSnapshotRepository
+                .findByEntityIdInAndLanguageIgnoreCase(comparableIds, language);
+        if (compSnapshots.isEmpty()) {
+            return null;
+        }
+
+        // The single best-covered comparable movie for this language - a concrete, named precedent is
+        // more actionable than an averaged statistic, same reasoning as peerMarketingTacticCandidate's
+        // real quoted example over an aggregate.
+        EntityLanguageSpreaderSnapshot best = compSnapshots.stream()
+                .max(Comparator.comparingInt(EntityLanguageSpreaderSnapshot::getSpreaderCount))
+                .orElseThrow();
+        int shortfall = best.getSpreaderCount() - ownSnapshot.getSpreaderCount();
+        if (shortfall < SPREADER_GAP_MIN_ABSOLUTE_SHORTFALL) {
+            return null;
+        }
+        ManagedEntity compEntity = entityRepository.findById(best.getEntityId()).orElse(null);
+        if (compEntity == null) {
+            return null;
+        }
+
+        List<SpreaderProfile> ownProfiles = readSpreaderProfiles(ownSnapshot);
+        List<SpreaderProfile> compProfiles = readSpreaderProfiles(best);
+        Set<String> ownHandles = ownProfiles.stream()
+                .map(SpreaderProfile::globalUserId)
+                .collect(Collectors.toSet());
+        // The outreach opportunity: comparable movie's top spreaders for this language who aren't
+        // already among this movie's own - concrete new prospects, not the ones already talking about it.
+        List<SpreaderProfile> outreachTargets = compProfiles.stream()
+                .filter(p -> p.globalUserId() != null && !p.globalUserId().isBlank())
+                .filter(p -> !ownHandles.contains(p.globalUserId()))
+                .sorted(Comparator.comparingLong(SpreaderProfile::totalViews).reversed())
+                .toList();
+        List<String> topHandles = outreachTargets.stream()
+                .map(SpreaderProfile::globalUserId)
+                .limit(TOP_HANDLES_LIMIT)
+                .toList();
+        List<RecommendedActionUser> relevantUsers = outreachTargets.stream()
+                .limit(MAX_RELEVANT_USERS)
+                .map(p -> new RecommendedActionUser(p.globalUserId(), p.primaryPlatform(), p.profileUrl()))
+                .toList();
+
+        List<String> facts = new ArrayList<>();
+        facts.add(String.format(Locale.ROOT,
+                "%s (similar budget, within +/-%.0f%%) had %d of the top %s-language spreaders talking about it, " +
+                        "but only %d %s-language spreader(s) are currently talking about this movie.",
+                compEntity.getName(), BUDGET_RANGE_FRACTION * 100, best.getSpreaderCount(), language,
+                ownSnapshot.getSpreaderCount(), language));
+        if (!topHandles.isEmpty()) {
+            facts.add("Reach out to more of the " + language + "-language spreader(s) below to extend reach: "
+                    + String.join(", ", topHandles) + ".");
+        }
+
+        int confidence = spreaderGapConfidence(compSnapshots.size());
+        return new RecommendedActionCandidate(
+                "top-spreader-gap-" + slug(language),
+                language + " top-spreader coverage gap",
+                RecommendedActionCategory.MEDIUM_IMPACT, confidence,
+                PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS,
+                buildWindowLabel(PEER_TACTIC_WINDOW_START_DAYS, PEER_TACTIC_WINDOW_END_DAYS),
+                facts, topHandles, relevantUsers);
+    }
+
+    static int spreaderGapConfidence(long comparableMovieCount) {
+        if (comparableMovieCount >= SPREADER_GAP_TIER_HIGH) {
+            return SPREADER_GAP_CONFIDENCE_HIGH;
+        }
+        if (comparableMovieCount >= SPREADER_GAP_TIER_MID) {
+            return SPREADER_GAP_CONFIDENCE_MID;
+        }
+        return SPREADER_GAP_CONFIDENCE_LOW;
+    }
+
+    private List<SpreaderProfile> readSpreaderProfiles(EntityLanguageSpreaderSnapshot snapshot) {
+        try {
+            SpreaderProfile[] profiles = objectMapper.readValue(snapshot.getSpreadersJson(), SpreaderProfile[].class);
+            return List.of(profiles);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     // ==================== Genre resolution ====================

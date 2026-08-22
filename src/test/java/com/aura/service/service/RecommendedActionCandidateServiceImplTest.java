@@ -2,12 +2,14 @@ package com.aura.service.service;
 
 import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.entity.EntityKeyword;
+import com.aura.service.entity.EntityLanguageSpreaderSnapshot;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.enums.RecommendedActionCategory;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.CrisisPlanRepository;
+import com.aura.service.repository.EntityLanguageSpreaderSnapshotRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
@@ -72,6 +74,8 @@ class RecommendedActionCandidateServiceImplTest {
     private MovieMarketingTacticsQueryService tacticsQueryService;
     private NonObviousLeverLookupService nonObviousLeverLookup;
     private PlaybookLookupService playbookLookup;
+    private EntityLanguageSpreaderSnapshotRepository spreaderSnapshotRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     // Fixed well before every releaseDate used across this file's tests, so "not yet released" (the
     // common-tactic filler gate) holds for them by default without each test having to think about it.
     private final Clock clock = Clock.fixed(Instant.parse("2020-01-01T00:00:00Z"), ZoneOffset.UTC);
@@ -94,11 +98,12 @@ class RecommendedActionCandidateServiceImplTest {
         tacticsQueryService = mock(MovieMarketingTacticsQueryService.class);
         nonObviousLeverLookup = mock(NonObviousLeverLookupService.class);
         playbookLookup = mock(PlaybookLookupService.class);
+        spreaderSnapshotRepository = mock(EntityLanguageSpreaderSnapshotRepository.class);
 
         service = new RecommendedActionCandidateServiceImpl(
                 entityRepository, mentionRepository, mobilizeActionRepository, spreaderLookup, dashboardService,
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                nonObviousLeverLookup, playbookLookup, clock);
+                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, objectMapper, clock);
 
         // Defaults so a test that doesn't care about a given generator isn't polluted by it.
         stubHourlyActivity(0, List.of());
@@ -114,6 +119,7 @@ class RecommendedActionCandidateServiceImplTest {
                 .thenReturn(List.of());
         when(nonObviousLeverLookup.getNonObviousLevers(anyLong())).thenReturn(List.of());
         when(playbookLookup.getPlaybookPatterns(any(), any())).thenReturn(List.of());
+        when(spreaderSnapshotRepository.findByEntityId(any())).thenReturn(List.of());
     }
 
     // ==================== Category threshold boundaries ====================
@@ -774,7 +780,7 @@ class RecommendedActionCandidateServiceImplTest {
                 new DashboardService(mentionRepository, entityRepository, mock(ReplyDraftRepository.class),
                         mock(CrisisPlanRepository.class), mock(CheckpointRepository.class), null),
                 moviesDataQueryService, genreMarketingLookup, movieBuffLookup, viralSeedLookup, tacticsQueryService,
-                nonObviousLeverLookup, playbookLookup, pastReleaseClock);
+                nonObviousLeverLookup, playbookLookup, spreaderSnapshotRepository, objectMapper, pastReleaseClock);
         // Far from any holiday and thin plan (2 grounded actions), but releaseDate is before the
         // fixed clock's "now" -> already released, so no fallback regardless of low inventory.
         ManagedEntity entity = movie(LocalDate.of(2019, 2, 17), "Action", "Kannada", null);
@@ -1202,6 +1208,130 @@ class RecommendedActionCandidateServiceImplTest {
                 "playbook-sequence-bollywood-hindi", "playbook-sequence-bollywood-hindi-2");
     }
 
+    // ==================== Top-spreader language-coverage gap ====================
+
+    @Test
+    void topSpreaderGap_noBudgetOnFile_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("top-spreader-gap-"));
+        verifyNoInteractions(spreaderSnapshotRepository);
+    }
+
+    @Test
+    void topSpreaderGap_undisclosedBudgetSentinel_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 404.0)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("top-spreader-gap-"));
+        verifyNoInteractions(spreaderSnapshotRepository);
+    }
+
+    @Test
+    void topSpreaderGap_noOwnSnapshot_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(spreaderSnapshotRepository.findByEntityId(ENTITY_ID)).thenReturn(List.of());
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("top-spreader-gap-"));
+    }
+
+    @Test
+    void topSpreaderGap_noComparableMovieHasRealBudget_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(spreaderSnapshotRepository.findByEntityId(ENTITY_ID))
+                .thenReturn(List.of(spreaderSnapshot(ENTITY_ID, "Tamil", spreaderProfiles(2))));
+        // Every "comparable" movie in range has an undisclosed (404 sentinel) or missing budget - none
+        // is a real budget to compare against.
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(movieWithId(2L, null, "Tamil", 404.0), movieWithId(3L, null, "Tamil", null)));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("top-spreader-gap-"));
+        verify(spreaderSnapshotRepository, never()).findByEntityIdInAndLanguageIgnoreCase(any(), any());
+    }
+
+    @Test
+    void topSpreaderGap_shortfallBelowThreshold_neverProducesCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        when(spreaderSnapshotRepository.findByEntityId(ENTITY_ID))
+                .thenReturn(List.of(spreaderSnapshot(ENTITY_ID, "Tamil", spreaderProfiles(2))));
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(movieWithId(2L, null, "Tamil", 11_000_000.0)));
+        // Shortfall of 2 (4 - 2) is below SPREADER_GAP_MIN_ABSOLUTE_SHORTFALL (3).
+        when(spreaderSnapshotRepository.findByEntityIdInAndLanguageIgnoreCase(List.of(2L), "Tamil"))
+                .thenReturn(List.of(spreaderSnapshot(2L, "Tamil", spreaderProfiles(4))));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("top-spreader-gap-"));
+    }
+
+    @Test
+    void topSpreaderGap_meaningfulShortfall_producesCandidateCitingComparableMovieAndNewOutreachTargets() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(movie(null, null, "Tamil", 10_000_000.0)));
+        List<SpreaderProfile> ownProfiles = spreaderProfiles(2); // spreader-0, spreader-1
+        when(spreaderSnapshotRepository.findByEntityId(ENTITY_ID))
+                .thenReturn(List.of(spreaderSnapshot(ENTITY_ID, "Tamil", ownProfiles)));
+        when(entityRepository.findByTypeAndBudgetBetweenAndIdNot(eq("MOVIE"), anyDouble(), anyDouble(), eq(ENTITY_ID)))
+                .thenReturn(List.of(
+                        movieWithId(2L, null, "Tamil", 11_000_000.0),
+                        movieWithId(3L, null, "Tamil", 12_000_000.0)));
+        when(entityRepository.findById(2L)).thenReturn(Optional.of(movieWithId(2L, null, "Tamil", 11_000_000.0)));
+        when(entityRepository.findById(3L)).thenReturn(Optional.of(namedMovie(3L, "Peer Movie", "Tamil", 12_000_000.0)));
+        // Peer Movie (id 3) has 15 spreaders (spreader-0..14), the other comp only 4 - Peer Movie is the
+        // best-covered comp and is the one the candidate should cite by name.
+        when(spreaderSnapshotRepository.findByEntityIdInAndLanguageIgnoreCase(List.of(2L, 3L), "Tamil"))
+                .thenReturn(List.of(
+                        spreaderSnapshot(2L, "Tamil", spreaderProfiles(4)),
+                        spreaderSnapshot(3L, "Tamil", spreaderProfiles(15))));
+
+        RecommendedActionCandidate candidate = findCandidate(service.buildCandidateActions(ENTITY_ID),
+                "top-spreader-gap-tamil");
+
+        assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+        assertThat(candidate.supportingFacts().get(0))
+                .contains("Peer Movie")
+                .contains("15")
+                .contains("Tamil")
+                .contains("2");
+        // spreader-0/spreader-1 already talk about this movie; the outreach roster must exclude them
+        // and only offer genuinely new prospects, ranked by reach (spreader-14 has the most views).
+        assertThat(candidate.exampleHandles()).doesNotContainAnyElementsOf(
+                ownProfiles.stream().map(SpreaderProfile::globalUserId).toList());
+        assertThat(candidate.exampleHandles()).containsExactly("spreader-14", "spreader-13", "spreader-12");
+        assertThat(candidate.relevantUsers()).hasSize(13); // 15 comp spreaders minus 2 already-own overlaps
+    }
+
+    @Test
+    void spreaderGapConfidenceLowTier() {
+        assertThat(RecommendedActionCandidateServiceImpl.spreaderGapConfidence(1)).isEqualTo(50);
+    }
+
+    @Test
+    void spreaderGapConfidenceMidTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.spreaderGapConfidence(3)).isEqualTo(65);
+    }
+
+    @Test
+    void spreaderGapConfidenceHighTierBoundary() {
+        assertThat(RecommendedActionCandidateServiceImpl.spreaderGapConfidence(6)).isEqualTo(80);
+    }
+
+    @Test
+    void hasRealBudget_nullZeroNegativeAndSentinel_areAllTreatedAsNoBudget() {
+        assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(null)).isFalse();
+        assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(0.0)).isFalse();
+        assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(-5.0)).isFalse();
+        assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(404.0)).isFalse();
+        assertThat(RecommendedActionCandidateServiceImpl.hasRealBudget(10_000_000.0)).isTrue();
+    }
+
     // ==================== Helpers ====================
 
     private static ManagedEntity movie(LocalDate releaseDate, String genre, String language, Double budget) {
@@ -1223,6 +1353,36 @@ class RecommendedActionCandidateServiceImplTest {
         entity.setLanguage(language);
         entity.setBudget(budget);
         return entity;
+    }
+
+    private static ManagedEntity namedMovie(Long id, String name, String language, Double budget) {
+        ManagedEntity entity = movieWithId(id, null, language, budget);
+        entity.setName(name);
+        return entity;
+    }
+
+    /** {@code count} distinct SpreaderProfiles ("spreader-0".."spreader-{count-1}"), each with strictly
+     *  increasing totalViews so ranking-by-reach ordering is deterministic in tests. */
+    private static List<SpreaderProfile> spreaderProfiles(int count) {
+        List<SpreaderProfile> profiles = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            profiles.add(new SpreaderProfile("spreader-" + i, "TWITTER", null, 1000L + i, null));
+        }
+        return profiles;
+    }
+
+    private EntityLanguageSpreaderSnapshot spreaderSnapshot(Long entityId, String language, List<SpreaderProfile> profiles) {
+        EntityLanguageSpreaderSnapshot snapshot = new EntityLanguageSpreaderSnapshot();
+        snapshot.setEntityId(entityId);
+        snapshot.setLanguage(language);
+        snapshot.setSpreaderCount(profiles.size());
+        try {
+            snapshot.setSpreadersJson(objectMapper.writeValueAsString(profiles));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        snapshot.setGeneratedAt(Instant.now());
+        return snapshot;
     }
 
     private static MobilizeAction mobilizeEvent(Long entityId, Instant createdAt) {
