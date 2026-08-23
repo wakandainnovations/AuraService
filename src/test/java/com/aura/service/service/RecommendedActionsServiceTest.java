@@ -128,6 +128,55 @@ class RecommendedActionsServiceTest {
         verify(llmService, never()).generateReply(any());
     }
 
+    // ==================== refresh=true: background regeneration, low-latency response ====================
+
+    @Test
+    void refresh_withExistingCache_respondsWithCachedContentImmediately_andSchedulesBackgroundRefresh()
+            throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        List<RecommendedActionItem> cachedActions = List.of(new RecommendedActionItem(
+                "test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Cached Title", "Cached reason", 85,
+                "Factor A", -10, 10, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE));
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(cachedActions), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true, true);
+
+        // Responds with the existing cached content right away - no synchronous LLM/candidate-service
+        // call on this request's own thread, which is the whole point of moving refresh to the
+        // background (low latency over freshness for this one call).
+        assertThat(response.getActions()).hasSize(1);
+        assertThat(response.getActions().get(0).getTitle()).isEqualTo("Cached Title");
+        verify(candidateService, never()).buildCandidateActions(any());
+        verify(llmService, never()).generateReply(any());
+
+        // The background regeneration is still scheduled, just deferred - not dropped.
+        verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void refresh_withNoExistingCache_stillGeneratesSynchronously() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "factor-46-teaser", "Teaser/Trailer Timing", 90, -45, -30, "label", "some fact");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-46-teaser\", \"reason\": \"Grounded reason.\"}]");
+
+        // refresh=true, but there's nothing cached yet to respond with immediately - this one call has
+        // to generate synchronously and wait for it, same as a cache miss without refresh.
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true, true);
+
+        assertThat(response.getActions()).hasSize(1);
+        assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
+        verify(llmService).generateReply(any());
+        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+    }
+
     // ==================== Cache miss: generate, merge, persist ====================
 
     @Test
@@ -659,8 +708,13 @@ class RecommendedActionsServiceTest {
         when(llmService.generateReply(any())).thenReturn(
                 "[{\"candidateId\": \"factor-A\", \"title\": \"New Title\", \"reason\": \"fresh fact\"}]");
 
-        // refresh=true forces regeneration even though a cache row already exists.
+        // refresh=true schedules regeneration in the background rather than running it inline (see
+        // getCachedOrGenerate) - capture and run the scheduled task ourselves to exercise the same
+        // regenerate/merge/persist path this test is actually covering.
         service.getRecommendedActions(ENTITY_ID, true, true);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(taskScheduler).schedule(taskCaptor.capture(), any(Instant.class));
+        taskCaptor.getValue().run();
 
         ArgumentCaptor<RecommendedActionsCache> captor = ArgumentCaptor.forClass(RecommendedActionsCache.class);
         verify(cacheRepository).save(captor.capture());

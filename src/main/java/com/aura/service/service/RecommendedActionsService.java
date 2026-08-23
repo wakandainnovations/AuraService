@@ -118,6 +118,13 @@ public class RecommendedActionsService {
     }
 
     /**
+     * @param refresh when true AND a cached plan already exists for this entity, kicks off a fresh
+     *                regeneration in the background (see {@link #getCachedOrGenerate}) and responds
+     *                immediately with whatever is already cached, rather than blocking this request on
+     *                the LLM round trip - low latency over freshness, since the newly regenerated plan
+     *                lands in the cache for the next call regardless. When no plan has ever been
+     *                generated for this entity, there's nothing cached to respond with, so this one call
+     *                still generates synchronously and waits for it, refresh or not.
      * @param allPhases when true, returns the whole cached plan ungrouped/unfiltered (the full
      *                  campaign roadmap) instead of only the actions whose window currently contains
      *                  today. An entity with no releaseDate can't have a "current" window computed, so
@@ -315,14 +322,24 @@ public class RecommendedActionsService {
         return (int) ChronoUnit.DAYS.between(releaseDate, LocalDate.now(clock));
     }
 
+    // refresh=true no longer regenerates inline: with a cached row already present, it schedules
+    // refreshOneEntity to run in the background (see that method's own doc) and returns the existing
+    // cached content immediately, so a caller asking for a refresh isn't stuck waiting on the LLM round
+    // trip - the next call after the background refresh completes picks up the newly regenerated plan
+    // from the cache. Scheduled at "now" via taskScheduler (not called directly) so it actually runs on
+    // a separate thread, decoupled from this request's own thread/transaction - a past-due Instant runs
+    // immediately, see scheduleNextFullCycle's own doc for that same TaskScheduler behavior. Only when
+    // there's no cached row at all - nothing to respond with immediately either way - does this still
+    // generate synchronously and wait for it, refresh or not.
     private GeneratedContent getCachedOrGenerate(Long entityId, boolean refresh) {
-        if (!refresh) {
-            var cached = cacheRepository.findByEntityId(entityId);
-            if (cached.isPresent()) {
-                return toGeneratedContent(cached.get());
-            }
+        var cached = cacheRepository.findByEntityId(entityId);
+        if (cached.isEmpty()) {
+            return regenerateAndStore(entityId);
         }
-        return regenerateAndStore(entityId);
+        if (refresh) {
+            taskScheduler.schedule(() -> self.refreshOneEntity(entityId), clock.instant());
+        }
+        return toGeneratedContent(cached.get());
     }
 
     private GeneratedContent regenerateAndStore(Long entityId) {
