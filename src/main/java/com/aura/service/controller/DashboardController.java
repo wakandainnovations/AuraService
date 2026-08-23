@@ -269,7 +269,7 @@ public class DashboardController {
             @PathVariable Long entityId,
             @RequestParam(required = false) String language,
             @RequestParam(defaultValue = "10") @Min(1) @Max(50) int spreaderLimit,
-            @RequestParam(defaultValue = "5") @Min(1) @Max(50) int postsPerSpreader) {
+            @RequestParam(defaultValue = "5") @Min(1) @Max(10) int postsPerSpreader) {
         assertOwned(entityId);
         TopSpreaderContentResponse response = topSpreaderContentService.getTopSpreaderContent(
                 entityId, language, spreaderLimit, postsPerSpreader);

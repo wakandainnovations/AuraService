@@ -678,17 +678,45 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             @Param("entityId") Long entityId, @Param("author") String author);
 
     /**
-     * Posts authored by any of {@code authors} that are attributed to {@code entityId} - the "top
-     * spreader's top content" join. A spreader's {@code globalUserId} (from AuraMath's top-50-spreaders
-     * payload, see {@code TopSpreaderLookupService.SpreaderProfile}) is treated as directly comparable
-     * to {@code mentions.author}, the same identity equivalence
+     * The top 10 highest-viewed posts per author, among posts authored by any of {@code authors} that
+     * are attributed to {@code entityId} - the "top spreader's top content" join. A spreader's
+     * {@code globalUserId} (from AuraMath's top-50-spreaders payload, see
+     * {@code TopSpreaderLookupService.SpreaderProfile}) is treated as directly comparable to
+     * {@code mentions.author}, the same identity equivalence
      * {@code RecommendedActionCandidateServiceImpl}'s evangelist-mobilization candidate and
-     * {@link #countSentimentByAuthorsForEntity} already rely on. Ordered by post date descending only
-     * as a stable tie-break; callers re-rank by resolved view count.
+     * {@link #countSentimentByAuthorsForEntity} already rely on.
+     * <p>The per-author top-10 cut happens in the database via {@code ROW_NUMBER() OVER (PARTITION BY
+     * author ...)}, not after fetching every matching post into the JVM - a spreader with hundreds of
+     * posts about one movie no longer means hundreds of rows pulled just to keep 10. Ranking uses the
+     * same per-platform view proxy {@code TopSpreaderContentService} resolves separately for display (X's
+     * real view count; Instagram's {@code views} column with a like+comment fallback; Reddit's
+     * {@code subreddit_subscribers}; YouTube's video {@code view_count}, shared by every comment under
+     * that video), same formulas as {@link #findTotalViewsForEntity}. A post with no resolvable view
+     * proxy ranks last within its author ({@code NULLS LAST}), matching how the caller treats a null view
+     * count when it re-sorts this (already-capped) result for display.
      */
-    @Query("SELECT m FROM Mention m WHERE m.author IN :authors AND EXISTS " +
-            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
-            "ORDER BY m.postDate DESC")
+    @Query(value = "SELECT ranked.id, ranked.platform, ranked.post_id, ranked.content, ranked.author, " +
+            "ranked.post_date, ranked.sentiment, ranked.permalink, ranked.sentiment_score FROM ( " +
+            "  SELECT m.id, m.platform, m.post_id, m.content, m.author, m.post_date, m.sentiment, " +
+            "         m.permalink, m.sentiment_score, " +
+            "         ROW_NUMBER() OVER (PARTITION BY m.author ORDER BY v.views DESC NULLS LAST) AS rn " +
+            "  FROM mentions m " +
+            "  JOIN mention_entities me ON me.mention_id = m.id " +
+            "  LEFT JOIN ( " +
+            "    SELECT x.id AS post_id, 'X' AS platform, x.views_count AS views FROM x_posts x " +
+            "    UNION ALL " +
+            "    SELECT i.id, 'INSTAGRAM', COALESCE(NULLIF(i.views, 0), COALESCE(i.like_count, 0) + COALESCE(i.comments_count, 0)) " +
+            "      FROM instagram_posts i " +
+            "    UNION ALL " +
+            "    SELECT r.id, 'REDDIT', r.subreddit_subscribers FROM reddit_posts r " +
+            "    UNION ALL " +
+            "    SELECT yc.id, 'YOUTUBE', yv.view_count FROM youtube_comments yc " +
+            "      JOIN (SELECT video_id, MAX(view_count) AS view_count FROM youtube_videos GROUP BY video_id) yv " +
+            "      ON yv.video_id = yc.video_id " +
+            "  ) v ON v.post_id = m.post_id AND v.platform = m.platform " +
+            "  WHERE m.author IN (:authors) AND me.managed_entity_id = :entityId " +
+            ") ranked WHERE ranked.rn <= 10",
+           nativeQuery = true)
     List<Mention> findByManagedEntityIdAndAuthorIn(
             @Param("entityId") Long entityId, @Param("authors") Collection<String> authors);
 

@@ -3156,6 +3156,8 @@ GET /api/dashboard/21/awareness
 
 `views` is a per-platform proxy, not a uniform metric — same formulas `GET /{entityId}/awareness` and `findTotalViewsForEntity` use, just returned per post instead of summed: X is a real view count (`x_posts.views_count`); Instagram uses the `views` column, falling back to `like_count + comments_count` when null/0; YouTube shows the post's video's total view count, shared by every comment under that video (`mentions.post_id` for platform `YOUTUBE` points at a comment row, not the video); Reddit shows its subreddit's subscriber count (Reddit exposes no per-post view metric), so every post from the same subreddit shows the same figure. `engagementRate` is `(likes + comments) / views` and is `null` when `views` is `null` or `0`.
 
+Each spreader's candidate pool is capped at their 10 highest-viewed posts **in the database** (a `ROW_NUMBER() OVER (PARTITION BY author ...)` window, ranked by that same view proxy) before `postsPerSpreader` trims further — so a spreader with hundreds of posts about the movie doesn't mean hundreds of rows fetched just to keep a handful. This is also why `postsPerSpreader` tops out at 10.
+
 **Headers:**
 ```
 Authorization: Bearer {jwt_token}
@@ -3167,7 +3169,7 @@ Authorization: Bearer {jwt_token}
 **Query Parameters:**
 - `language` (optional) - restricts spreaders to this language's snapshot. Omitted: spreaders are deduped across every language the entity is tracked in.
 - `spreaderLimit` (optional, default `10`, 1-50) - max spreaders returned, ranked by AuraMath's `totalViews` descending.
-- `postsPerSpreader` (optional, default `5`, 1-50) - max posts returned per spreader, ranked by resolved `views` descending.
+- `postsPerSpreader` (optional, default `5`, 1-10) - max posts returned per spreader, ranked by resolved `views` descending.
 
 **Example Request:**
 ```
