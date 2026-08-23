@@ -23,6 +23,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -666,7 +667,7 @@ class RecommendedActionsServiceTest {
     // ==================== Status filtering on the main "what to do now" panel ====================
 
     @Test
-    void getRecommendedActions_excludesDoneAndIrrelevantActions() throws Exception {
+    void getRecommendedActions_includesDoneAndIrrelevantActionsAlongsideActive() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
         RecommendedActionItem active = new RecommendedActionItem(
                 "id-active", RecommendedActionCategory.HIGH_IMPACT, "Active", "R", 90, "Factor", -10, 10, "label",
@@ -681,7 +682,54 @@ class RecommendedActionsServiceTest {
 
         RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
 
-        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("Active");
+        // DONE/IRRELEVANT are already-handled history, not a queue to trim - always included, uncapped,
+        // alongside whichever ACTIVE actions made the (possibly random) cut.
+        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle)
+                .containsExactlyInAnyOrder("Active", "Done", "Irrelevant");
+    }
+
+    @Test
+    void getRecommendedActions_capsActiveActionsAtFiveButKeepsAllDoneAndIrrelevant() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
+        List<RecommendedActionItem> activeActions = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            activeActions.add(new RecommendedActionItem(
+                    "id-active-" + i, RecommendedActionCategory.HIGH_IMPACT, "Active " + i, "R", 90, "Factor", -10,
+                    10, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE));
+        }
+        RecommendedActionItem done = new RecommendedActionItem(
+                "id-done", RecommendedActionCategory.HIGH_IMPACT, "Done", "R", 90, "Factor2", -10, 10, "label",
+                List.of(), List.of(), RecommendedActionStatus.DONE);
+        List<RecommendedActionItem> all = new ArrayList<>(activeActions);
+        all.add(done);
+        stubCachedActions(all, releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        List<RecommendedActionItem> returnedActive = response.getActions().stream()
+                .filter(a -> a.getStatus() == RecommendedActionStatus.ACTIVE)
+                .toList();
+        assertThat(returnedActive).hasSize(5);
+        // Every returned active action is a real one from the original 8, not fabricated.
+        assertThat(activeActions).containsAll(returnedActive);
+        assertThat(response.getActions()).filteredOn(a -> a.getStatus() == RecommendedActionStatus.DONE)
+                .extracting(RecommendedActionItem::getTitle).containsExactly("Done");
+    }
+
+    @Test
+    void getRecommendedActions_doesNotCapWhenFiveOrFewerActiveActions() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
+        List<RecommendedActionItem> activeActions = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            activeActions.add(new RecommendedActionItem(
+                    "id-active-" + i, RecommendedActionCategory.HIGH_IMPACT, "Active " + i, "R", 90, "Factor", -10,
+                    10, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE));
+        }
+        stubCachedActions(activeActions, releaseDate);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions()).hasSize(5);
     }
 
     // ==================== Regeneration merges onto history instead of overwriting it ====================

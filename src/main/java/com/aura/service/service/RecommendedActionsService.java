@@ -35,6 +35,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -81,6 +82,12 @@ public class RecommendedActionsService {
     private static final List<String> STARTUP_PRIORITY_MOVIE_NAMES = List.of("Toxic", "GD Naidu", "Lord Gaaga");
     private static final Duration FULL_CYCLE_INTERVAL = Duration.ofHours(24);
     private static final Duration PER_ENTITY_SPACING = Duration.ofHours(1);
+
+    // A movie with a rich plan can accumulate far more ACTIVE actions than a marketing team can act on
+    // at once - see capActiveActions - so getRecommendedActions caps the ACTIVE portion of its response
+    // at this many, randomly chosen. DONE/IRRELEVANT actions are never capped or randomized: those are
+    // already-handled history, not a queue of work to trim.
+    private static final int MAX_ACTIVE_ACTIONS_IN_RESPONSE = 5;
 
     private final ManagedEntityRepository managedEntityRepository;
     private final RecommendedActionsCacheRepository cacheRepository;
@@ -136,7 +143,12 @@ public class RecommendedActionsService {
      *                  exists for this entity. Once the movie has released, that fallback excludes
      *                  actions whose window is entirely pre-release (e.g. trailer/teaser timing, first-
      *                  single timing) since those are no longer actionable, falling back further to the
-     *                  full plan only if nothing post-release-relevant remains.
+     *                  full plan only if nothing post-release-relevant remains. The ACTIVE portion of
+     *                  the result (whichever of the above it ends up being) is then capped at {@link
+     *                  #MAX_ACTIVE_ACTIONS_IN_RESPONSE} random actions - see {@link #capActiveActions} -
+     *                  and every DONE/IRRELEVANT action is appended after it, uncapped: those are
+     *                  already-handled history the marketing team has already triaged, not more of the
+     *                  same queue that needs trimming.
      */
     @Transactional
     public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
@@ -145,10 +157,14 @@ public class RecommendedActionsService {
         GeneratedContent content = getCachedOrGenerate(entityId, refresh);
 
         // This panel is "what to do right now" - an action the marketing team already marked DONE or
-        // IRRELEVANT (see updateActionStatus) has nothing left to act on, so it's excluded here even
-        // though it's retained (never deleted) in the cached plan for the /all history endpoint.
+        // IRRELEVANT (see updateActionStatus) has nothing left to act on, so it's kept out of the
+        // window-filtering/capping logic below, and appended back afterward unfiltered/uncapped.
         List<RecommendedActionItem> activeActions = content.actions().stream()
                 .filter(a -> a.getStatus() == RecommendedActionStatus.ACTIVE)
+                .toList();
+        List<RecommendedActionItem> doneOrIrrelevantActions = content.actions().stream()
+                .filter(a -> a.getStatus() == RecommendedActionStatus.DONE
+                        || a.getStatus() == RecommendedActionStatus.IRRELEVANT)
                 .toList();
 
         Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
@@ -162,7 +178,23 @@ public class RecommendedActionsService {
             actions = fallback.isEmpty() ? activeActions : fallback;
         }
 
-        return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, actions, content.generatedAt());
+        List<RecommendedActionItem> response = new ArrayList<>(capActiveActions(actions, entityId));
+        response.addAll(doneOrIrrelevantActions);
+
+        return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, response, content.generatedAt());
+    }
+
+    // Caps an ACTIVE action list at MAX_ACTIVE_ACTIONS_IN_RESPONSE, chosen randomly but deterministically
+    // per entity+day (not reshuffled on every request) so a marketing team reloading the panel sees the
+    // same 5 all day rather than a different random 5 on every call - same seeding convention as
+    // RecommendedActionCandidateServiceImpl.viralSeedViewCountGapCandidate's daily reselection.
+    private List<RecommendedActionItem> capActiveActions(List<RecommendedActionItem> activeActions, Long entityId) {
+        if (activeActions.size() <= MAX_ACTIVE_ACTIONS_IN_RESPONSE) {
+            return activeActions;
+        }
+        List<RecommendedActionItem> shuffled = new ArrayList<>(activeActions);
+        Collections.shuffle(shuffled, new Random(entityId * 1_000_003L + LocalDate.now(clock).toEpochDay()));
+        return shuffled.subList(0, MAX_ACTIVE_ACTIONS_IN_RESPONSE);
     }
 
     /**
