@@ -1,15 +1,27 @@
 package com.aura.service.service;
 
+import com.aura.service.dto.AiSummaryResponse;
+import com.aura.service.dto.AudiencePulseAspectsResponse;
 import com.aura.service.dto.CompetitorSnapshot;
 import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.EntityMarketingReportResponse;
 import com.aura.service.dto.EntityStatsAvgResponse;
 import com.aura.service.dto.EntityStatsResponse;
+import com.aura.service.dto.MomentumCausalReportResponse;
+import com.aura.service.dto.RecommendedActionsResponse;
 import com.aura.service.dto.SentimentOverTimeResponse;
+import com.aura.service.dto.TodaysHighlightsResponse;
+import com.aura.service.dto.TopSpreaderContentResponse;
+import com.aura.service.dto.TopSpreaderInsightsResponse;
+import com.aura.service.entity.EntityMarketingReportCache;
+import com.aura.service.entity.ManagedEntity;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.proxy.AuraMathProperties;
 import com.aura.service.proxy.AuraMathProxyService;
+import com.aura.service.repository.EntityMarketingReportCacheRepository;
+import com.aura.service.repository.ManagedEntityRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -17,11 +29,22 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link EntityMarketingReportService}: assembly of the headline metrics, competitive
@@ -37,6 +60,8 @@ class EntityMarketingReportServiceTest {
     private StubEntityService entityService;
     private StubDashboardService dashboardService;
     private StubAuraMathProxy auraMathProxy;
+    private EntityMarketingReportCacheRepository cacheRepository;
+    private ManagedEntityRepository managedEntityRepository;
     private EntityMarketingReportService service;
 
     @BeforeEach
@@ -44,8 +69,19 @@ class EntityMarketingReportServiceTest {
         entityService = new StubEntityService();
         dashboardService = new StubDashboardService();
         auraMathProxy = new StubAuraMathProxy();
+        // Instant fields on the report (generatedAt) need the JSR-310 module registered to round-trip
+        // through the cache's serialize/deserialize path exercised by the getReport(...) tests below.
+        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        cacheRepository = mock(EntityMarketingReportCacheRepository.class);
+        when(cacheRepository.findByEntityIdAndPeriodAndWindowDays(anyLong(), anyString(), anyInt()))
+                .thenReturn(Optional.empty());
+        managedEntityRepository = mock(ManagedEntityRepository.class);
         service = new EntityMarketingReportService(
-                entityService, dashboardService, auraMathProxy, new ObjectMapper());
+                entityService, dashboardService, auraMathProxy, objectMapper,
+                new StubMomentumCausalReportService(), new StubCommandCenterSummaryService(),
+                new StubTopSpreaderContentService(), new StubTopSpreaderInsightsService(),
+                new StubRecommendedActionsService(), new StubAudiencePulseAspectsService(),
+                cacheRepository, managedEntityRepository);
 
         EntityDetailResponse entity = new EntityDetailResponse();
         entity.setId(ENTITY_ID);
@@ -157,6 +193,75 @@ class EntityMarketingReportServiceTest {
     }
 
     // ------------------------------------------------------------------
+    // getReport(...) caching
+    // ------------------------------------------------------------------
+
+    @Test
+    void getReport_cacheHit_returnsCachedReport_withoutRegenerating() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        EntityMarketingReportResponse cached = EntityMarketingReportResponse.builder()
+                .period("CACHED-MARKER")
+                .build();
+        EntityMarketingReportCache row = new EntityMarketingReportCache();
+        row.setEntityId(ENTITY_ID);
+        row.setPeriod(TimePeriod.DAY30.name());
+        row.setWindowDays(7);
+        row.setReportJson(mapper.writeValueAsString(cached));
+        row.setGeneratedAt(java.time.Instant.now());
+        when(cacheRepository.findByEntityIdAndPeriodAndWindowDays(ENTITY_ID, "DAY30", 7))
+                .thenReturn(Optional.of(row));
+
+        EntityMarketingReportResponse result = service.getReport(TYPE, ENTITY_ID, TimePeriod.DAY30, 7, false);
+
+        assertThat(result.getPeriod()).isEqualTo("CACHED-MARKER");
+        // Ownership is still checked, but nothing else is regenerated from the cached row.
+        assertThat(dashboardService.getEntityStatsCalls).isZero();
+        verify(cacheRepository, never()).save(any());
+    }
+
+    @Test
+    void getReport_cacheMiss_generatesAndPersists() {
+        auraMathProxy.response = ResponseEntity.ok().body("{}");
+        when(cacheRepository.findByEntityIdAndPeriodAndWindowDays(ENTITY_ID, "DAY30", 7))
+                .thenReturn(Optional.empty());
+
+        EntityMarketingReportResponse result = service.getReport(TYPE, ENTITY_ID, TimePeriod.DAY30, 7, false);
+
+        assertThat(result.getHeadlineMetrics().getTotalMentions()).isEqualTo(8000L);
+        assertThat(dashboardService.getEntityStatsCalls).isEqualTo(1);
+        verify(cacheRepository).save(any(EntityMarketingReportCache.class));
+    }
+
+    @Test
+    void getReport_refreshTrue_bypassesCache_andRegenerates() {
+        auraMathProxy.response = ResponseEntity.ok().body("{}");
+        EntityMarketingReportCache staleRow = new EntityMarketingReportCache();
+        staleRow.setReportJson("{\"period\":\"STALE\"}");
+        when(cacheRepository.findByEntityIdAndPeriodAndWindowDays(ENTITY_ID, "DAY30", 7))
+                .thenReturn(Optional.of(staleRow));
+
+        EntityMarketingReportResponse result = service.getReport(TYPE, ENTITY_ID, TimePeriod.DAY30, 7, true);
+
+        assertThat(result.getPeriod()).isEqualTo("DAY30");
+        assertThat(dashboardService.getEntityStatsCalls).isEqualTo(1);
+        verify(cacheRepository).save(any(EntityMarketingReportCache.class));
+    }
+
+    @Test
+    void refreshAllReports_iteratesEntities_andPersistsEachOne() {
+        ManagedEntity movie = new ManagedEntity();
+        movie.setId(99L);
+        movie.setName("Some Movie");
+        movie.setType("MOVIE");
+        when(managedEntityRepository.findAll()).thenReturn(List.of(movie));
+        auraMathProxy.response = ResponseEntity.ok().body("{}");
+
+        service.refreshAllReports();
+
+        verify(cacheRepository).save(any(EntityMarketingReportCache.class));
+    }
+
+    // ------------------------------------------------------------------
     // Stubs
     // ------------------------------------------------------------------
 
@@ -184,6 +289,7 @@ class EntityMarketingReportServiceTest {
         List<CompetitorSnapshot> competitorSnapshot;
         SentimentOverTimeResponse sentiment;
         boolean throwOnPlatform;
+        int getEntityStatsCalls;
 
         StubDashboardService() {
             super(null, null, null, null, null, null);
@@ -191,6 +297,7 @@ class EntityMarketingReportServiceTest {
 
         @Override
         public EntityStatsResponse getEntityStats(Long entityId) {
+            getEntityStatsCalls++;
             return stats;
         }
 
@@ -219,6 +326,146 @@ class EntityMarketingReportServiceTest {
 
         @Override
         public com.aura.service.dto.CheckpointImpactResponse getCheckpointImpact(Long entityId, int windowDays) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.CheckpointTrendResponse getCheckpointTrend(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.SentimentDeltaResponse getSentimentDelta(
+                Long entityId, java.time.LocalDate fromDate, java.time.LocalDate toDate, int windowDays) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.MovieHealthResponse getMovieHealth(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.BuzzResponse getBuzz(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.ReachResponse getReachDirect(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.AwarenessResponse getAwareness(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.AudiencePulseResponse getAudiencePulse(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.PromotionalMixResponse getPromotionalMix(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.AuthorTypeBreakdownResponse getAuthorTypeBreakdown(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.ContentIntentBreakdownResponse getContentIntentBreakdown(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.TopicCategoryBreakdownResponse getTopicCategoryBreakdown(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public com.aura.service.dto.HourlyActivityResponse getHourlyActivity(
+                Long entityId, TimePeriod period, String language, String industry, String state) {
+            return null;
+        }
+    }
+
+    static class StubMomentumCausalReportService extends MomentumCausalReportService {
+        StubMomentumCausalReportService() {
+            super(null, null, new AuraMathProperties(), null, new ObjectMapper());
+        }
+
+        @Override
+        public MomentumCausalReportResponse buildReport(Long entityId) {
+            return null;
+        }
+
+        @Override
+        public MomentumCausalReportResponse buildReportForEntity(ManagedEntity entity) {
+            return null;
+        }
+    }
+
+    static class StubCommandCenterSummaryService extends CommandCenterSummaryService {
+        StubCommandCenterSummaryService() {
+            super(null, null, null, null, java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public AiSummaryResponse getAiSummary(Long entityId, boolean refresh) {
+            return null;
+        }
+
+        @Override
+        public TodaysHighlightsResponse getTodaysHighlights(Long entityId, boolean refresh) {
+            return null;
+        }
+    }
+
+    static class StubTopSpreaderContentService extends TopSpreaderContentService {
+        StubTopSpreaderContentService() {
+            super(null, null, new ObjectMapper());
+        }
+
+        @Override
+        public TopSpreaderContentResponse getTopSpreaderContent(
+                Long entityId, String language, int spreaderLimit, int postsPerSpreader) {
+            return null;
+        }
+    }
+
+    static class StubTopSpreaderInsightsService extends TopSpreaderInsightsService {
+        StubTopSpreaderInsightsService() {
+            super(null, null, null, null, new ObjectMapper(), java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public TopSpreaderInsightsResponse getInsights(
+                Long entityId, String language, int spreaderLimit, int postsPerSpreader, boolean refresh) {
+            return null;
+        }
+    }
+
+    static class StubRecommendedActionsService extends RecommendedActionsService {
+        StubRecommendedActionsService() {
+            super(null, null, null, null, java.time.Clock.systemUTC(), null);
+        }
+
+        @Override
+        public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
+            return null;
+        }
+    }
+
+    static class StubAudiencePulseAspectsService extends AudiencePulseAspectsService {
+        StubAudiencePulseAspectsService() {
+            super(null, null, null, new AuraMathProperties(), new ObjectMapper(), java.time.Clock.systemUTC());
+        }
+
+        @Override
+        public AudiencePulseAspectsResponse getAspects(Long entityId, boolean refresh) {
             return null;
         }
     }

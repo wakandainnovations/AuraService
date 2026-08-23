@@ -112,6 +112,28 @@ class MomentumCausalReportServiceTest {
         verifyNoInteractions(candidateService);
     }
 
+    /**
+     * {@code buildReportForEntity} exists for the scheduled cache refresh in
+     * {@code EntityMarketingReportService}, which has no authenticated request to check ownership
+     * against - it must assemble the same report shape without ever touching
+     * {@link EntityAccessService}.
+     */
+    @Test
+    void buildReportForEntity_skipsOwnershipCheck_butProducesSameShapeReport() {
+        ManagedEntity entity = ownedEntity("Kannada", "Test Movie");
+
+        enqueueJson("{\"status\":\"insufficient_history\",\"details\":\"no vmi\"}");
+        enqueueJson("{\"status\":\"insufficient_history\",\"details\":\"no chains\"}");
+        enqueueJson("{\"language\":\"Kannada\",\"movie\":\"Test Movie\",\"totalUsers\":0,\"users\":[]}");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of());
+
+        MomentumCausalReportResponse report = service.buildReportForEntity(entity);
+
+        assertThat(report.getEntityId()).isEqualTo(ENTITY_ID);
+        assertThat(report.getEntityName()).isEqualTo("Test Movie");
+        verifyNoInteractions(entityAccessService);
+    }
+
     // ------------------------------------------------------------------
     // Fully-populated entity: all four sections come back "ok" with real data intact.
     // ------------------------------------------------------------------

@@ -15,13 +15,19 @@ import java.util.Map;
  * A complete, prospect-facing marketing intelligence report for a single managed entity.
  *
  * <p>Aggregates this service's own analytics (headline reach metrics, sentiment over time,
- * competitive positioning, platform reach, defining moments) with the upstream AuraMath
- * entity-report ({@code GET /api/marketing/entity-report/{entityId}}). It is designed to be shown
- * at a high level to potential customers of a production house, so the most flattering, headline
- * numbers are surfaced first and a deterministic {@code highlights} narrative summarises them.
+ * competitive positioning, platform reach, defining moments, movie health/buzz/reach/awareness,
+ * audience pulse and its aspect-level "people love"/"people concerned" breakdown, content-mix
+ * breakdowns, hourly activity, checkpoint trend, sentiment delta, top spreaders and their
+ * AI-generated collaboration insights, the recommended-actions campaign roadmap, and the AI
+ * summary / today's-highlights narrative panels) with the upstream AuraMath entity-report
+ * ({@code GET /api/marketing/entity-report/{entityId}}) and the momentum & causal-chain
+ * intelligence report ({@link MomentumCausalReportResponse}). It is designed to be shown at a high
+ * level to potential customers of a production house, so the most flattering, headline numbers are
+ * surfaced first and a deterministic {@code highlights} narrative summarises them.
  *
- * <p>Optional sections degrade gracefully: if a downstream source (e.g. AuraMath) is unavailable,
- * its section is {@code null} (see {@link #auraMathStatus}) rather than failing the whole report.
+ * <p>Optional sections degrade gracefully: if a downstream source (e.g. AuraMath, or any of the
+ * services above) is unavailable, its section is simply {@code null} (see {@link #auraMathStatus}
+ * for the one section with its own explicit status flag) rather than failing the whole report.
  */
 @Data
 @Builder
@@ -53,6 +59,63 @@ public class EntityMarketingReportResponse {
 
     /** Before/after impact of the entity's defining moments (campaign beats, releases, etc.). */
     private CheckpointImpactResponse definingMoments;
+
+    /** Trend of checkpoint-over-checkpoint impact across the entity's whole tracked history. */
+    private CheckpointTrendResponse checkpointTrend;
+
+    /** Day-over-day sentiment delta comparing today to {@code windowDays} ago. */
+    private SentimentDeltaResponse sentimentDelta;
+
+    /** Composite health score/label derived from net sentiment. */
+    private MovieHealthResponse movieHealth;
+
+    /** Change in mention volume vs. the prior UTC day. */
+    private BuzzResponse buzz;
+
+    /** Total unique users who have posted about the entity, joined directly against the raw platform tables. */
+    private ReachResponse reach;
+
+    /** High/Medium/Low awareness tier from total views, ranked against the owner's other movies. */
+    private AwarenessResponse awareness;
+
+    /** Region-level breakdown of where the entity's mention volume is coming from. */
+    private AudiencePulseResponse audiencePulse;
+
+    /** Aspect-level "people love" / "people concerned about" chips derived from AuraMath's aspect-driver analysis. */
+    private AudiencePulseAspectsResponse audiencePulseAspects;
+
+    /** Promotional vs. organic share of the entity's posts. */
+    private PromotionalMixResponse promotionalMix;
+
+    /** Share of posts by author type (e.g. fan account, media outlet, official). */
+    private AuthorTypeBreakdownResponse authorTypeBreakdown;
+
+    /** Share of posts by content intent (e.g. review, promotion, discussion). */
+    private ContentIntentBreakdownResponse contentIntentBreakdown;
+
+    /** Share of posts by topic category. */
+    private TopicCategoryBreakdownResponse topicCategoryBreakdown;
+
+    /** Hourly/daily posting-activity distribution for the selected period. */
+    private HourlyActivityResponse hourlyActivity;
+
+    /** The entity's top spreaders and what they've actually posted, with view/engagement metrics per post. */
+    private TopSpreaderContentResponse topSpreaders;
+
+    /** AI-generated collaboration insights and per-spreader actions derived from {@link #topSpreaders}. */
+    private TopSpreaderInsightsResponse topSpreaderInsights;
+
+    /** The full campaign-roadmap recommended-actions plan for the entity (every phase, not just today's window). */
+    private RecommendedActionsResponse recommendedActions;
+
+    /** LLM-generated narrative summary of the entity's current standing. */
+    private AiSummaryResponse aiSummary;
+
+    /** LLM-generated, typed (POSITIVE/NEGATIVE/NEUTRAL) highlight bullets for the entity. */
+    private TodaysHighlightsResponse todaysHighlights;
+
+    /** Post-release momentum (VMI trend) and causal-chain intelligence report for the entity. */
+    private MomentumCausalReportResponse momentumIntelligence;
 
     /** The upstream AuraMath entity-report payload, forwarded verbatim, or {@code null} if unavailable. */
     private JsonNode auraMathIntelligence;

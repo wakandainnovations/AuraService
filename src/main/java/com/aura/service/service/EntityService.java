@@ -452,7 +452,13 @@ public class EntityService {
         return basicInfo;
     }
     
-    private EntityDetailResponse mapToDetailResponse(ManagedEntity entity) {
+    /**
+     * Package-private (not {@code private}) so trusted in-package background callers that have
+     * already resolved a {@link ManagedEntity} directly (e.g. {@code EntityMarketingReportService}'s
+     * scheduled cache refresh, which has no authenticated request to scope ownership against) can
+     * reuse this mapping without going through the owner-scoped {@link #getEntityById}.
+     */
+    EntityDetailResponse mapToDetailResponse(ManagedEntity entity) {
         EntityDetailResponse response = new EntityDetailResponse();
         response.setId(entity.getId());
         response.setName(entity.getName());

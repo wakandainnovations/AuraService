@@ -52,10 +52,12 @@ public class EntityMarketingReportController {
             @Parameter(description = "Window for the sentiment trend / momentum sections")
             @RequestParam(defaultValue = "DAY30") TimePeriod period,
             @Parameter(description = "Days before/after each checkpoint for the defining-moments impact")
-            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays
+            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays,
+            @Parameter(description = "Bypass the 24-hourly cached report and regenerate live")
+            @RequestParam(defaultValue = "false") boolean refresh
     ) {
         return entitlementService.evaluate(Feature.INTELLIGENCE_REPORT,
-                () -> reportService.generateReport(entityType.toUpperCase(), id, period, windowDays));
+                () -> reportService.getReport(entityType.toUpperCase(), id, period, windowDays, refresh));
     }
 
     @Operation(summary = "Generate the complete marketing intelligence report as a downloadable PDF")
@@ -66,10 +68,12 @@ public class EntityMarketingReportController {
             @Parameter(description = "Window for the sentiment trend / momentum sections")
             @RequestParam(defaultValue = "DAY30") TimePeriod period,
             @Parameter(description = "Days before/after each checkpoint for the defining-moments impact")
-            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays
+            @RequestParam(defaultValue = "7") @Min(1) @Max(30) int windowDays,
+            @Parameter(description = "Bypass the 24-hourly cached report and regenerate live")
+            @RequestParam(defaultValue = "false") boolean refresh
     ) {
-        EntityMarketingReportResponse report = reportService.generateReport(
-                entityType.toUpperCase(), id, period, windowDays);
+        EntityMarketingReportResponse report = reportService.getReport(
+                entityType.toUpperCase(), id, period, windowDays, refresh);
 
         // Don't render (or stream) a PDF for someone who can't have it — hand back the same masked JSON
         // envelope the JSON endpoint would, so the UI can show a locked teaser uniformly.

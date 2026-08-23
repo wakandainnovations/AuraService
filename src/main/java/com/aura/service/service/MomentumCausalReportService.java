@@ -80,7 +80,20 @@ public class MomentumCausalReportService {
         // Mandatory and owner-scoped: 404s if the entity is missing or not owned by the caller — this
         // is what enforces ownership for the whole report, before any upstream call is made.
         ManagedEntity entity = entityAccessService.assertOwnedByCurrentUser(entityId);
+        return assemble(entityId, entity);
+    }
 
+    /**
+     * Same assembly as {@link #buildReport}, but for trusted background callers that have already
+     * resolved the entity directly (e.g. {@code EntityMarketingReportService}'s scheduled cache
+     * refresh, which runs with no authenticated request to check ownership against) — skips the
+     * ownership assertion entirely rather than failing with "no authenticated user".
+     */
+    public MomentumCausalReportResponse buildReportForEntity(ManagedEntity entity) {
+        return assemble(entity.getId(), entity);
+    }
+
+    private MomentumCausalReportResponse assemble(Long entityId, ManagedEntity entity) {
         JsonNode vmiTrend = fetchAuraMathJson(VMI_WRAPPER_PATH,
                 "/api/marketing/entity/" + entityId + "/vmi", "VMI trend (F1)");
         JsonNode causalChains = fetchAuraMathJson(CAUSAL_CHAINS_WRAPPER_PATH,

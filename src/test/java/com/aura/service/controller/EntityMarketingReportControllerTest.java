@@ -145,17 +145,19 @@ class EntityMarketingReportControllerTest {
         String lastType;
         TimePeriod lastPeriod;
         int lastWindowDays;
+        boolean lastRefresh;
 
         StubReportService() {
-            super(null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null, null, null, null);
         }
 
         @Override
-        public EntityMarketingReportResponse generateReport(String entityType, Long id,
-                                                            TimePeriod period, int windowDays) {
+        public EntityMarketingReportResponse getReport(String entityType, Long id,
+                                                       TimePeriod period, int windowDays, boolean refresh) {
             this.lastType = entityType;
             this.lastPeriod = period;
             this.lastWindowDays = windowDays;
+            this.lastRefresh = refresh;
             return response;
         }
     }

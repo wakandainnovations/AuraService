@@ -7,22 +7,31 @@ import com.aura.service.dto.EntityMarketingReportResponse.CompetitivePositioning
 import com.aura.service.dto.EntityMarketingReportResponse.HeadlineMetrics;
 import com.aura.service.dto.EntityStatsAvgResponse;
 import com.aura.service.dto.EntityStatsResponse;
+import com.aura.service.dto.MomentumCausalReportResponse;
 import com.aura.service.dto.SentimentOverTimeResponse;
+import com.aura.service.entity.EntityMarketingReportCache;
+import com.aura.service.entity.ManagedEntity;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.proxy.AuraMathProxyService;
+import com.aura.service.repository.EntityMarketingReportCacheRepository;
+import com.aura.service.repository.ManagedEntityRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Assembles the complete, prospect-facing {@link EntityMarketingReportResponse} for a single
@@ -35,6 +44,12 @@ import java.util.Map;
  * owned by another user surfaces as {@code 404}. Every other section is optional and degrades to
  * {@code null} on failure so a single flaky downstream never blocks a report being shown to a
  * prospect.
+ *
+ * <p>Assembly is expensive (a dozen-plus downstream calls, one of them an LLM call), so callers
+ * should go through {@link #getReport} rather than {@link #generateReport} directly: it serves the
+ * row {@link #refreshAllReports()} persists every 24 hours per entity (see
+ * {@code EntityMarketingReportCache}) instead of paying that cost on every request, falling back to
+ * a live {@link #generateReport} (and caching that result) only on a cache miss or {@code refresh}.
  */
 @Slf4j
 @Service
@@ -42,19 +57,137 @@ public class EntityMarketingReportService {
 
     private static final String WRAPPER_PATH = "/api/entities/{entityType}/{id}/marketing-report";
 
+    // Same defaults DashboardController uses for /top-spreaders/content and /top-spreaders/insights,
+    // so this report's spreader sections match what the dedicated endpoints would return unfiltered.
+    private static final int TOP_SPREADER_LIMIT = 10;
+    private static final int TOP_SPREADER_POSTS_PER_SPREADER = 5;
+
+    // The (period, windowDays) combination the scheduled cache refresh generates - matches the
+    // controller's own query-param defaults, so a caller that never overrides them always hits the
+    // cache instead of falling through to a live (re-)generation.
+    private static final TimePeriod DEFAULT_PERIOD = TimePeriod.DAY30;
+    private static final int DEFAULT_WINDOW_DAYS = 7;
+
     private final EntityService entityService;
     private final DashboardService dashboardService;
     private final AuraMathProxyService auraMathProxy;
     private final ObjectMapper objectMapper;
+    private final MomentumCausalReportService momentumCausalReportService;
+    private final CommandCenterSummaryService commandCenterSummaryService;
+    private final TopSpreaderContentService topSpreaderContentService;
+    private final TopSpreaderInsightsService topSpreaderInsightsService;
+    private final RecommendedActionsService recommendedActionsService;
+    private final AudiencePulseAspectsService audiencePulseAspectsService;
+    private final EntityMarketingReportCacheRepository cacheRepository;
+    private final ManagedEntityRepository managedEntityRepository;
 
     public EntityMarketingReportService(EntityService entityService,
                                         DashboardService dashboardService,
                                         AuraMathProxyService auraMathProxy,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        MomentumCausalReportService momentumCausalReportService,
+                                        CommandCenterSummaryService commandCenterSummaryService,
+                                        TopSpreaderContentService topSpreaderContentService,
+                                        TopSpreaderInsightsService topSpreaderInsightsService,
+                                        RecommendedActionsService recommendedActionsService,
+                                        AudiencePulseAspectsService audiencePulseAspectsService,
+                                        EntityMarketingReportCacheRepository cacheRepository,
+                                        ManagedEntityRepository managedEntityRepository) {
         this.entityService = entityService;
         this.dashboardService = dashboardService;
         this.auraMathProxy = auraMathProxy;
         this.objectMapper = objectMapper;
+        this.momentumCausalReportService = momentumCausalReportService;
+        this.commandCenterSummaryService = commandCenterSummaryService;
+        this.topSpreaderContentService = topSpreaderContentService;
+        this.topSpreaderInsightsService = topSpreaderInsightsService;
+        this.recommendedActionsService = recommendedActionsService;
+        this.audiencePulseAspectsService = audiencePulseAspectsService;
+        this.cacheRepository = cacheRepository;
+        this.managedEntityRepository = managedEntityRepository;
+    }
+
+    /**
+     * The cache-first entry point controllers should call: serves the row the scheduled 24-hourly
+     * refresh (see {@link #refreshAllReports()}) last persisted for this exact (entity, period,
+     * windowDays) combination instead of paying for a live assembly, unless {@code refresh} is set or
+     * no such row exists yet (e.g. a brand-new entity, or a non-default period/windowDays the
+     * schedule doesn't generate) - either falls through to {@link #generateReport} and persists the
+     * result so the next call for this combination is served from cache too.
+     */
+    public EntityMarketingReportResponse getReport(String entityType, Long id,
+                                                   TimePeriod period, int windowDays, boolean refresh) {
+        // Ownership/existence must be enforced before ever serving a cached row - the cache is keyed
+        // by entity, not by caller, so skipping this on a cache hit would leak one owner's report to
+        // anyone who guesses another owner's entity id.
+        entityService.getEntityById(entityType, id);
+
+        if (!refresh) {
+            var cached = cacheRepository.findByEntityIdAndPeriodAndWindowDays(id, period.name(), windowDays);
+            if (cached.isPresent()) {
+                EntityMarketingReportResponse report = deserialize(cached.get(), id);
+                if (report != null) {
+                    return report;
+                }
+            }
+        }
+
+        EntityMarketingReportResponse report = generateReport(entityType, id, period, windowDays);
+        persist(id, period, windowDays, report);
+        return report;
+    }
+
+    /**
+     * Refreshes the cached report for every managed entity, at {@link #DEFAULT_PERIOD}/
+     * {@link #DEFAULT_WINDOW_DAYS}, so {@link #getReport} can normally serve a persisted row instead
+     * of paying for the full assembly (a dozen-plus downstream calls, one of them an LLM call) on
+     * request. Runs at startup and every 24 hours after that; one entity's failure is logged and
+     * skipped rather than aborting the run. Uses {@link ManagedEntityRepository} and
+     * {@link MomentumCausalReportService#buildReportForEntity} directly rather than the owner-scoped
+     * {@link EntityService}/{@link MomentumCausalReportService#buildReport} paths, since a scheduler
+     * thread has no authenticated request to check ownership against.
+     */
+    @Scheduled(fixedDelayString = "PT24H")
+    public void refreshAllReports() {
+        List<ManagedEntity> entities = managedEntityRepository.findAll();
+        log.info("Refreshing marketing reports for {} entities", entities.size());
+        for (ManagedEntity entity : entities) {
+            try {
+                EntityMarketingReportResponse report =
+                        assembleForBatch(entity, DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS);
+                persist(entity.getId(), DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS, report);
+            } catch (Exception e) {
+                log.error("Failed to refresh marketing report for entity {}", entity.getId(), e);
+            }
+        }
+    }
+
+    private void persist(Long id, TimePeriod period, int windowDays, EntityMarketingReportResponse report) {
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(report);
+        } catch (Exception e) {
+            log.error("Failed to serialize marketing report for entity {} - not caching this result", id, e);
+            return;
+        }
+        EntityMarketingReportCache row = cacheRepository
+                .findByEntityIdAndPeriodAndWindowDays(id, period.name(), windowDays)
+                .orElseGet(EntityMarketingReportCache::new);
+        row.setEntityId(id);
+        row.setPeriod(period.name());
+        row.setWindowDays(windowDays);
+        row.setReportJson(json);
+        row.setGeneratedAt(report.getGeneratedAt());
+        cacheRepository.save(row);
+    }
+
+    private EntityMarketingReportResponse deserialize(EntityMarketingReportCache row, Long id) {
+        try {
+            return objectMapper.readValue(row.getReportJson(), EntityMarketingReportResponse.class);
+        } catch (Exception e) {
+            log.error("Failed to deserialize cached marketing report for entity {} - regenerating live", id, e);
+            return null;
+        }
     }
 
     public EntityMarketingReportResponse generateReport(String entityType, Long id,
@@ -62,7 +195,26 @@ public class EntityMarketingReportService {
         // Mandatory and owner-scoped: 404s if the entity is absent or not owned by the caller,
         // 400s on a type mismatch — this is what enforces ownership for the whole report.
         EntityDetailResponse entity = entityService.getEntityById(entityType, id);
+        return assemble(id, entity, period, windowDays, () -> momentumCausalReportService.buildReport(id));
+    }
 
+    /**
+     * Same assembly as {@link #generateReport}, but for the scheduled cache refresh: the entity has
+     * already been resolved directly from {@link ManagedEntityRepository} (no owner-scoped lookup,
+     * since there's no authenticated request to scope it against), and the momentum/causal-chain
+     * section is fetched via {@link MomentumCausalReportService#buildReportForEntity} for the same
+     * reason.
+     */
+    private EntityMarketingReportResponse assembleForBatch(ManagedEntity managedEntity,
+                                                           TimePeriod period, int windowDays) {
+        EntityDetailResponse entity = entityService.mapToDetailResponse(managedEntity);
+        return assemble(managedEntity.getId(), entity, period, windowDays,
+                () -> momentumCausalReportService.buildReportForEntity(managedEntity));
+    }
+
+    private EntityMarketingReportResponse assemble(Long id, EntityDetailResponse entity,
+                                                    TimePeriod period, int windowDays,
+                                                    Supplier<MomentumCausalReportResponse> momentumSupplier) {
         // Mandatory: the headline numbers the whole report is built around.
         EntityStatsResponse stats = dashboardService.getEntityStats(id);
         EntityStatsAvgResponse avg = dashboardService.getEntityStatsAvg(id);
@@ -89,6 +241,46 @@ public class EntityMarketingReportService {
 
         var definingMoments = optional("defining-moments", id,
                 () -> dashboardService.getCheckpointImpact(id, windowDays));
+        var checkpointTrend = optional("checkpoint-trend", id,
+                () -> dashboardService.getCheckpointTrend(id));
+
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        var sentimentDelta = optional("sentiment-delta", id,
+                () -> dashboardService.getSentimentDelta(id, today.minusDays(windowDays), today, windowDays));
+
+        var movieHealth = optional("movie-health", id, () -> dashboardService.getMovieHealth(id));
+        var buzz = optional("buzz", id, () -> dashboardService.getBuzz(id));
+        var reach = optional("reach", id, () -> dashboardService.getReachDirect(id));
+        var awareness = optional("awareness", id, () -> dashboardService.getAwareness(id));
+
+        var audiencePulse = optional("audience-pulse", id, () -> dashboardService.getAudiencePulse(id));
+        var audiencePulseAspects = optional("audience-pulse-aspects", id,
+                () -> audiencePulseAspectsService.getAspects(id, false));
+
+        var promotionalMix = optional("promotional-mix", id, () -> dashboardService.getPromotionalMix(id));
+        var authorTypeBreakdown = optional("author-type-breakdown", id,
+                () -> dashboardService.getAuthorTypeBreakdown(id));
+        var contentIntentBreakdown = optional("content-intent-breakdown", id,
+                () -> dashboardService.getContentIntentBreakdown(id));
+        var topicCategoryBreakdown = optional("topic-category-breakdown", id,
+                () -> dashboardService.getTopicCategoryBreakdown(id));
+
+        var hourlyActivity = optional("hourly-activity", id,
+                () -> dashboardService.getHourlyActivity(id, period, null, null, null));
+
+        var topSpreaders = optional("top-spreaders", id, () -> topSpreaderContentService.getTopSpreaderContent(
+                id, null, TOP_SPREADER_LIMIT, TOP_SPREADER_POSTS_PER_SPREADER));
+        var topSpreaderInsights = optional("top-spreader-insights", id, () -> topSpreaderInsightsService.getInsights(
+                id, null, TOP_SPREADER_LIMIT, TOP_SPREADER_POSTS_PER_SPREADER, false));
+
+        var recommendedActions = optional("recommended-actions", id,
+                () -> recommendedActionsService.getRecommendedActions(id, false, true));
+
+        var aiSummary = optional("ai-summary", id, () -> commandCenterSummaryService.getAiSummary(id, false));
+        var todaysHighlights = optional("todays-highlights", id,
+                () -> commandCenterSummaryService.getTodaysHighlights(id, false));
+
+        var momentumIntelligence = optional("momentum-intelligence", id, momentumSupplier);
 
         AuraMathResult auraMath = fetchAuraMathReport(id);
 
@@ -103,6 +295,25 @@ public class EntityMarketingReportService {
                 .sentimentTrend(trend)
                 .platformReach(platformReach)
                 .definingMoments(definingMoments)
+                .checkpointTrend(checkpointTrend)
+                .sentimentDelta(sentimentDelta)
+                .movieHealth(movieHealth)
+                .buzz(buzz)
+                .reach(reach)
+                .awareness(awareness)
+                .audiencePulse(audiencePulse)
+                .audiencePulseAspects(audiencePulseAspects)
+                .promotionalMix(promotionalMix)
+                .authorTypeBreakdown(authorTypeBreakdown)
+                .contentIntentBreakdown(contentIntentBreakdown)
+                .topicCategoryBreakdown(topicCategoryBreakdown)
+                .hourlyActivity(hourlyActivity)
+                .topSpreaders(topSpreaders)
+                .topSpreaderInsights(topSpreaderInsights)
+                .recommendedActions(recommendedActions)
+                .aiSummary(aiSummary)
+                .todaysHighlights(todaysHighlights)
+                .momentumIntelligence(momentumIntelligence)
                 .auraMathIntelligence(auraMath.body())
                 .auraMathStatus(auraMath.status())
                 .highlights(highlights)

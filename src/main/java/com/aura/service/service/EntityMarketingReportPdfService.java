@@ -1,13 +1,42 @@
 package com.aura.service.service;
 
+import com.aura.service.dto.AiSummaryResponse;
+import com.aura.service.dto.AudiencePulseAspectsResponse;
+import com.aura.service.dto.AudiencePulseResponse;
+import com.aura.service.dto.AuthorTypeBreakdownResponse;
+import com.aura.service.dto.AuthorTypeCount;
+import com.aura.service.dto.AwarenessResponse;
+import com.aura.service.dto.BuzzResponse;
+import com.aura.service.dto.CheckpointTrendPoint;
+import com.aura.service.dto.CheckpointTrendResponse;
 import com.aura.service.dto.CompetitorSnapshot;
+import com.aura.service.dto.ContentIntentBreakdownResponse;
+import com.aura.service.dto.ContentIntentCount;
 import com.aura.service.dto.EntityDetailResponse;
 import com.aura.service.dto.EntityMarketingReportResponse;
 import com.aura.service.dto.EntityMarketingReportResponse.CompetitivePositioning;
 import com.aura.service.dto.EntityMarketingReportResponse.HeadlineMetrics;
+import com.aura.service.dto.HighlightItem;
+import com.aura.service.dto.HourlyActivityResponse;
 import com.aura.service.dto.KeywordDto;
+import com.aura.service.dto.MomentumCausalReportResponse;
+import com.aura.service.dto.MovieHealthResponse;
+import com.aura.service.dto.PromotionalMixResponse;
+import com.aura.service.dto.ReachResponse;
+import com.aura.service.dto.RecommendedActionCandidate;
+import com.aura.service.dto.RecommendedActionItem;
+import com.aura.service.dto.RecommendedActionsResponse;
+import com.aura.service.dto.RegionBuzz;
+import com.aura.service.dto.SentimentDeltaResponse;
 import com.aura.service.dto.SentimentOverTimeResponse;
 import com.aura.service.dto.TimeSeriesData;
+import com.aura.service.dto.TodaysHighlightsResponse;
+import com.aura.service.dto.TopSpreaderContent;
+import com.aura.service.dto.TopSpreaderContentResponse;
+import com.aura.service.dto.TopSpreaderInsightAction;
+import com.aura.service.dto.TopSpreaderInsightsResponse;
+import com.aura.service.dto.TopicCategoryBreakdownResponse;
+import com.aura.service.dto.TopicCategoryCount;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
@@ -34,13 +63,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.ToDoubleFunction;
+import java.util.function.ToLongFunction;
 
 /**
  * Renders an {@link EntityMarketingReportResponse} into a polished, prospect-facing PDF using
- * OpenPDF. The layout mirrors the JSON report: a branded header, the deterministic highlights, the
- * headline metrics, competitive positioning, platform reach, defining moments, a compact sentiment
- * trend, and the embedded AuraMath intelligence. Sections that are absent from the report (graceful
- * degradation) are simply skipped.
+ * OpenPDF. The layout mirrors the JSON report end to end: a branded header, the deterministic
+ * highlights, headline metrics, vitals (health/buzz/reach/awareness), competitive positioning,
+ * platform reach, audience pulse (regional + aspect chips), content/audience mix breakdowns, posting
+ * activity, defining moments, checkpoint trend, sentiment delta, a compact sentiment trend, top
+ * spreaders and their AI collaboration insights, the recommended-actions roadmap, the AI narrative
+ * summary / today's-highlights panel, the momentum & causal-chain intelligence report, and the
+ * embedded AuraMath intelligence. Sections that are absent from the report (graceful degradation)
+ * are simply skipped.
  */
 @Slf4j
 @Service
@@ -88,10 +124,20 @@ public class EntityMarketingReportPdfService {
             addHeader(document, report);
             addHighlights(document, report.getHighlights());
             addHeadlineMetrics(document, report.getHeadlineMetrics());
+            addVitals(document, report);
             addCompetitivePositioning(document, report.getCompetitivePositioning());
             addPlatformReach(document, report.getPlatformReach());
+            addAudiencePulse(document, report.getAudiencePulse(), report.getAudiencePulseAspects());
+            addContentMix(document, report);
+            addPostingActivity(document, report.getHourlyActivity());
             addDefiningMoments(document, report.getDefiningMoments());
+            addCheckpointTrend(document, report.getCheckpointTrend());
+            addSentimentDelta(document, report.getSentimentDelta());
             addSentimentTrend(document, report.getSentimentTrend());
+            addTopSpreaders(document, report.getTopSpreaders(), report.getTopSpreaderInsights());
+            addRecommendedActions(document, report.getRecommendedActions());
+            addAiNarrative(document, report.getAiSummary(), report.getTodaysHighlights());
+            addMomentumIntelligence(document, report.getMomentumIntelligence());
             addAuraMath(document, report.getAuraMathStatus(), report.getAuraMathIntelligence());
 
             document.close();
@@ -298,6 +344,368 @@ public class EntityMarketingReportPdfService {
             bodyCell(table, String.valueOf(total), bg, Element.ALIGN_RIGHT, true);
         }
         document.add(table);
+    }
+
+    /** Compact metric-card row for movie health, buzz, reach, and awareness — the report's "vitals". */
+    private void addVitals(Document document, EntityMarketingReportResponse report) throws DocumentException {
+        MovieHealthResponse health = report.getMovieHealth();
+        BuzzResponse buzz = report.getBuzz();
+        ReachResponse reach = report.getReach();
+        AwarenessResponse awareness = report.getAwareness();
+        if (health == null && buzz == null && reach == null && awareness == null) {
+            return;
+        }
+        sectionHeader(document, "Vitals");
+        PdfPTable table = fullWidthTable(new float[]{1, 1, 1, 1});
+        if (health != null) {
+            metricCard(table, "Movie health",
+                    health.getHealthLabel() + "  (" + String.format(Locale.US, "%.0f%%", health.getHealthPercentage()) + ")");
+        }
+        if (buzz != null) {
+            metricCard(table, "Buzz vs. yesterday",
+                    signedPct(buzz.getMentionsChangePct()) + "  (" + formatCount(buzz.getMentionsToday()) + " today)");
+        }
+        if (reach != null) {
+            metricCard(table, "Reach", formatCount(reach.getUniqueUsers()) + " unique users");
+        }
+        if (awareness != null) {
+            metricCard(table, "Awareness",
+                    awareness.getAwarenessLevel() + "  (" + formatCount(awareness.getTotalViews()) + " views)");
+        }
+        document.add(table);
+    }
+
+    private void addAudiencePulse(Document document, AudiencePulseResponse pulse, AudiencePulseAspectsResponse aspects)
+            throws DocumentException {
+        boolean hasRegions = pulse != null && pulse.getRegions() != null && !pulse.getRegions().isEmpty();
+        boolean hasAspects = aspects != null
+                && ((aspects.getPeopleLove() != null && !aspects.getPeopleLove().isEmpty())
+                || (aspects.getPeopleConcerned() != null && !aspects.getPeopleConcerned().isEmpty()));
+        if (!hasRegions && !hasAspects) {
+            return;
+        }
+        sectionHeader(document, "Audience Pulse");
+
+        if (hasRegions) {
+            PdfPTable table = fullWidthTable(new float[]{0.6f, 2, 1.2f, 1.2f});
+            headerRow(table, "#", "Region", "Mentions", "Share");
+            int i = 0;
+            for (RegionBuzz r : pulse.getRegions()) {
+                if (i >= 8) {
+                    break;
+                }
+                Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+                bodyCell(table, String.valueOf(r.getRank()), bg, Element.ALIGN_LEFT, false);
+                bodyCell(table, r.getRegion(), bg, Element.ALIGN_LEFT, false);
+                bodyCell(table, formatCount(r.getMentionCount()), bg, Element.ALIGN_RIGHT, false);
+                bodyCell(table, pct0(r.getSharePct()), bg, Element.ALIGN_RIGHT, false);
+            }
+            document.add(table);
+        }
+        if (hasAspects) {
+            if (aspects.getPeopleLove() != null && !aspects.getPeopleLove().isEmpty()) {
+                subsectionHeader(document, "People Love");
+                document.add(chipParagraph(aspects.getPeopleLove(), POSITIVE));
+            }
+            if (aspects.getPeopleConcerned() != null && !aspects.getPeopleConcerned().isEmpty()) {
+                subsectionHeader(document, "People Concerned About");
+                document.add(chipParagraph(aspects.getPeopleConcerned(), NEGATIVE));
+            }
+        }
+    }
+
+    private Paragraph chipParagraph(List<String> items, Color color) {
+        Paragraph p = new Paragraph();
+        Font chipFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, color);
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0) {
+                p.add(new Phrase("   •   ", BODY_MUTED));
+            }
+            p.add(new Phrase(items.get(i), chipFont));
+        }
+        p.setSpacingAfter(6f);
+        return p;
+    }
+
+    private void addContentMix(Document document, EntityMarketingReportResponse report) throws DocumentException {
+        PromotionalMixResponse promo = report.getPromotionalMix();
+        AuthorTypeBreakdownResponse authorTypes = report.getAuthorTypeBreakdown();
+        ContentIntentBreakdownResponse intents = report.getContentIntentBreakdown();
+        TopicCategoryBreakdownResponse topics = report.getTopicCategoryBreakdown();
+        if (promo == null && authorTypes == null && intents == null && topics == null) {
+            return;
+        }
+        sectionHeader(document, "Content & Audience Mix");
+
+        if (promo != null && promo.getTotalPosts() > 0) {
+            subsectionHeader(document, "Promotional vs. Organic");
+            Paragraph p = new Paragraph(String.format(Locale.US,
+                    "%s of %s posts are promotional (%s organic).",
+                    pct0(promo.getPromotionalSharePct()), formatCount(promo.getTotalPosts()),
+                    pct0(100.0 - promo.getPromotionalSharePct())), BODY);
+            p.setSpacingAfter(6f);
+            document.add(p);
+        }
+        addRankedShareTable(document, "Author Types", authorTypes == null ? null : authorTypes.getAuthorTypes(),
+                AuthorTypeCount::getAuthorType, AuthorTypeCount::getCount, AuthorTypeCount::getSharePct);
+        addRankedShareTable(document, "Content Intent", intents == null ? null : intents.getIntents(),
+                ContentIntentCount::getContentIntent, ContentIntentCount::getCount, ContentIntentCount::getSharePct);
+        addRankedShareTable(document, "Topic Categories", topics == null ? null : topics.getTopics(),
+                TopicCategoryCount::getTopicCategory, TopicCategoryCount::getCount, TopicCategoryCount::getSharePct);
+    }
+
+    private <T> void addRankedShareTable(Document document, String title, List<T> items,
+                                         Function<T, String> label, ToLongFunction<T> count,
+                                         ToDoubleFunction<T> sharePct) throws DocumentException {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        subsectionHeader(document, title);
+        PdfPTable table = fullWidthTable(new float[]{3, 1.2f, 1.2f});
+        headerRow(table, "Category", "Posts", "Share");
+        int i = 0;
+        for (T item : items) {
+            if (i >= 6) {
+                break;
+            }
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, label.apply(item), bg, Element.ALIGN_LEFT, false);
+            bodyCell(table, formatCount(count.applyAsLong(item)), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, pct0(sharePct.applyAsDouble(item)), bg, Element.ALIGN_RIGHT, false);
+        }
+        document.add(table);
+    }
+
+    private void addPostingActivity(Document document, HourlyActivityResponse activity) throws DocumentException {
+        if (activity == null) {
+            return;
+        }
+        sectionHeader(document, "Posting Activity");
+        Integer peakHour = null;
+        long peakCount = -1;
+        if (activity.getHourlyDistribution() != null) {
+            for (Map.Entry<Integer, Long> e : activity.getHourlyDistribution().entrySet()) {
+                if (e.getValue() != null && e.getValue() > peakCount) {
+                    peakCount = e.getValue();
+                    peakHour = e.getKey();
+                }
+            }
+        }
+        PdfPTable table = fullWidthTable(new float[]{1, 1});
+        metricCard(table, "Active users", formatCount(activity.getTotalActiveUsers()));
+        metricCard(table, "Peak hour (UTC)", peakHour != null
+                ? String.format(Locale.US, "%02d:00  (%s posts)", peakHour, formatCount(peakCount)) : "—");
+        document.add(table);
+    }
+
+    private void addCheckpointTrend(Document document, CheckpointTrendResponse trend) throws DocumentException {
+        if (trend == null || trend.getTrendPoints() == null || trend.getTrendPoints().isEmpty()) {
+            return;
+        }
+        sectionHeader(document, "Checkpoint Trend");
+        PdfPTable table = fullWidthTable(new float[]{1.1f, 2.2f, 1.3f, 1.1f, 1.3f, 1.3f});
+        headerRow(table, "Date", "Moment", "Mentions", "Positive", "Net sentiment", "Δ vs prior");
+        int i = 0;
+        for (CheckpointTrendPoint p : trend.getTrendPoints()) {
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, String.valueOf(p.getCheckpointDate()), bg, Element.ALIGN_LEFT, false);
+            bodyCell(table, p.getDescription(), bg, Element.ALIGN_LEFT, false);
+            bodyCell(table, formatCount(p.getPeriodMentions()), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, percent(p.getPositiveRatio()), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, String.format(Locale.US, "%.1f", p.getNetSentiment()), bg, Element.ALIGN_RIGHT, false);
+            String delta = p.getNetSentimentChangeFromPrevious() != null
+                    ? signed(p.getNetSentimentChangeFromPrevious()) : "—";
+            bodyCell(table, delta, bg, Element.ALIGN_RIGHT, false);
+        }
+        document.add(table);
+    }
+
+    private void addSentimentDelta(Document document, SentimentDeltaResponse delta) throws DocumentException {
+        if (delta == null) {
+            return;
+        }
+        sectionHeader(document, "Sentiment Delta");
+        Paragraph headline = new Paragraph(String.format(Locale.US, "%s (%s)  →  %s (%s)",
+                delta.getFromDate(), orDash(delta.getFromLabel()), delta.getToDate(), orDash(delta.getToLabel())),
+                BODY_MUTED);
+        headline.setSpacingAfter(6f);
+        document.add(headline);
+
+        PdfPTable table = fullWidthTable(new float[]{1, 1, 1});
+        metricCard(table, "Mentions Δ", String.format(Locale.US, "%+d", delta.getMentionsDelta()));
+        metricCard(table, "Positive ratio Δ", signed(delta.getPositiveRatioDelta() * 100) + " pts");
+        metricCard(table, "Net sentiment Δ", signed(delta.getNetSentimentDelta()));
+        document.add(table);
+    }
+
+    private void addTopSpreaders(Document document, TopSpreaderContentResponse spreaders,
+                                 TopSpreaderInsightsResponse insights) throws DocumentException {
+        if (spreaders == null || spreaders.spreaders() == null || spreaders.spreaders().isEmpty()) {
+            return;
+        }
+        sectionHeader(document, "Top Spreaders");
+        PdfPTable table = fullWidthTable(new float[]{2.4f, 1.3f, 1.1f, 3.2f});
+        headerRow(table, "Spreader", "Total views", "Posts", "Top post");
+        int i = 0;
+        for (TopSpreaderContent s : spreaders.spreaders()) {
+            if (i >= 10) {
+                break;
+            }
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, orDash(s.globalUserId()), bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, formatCount(s.totalViews()), bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, String.valueOf(s.topContent().size()), bg, Element.ALIGN_RIGHT, false);
+            String topPost = s.topContent().isEmpty() ? "—" : truncate(s.topContent().get(0).content(), 90);
+            bodyCell(table, topPost, bg, Element.ALIGN_LEFT, false);
+        }
+        document.add(table);
+
+        if (insights != null && insights.summary() != null && !insights.summary().isBlank()) {
+            subsectionHeader(document, "Collaboration Insights");
+            Paragraph p = new Paragraph(insights.summary(), BODY);
+            p.setSpacingAfter(6f);
+            document.add(p);
+            if (insights.actions() != null) {
+                int a = 0;
+                for (TopSpreaderInsightAction action : insights.actions()) {
+                    if (a++ >= 8) {
+                        break;
+                    }
+                    highlightCard(document, orDash(action.spreaderId()) + "   [" + action.impact() + "]",
+                            action.action(), ACCENT_SOFT, ACCENT);
+                }
+            }
+        }
+    }
+
+    private void addRecommendedActions(Document document, RecommendedActionsResponse actions) throws DocumentException {
+        if (actions == null || actions.getActions() == null || actions.getActions().isEmpty()) {
+            return;
+        }
+        sectionHeader(document, "Recommended Actions");
+        int i = 0;
+        for (RecommendedActionItem item : actions.getActions()) {
+            if (i++ >= 15) {
+                break;
+            }
+            String title = orDash(item.getTitle()) + "   [" + item.getCategory() + " · "
+                    + item.getConfidencePct() + "% confidence]";
+            highlightCard(document, title, item.getReason(), ACCENT_SOFT, ACCENT);
+        }
+    }
+
+    private void addAiNarrative(Document document, AiSummaryResponse summary, TodaysHighlightsResponse highlights)
+            throws DocumentException {
+        boolean hasSummary = summary != null && summary.getSummary() != null && !summary.getSummary().isBlank();
+        boolean hasHighlights = highlights != null && highlights.getHighlights() != null
+                && !highlights.getHighlights().isEmpty();
+        if (!hasSummary && !hasHighlights) {
+            return;
+        }
+        sectionHeader(document, "AI Narrative Summary");
+        if (hasSummary) {
+            Paragraph p = new Paragraph(summary.getSummary(), BODY);
+            p.setLeading(14f);
+            p.setSpacingAfter(8f);
+            document.add(p);
+        }
+        if (hasHighlights) {
+            for (HighlightItem h : highlights.getHighlights()) {
+                boolean positive = "POSITIVE".equalsIgnoreCase(h.getType());
+                boolean negative = "NEGATIVE".equalsIgnoreCase(h.getType());
+                Color stripe = positive ? POSITIVE : negative ? NEGATIVE : NEUTRAL;
+                Color soft = positive ? GREEN_SOFT : negative ? RED_SOFT : ROW_ALT;
+                highlightCard(document, h.getType(), h.getText(), soft, stripe);
+            }
+        }
+    }
+
+    private void addMomentumIntelligence(Document document, MomentumCausalReportResponse momentum)
+            throws DocumentException {
+        if (momentum == null) {
+            return;
+        }
+        sectionHeader(document, "Momentum & Causal Chain Intelligence");
+
+        subsectionHeader(document, "Viewership Momentum (VMI)");
+        addJsonOrInsufficient(document, momentum.getVmiTrend());
+
+        subsectionHeader(document, "Causal Chains");
+        addJsonOrInsufficient(document, momentum.getCausalChains());
+
+        addCausalLiftUsers(document, momentum.getTopCausalLiftUsers());
+        addStatisticalCandidates(document, "Non-Obvious Levers", momentum.getNonObviousLevers());
+        addStatisticalCandidates(document, "Playbook Matches", momentum.getPlaybookMatches());
+    }
+
+    /** Renders a verbatim AuraMath JSON section: its insufficient-history envelope, or a readable key/value table. */
+    private void addJsonOrInsufficient(Document document, JsonNode node) throws DocumentException {
+        if (node == null) {
+            document.add(new Paragraph("Not available.", BODY_MUTED));
+            return;
+        }
+        if ("insufficient_history".equals(text(node, "status"))) {
+            document.add(new Paragraph(orDash(text(node, "details")), BODY_MUTED));
+            return;
+        }
+        if (!node.isObject() || node.size() == 0) {
+            document.add(new Paragraph(summarize(node), BODY));
+            return;
+        }
+        List<String[]> rows = new ArrayList<>();
+        for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+            String field = it.next();
+            kv(rows, prettyKey(field), summarize(node.get(field)));
+        }
+        addKvTable(document, rows);
+    }
+
+    private void addCausalLiftUsers(Document document, MomentumCausalReportResponse.TopCausalLiftUsersSection section)
+            throws DocumentException {
+        if (section == null) {
+            return;
+        }
+        subsectionHeader(document, "Top Causal-Lift Users");
+        if (!"ok".equals(section.getStatus()) || section.getUsers() == null || section.getUsers().isEmpty()) {
+            document.add(new Paragraph(orDash(section.getDetails()), BODY_MUTED));
+            return;
+        }
+        PdfPTable table = fullWidthTable(new float[]{2, 1.2f, 1.1f, 1.2f, 1.2f});
+        headerRow(table, "User", "Causal lift", "Confidence", "Mentions", "Engagement");
+        int i = 0;
+        for (var u : section.getUsers()) {
+            if (i >= 10) {
+                break;
+            }
+            Color bg = (i++ % 2 == 0) ? Color.WHITE : ROW_ALT;
+            bodyCell(table, orDash(u.getGlobalUserId()), bg, Element.ALIGN_LEFT, true);
+            bodyCell(table, u.getCausalLiftScore() != null
+                    ? String.format(Locale.US, "%.2f", u.getCausalLiftScore()) : "—", bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, orDash(u.getConfidence()), bg, Element.ALIGN_CENTER, false);
+            bodyCell(table, u.getMentionCount() != null ? formatCount(u.getMentionCount()) : "—",
+                    bg, Element.ALIGN_RIGHT, false);
+            bodyCell(table, u.getEngagementRating() != null
+                    ? String.format(Locale.US, "%.2f", u.getEngagementRating()) : "—", bg, Element.ALIGN_RIGHT, false);
+        }
+        document.add(table);
+    }
+
+    private void addStatisticalCandidates(Document document, String title,
+                                          MomentumCausalReportResponse.StatisticalCandidateSection section)
+            throws DocumentException {
+        if (section == null) {
+            return;
+        }
+        subsectionHeader(document, title);
+        if (!"ok".equals(section.getStatus()) || section.getCandidates() == null || section.getCandidates().isEmpty()) {
+            document.add(new Paragraph(orDash(section.getDetails()), BODY_MUTED));
+            return;
+        }
+        for (RecommendedActionCandidate c : section.getCandidates()) {
+            String cardTitle = orDash(c.factorName()) + "   [" + c.confidencePct() + "% confidence]";
+            String detail = c.supportingFacts() == null ? "" : String.join(" ", c.supportingFacts());
+            highlightCard(document, cardTitle, detail, ACCENT_SOFT, ACCENT);
+        }
     }
 
     /**
@@ -776,8 +1184,25 @@ public class EntityMarketingReportPdfService {
         return String.format(Locale.US, "%.0f%%", ratio * 100);
     }
 
+    /** Same as {@link #percent}, but for a value that's already a 0..100 percentage, not a 0..1 ratio. */
+    private static String pct0(double alreadyPercent) {
+        return String.format(Locale.US, "%.0f%%", alreadyPercent);
+    }
+
+    private static String signedPct(double alreadyPercent) {
+        return String.format(Locale.US, "%+.0f%%", alreadyPercent);
+    }
+
     private static String signed(double v) {
         return String.format(Locale.US, "%+.2f", v);
+    }
+
+    private static String truncate(String text, int maxChars) {
+        if (text == null || text.isBlank()) {
+            return "—";
+        }
+        String trimmed = text.strip();
+        return trimmed.length() <= maxChars ? trimmed : trimmed.substring(0, maxChars).strip() + "...";
     }
 
     private static String formatCount(long count) {
