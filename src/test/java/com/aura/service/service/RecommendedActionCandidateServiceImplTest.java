@@ -658,7 +658,9 @@ class RecommendedActionCandidateServiceImplTest {
 
     @Test
     void peerTacticConfidenceReachesHighTierAtSixDistinctMovies() {
-        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        // Real budget on file so the underdog-playbook generator (which fires only for no-budget
+        // entities) doesn't add unrelated candidates to this peer-tactic-focused test.
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 5_000_000.0);
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         List<Object[]> rows = new ArrayList<>();
         for (int i = 0; i < 6; i++) {
@@ -754,8 +756,10 @@ class RecommendedActionCandidateServiceImplTest {
     void commonTacticSurfacedAsFallbackWhenPlanIsThinAndNotYetReleased() {
         // Far from any holiday -> only trailer-teaser-timing + first-single-timing = 2 grounded
         // actions, below COMMON_TACTIC_FILLER_MIN_ACTIONS, and the fixed test clock is well before
-        // this releaseDate, so the common tactic should be added back as a fallback.
-        ManagedEntity entity = movie(LocalDate.of(2026, 2, 17), "Action", "Kannada", null);
+        // this releaseDate, so the common tactic should be added back as a fallback. Real budget on
+        // file so the underdog-playbook generator (which fires only for no-budget entities) doesn't
+        // pad the plan and mask the fallback behavior under test.
+        ManagedEntity entity = movie(LocalDate.of(2026, 2, 17), "Action", "Kannada", 5_000_000.0);
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
         stubPeerTactics(sixMovieCommonTacticBucket());
 
@@ -1411,6 +1415,88 @@ class RecommendedActionCandidateServiceImplTest {
     @Test
     void viewGapConfidenceHighTierBoundary() {
         assertThat(RecommendedActionCandidateServiceImpl.viewGapConfidence(6)).isEqualTo(80);
+    }
+
+    // ==================== Underdog / viral-stunt playbook (curated marketing tactics) ====================
+
+    @Test
+    void underdogPlaybookSurfacedWhenNoBudgetAndPreRelease() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        for (String id : List.of(
+                "underdog-playbook-curiosity-gap",
+                "underdog-playbook-grassroots-tribalism",
+                "underdog-playbook-rapid-sentiment-amplification",
+                "underdog-playbook-david-vs-goliath")) {
+            RecommendedActionCandidate candidate = findCandidate(candidates, id);
+            assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+            assertThat(candidate.confidencePct()).isEqualTo(60);
+            assertThat(candidate.supportingFacts()).hasSize(2);
+            assertThat(candidate.supportingFacts().get(1)).contains("Industry precedent");
+        }
+    }
+
+    @Test
+    void underdogPlaybookWithheldWhenBudgetOnFile() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 5_000_000.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("underdog-playbook-"));
+    }
+
+    @Test
+    void underdogPlaybookWithheldOnceMovieHasAlreadyReleased() {
+        ManagedEntity entity = movie(LocalDate.of(2019, 1, 1), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("underdog-playbook-"));
+    }
+
+    @Test
+    void viralStuntPlaybookSurfacedRegardlessOfBudgetAndExcludesTournamentTieInForNonSportsGenre() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 5_000_000.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        for (String id : List.of(
+                "viral-stunt-playbook-manufactured-leak",
+                "viral-stunt-playbook-guerrilla-ooh-stunt",
+                "viral-stunt-playbook-fan-conspiracy-co-creation",
+                "viral-stunt-playbook-absurdist-brand-partnership")) {
+            RecommendedActionCandidate candidate = findCandidate(candidates, id);
+            assertThat(candidate.category()).isEqualTo(RecommendedActionCategory.MEDIUM_IMPACT);
+            assertThat(candidate.confidencePct()).isEqualTo(60);
+        }
+        assertThat(candidates).noneMatch(
+                c -> c.candidateId().equals("viral-stunt-playbook-real-world-tournament-tie-in"));
+    }
+
+    @Test
+    void viralStuntPlaybookIncludesTournamentTieInForSportsGenre() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Sports Drama", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(findCandidate(candidates, "viral-stunt-playbook-real-world-tournament-tie-in")).isNotNull();
+    }
+
+    @Test
+    void viralStuntPlaybookWithheldOnceMovieHasAlreadyReleased() {
+        ManagedEntity entity = movie(LocalDate.of(2019, 1, 1), "Action", "Kannada", null);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("viral-stunt-playbook-"));
     }
 
     // ==================== Helpers ====================

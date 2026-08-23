@@ -100,6 +100,22 @@ import java.util.stream.Collectors;
  * budget-comparable movies', and when one or more are meaningfully ahead, offers that movie's
  * {@link EntityViralSeedSnapshot} (populated by {@link ViralSeedSyncService}'s periodic AuraMath
  * viral-seeds sweep) as outreach targets who haven't already commented on this movie.
+ *
+ * <p>{@link #underdogPlaybookCandidates} and {@link #viralStuntPlaybookCandidates} are, like
+ * {@link #peerMarketingTacticCandidates}, not grounded in {@link BoxOfficeFactorCatalog}, but unlike
+ * every other generator here they aren't grounded in a per-movie query result either: what each
+ * candidate cites as precedent is real, named film-marketing history (e.g. The Blair Witch Project's
+ * missing-persons posters, Marty Supreme's guerrilla Times Square teaser), not a query result from this
+ * platform's own tables - labeled as such in {@code supportingFacts} so it's never mistaken for
+ * platform-tracked data the way every other candidate's facts are. Both reuse
+ * {@link #PlaybookTactic}/{@link #playbookCandidate} for construction, but differ in trigger: this
+ * platform tracks no cast-familiarity signal at all, so {@link #underdogPlaybookCandidates} reuses
+ * {@link #hasRealBudget} - already this file's documented proxy for "small/independent production" - as
+ * a stand-in (an entity with no real budget on file is also, in this platform's actual data,
+ * overwhelmingly the unknown-cast case the underdog playbook targets). {@link #viralStuntPlaybookCandidates}
+ * carries no such restriction (its tactics don't depend on budget or cast fame), except its one
+ * subject-matter-specific tactic - real-world tournament tie-ins - which only fires when
+ * {@link #isSportsGenre} matches this entity's own (real, client-populated) genre field.
  */
 @Service
 public class RecommendedActionCandidateServiceImpl implements RecommendedActionCandidateService {
@@ -304,6 +320,19 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // refusal is recorded as the literal value 404 in managed_entities.budget rather than left null.
     // hasRealBudget treats it identically to "no budget on file" everywhere in this generator.
     static final double UNDISCLOSED_BUDGET_SENTINEL = 404.0;
+
+    // ---- Curated marketing-playbook tactics (underdog breakthrough tactics + viral/PR stunt tactics,
+    // see underdogPlaybookCandidates/viralStuntPlaybookCandidates): fixed, deterministic confidence -
+    // like GENRE_REACH_CONFIDENCE/MOVIE_BUFF_CONFIDENCE, there's no per-movie sample to tier this off,
+    // since each generator's trigger is a boolean condition, not a count. Set below
+    // SERVER_COMPUTED_CONFIDENCE's 90 because unlike calendar math, "this tactic worked for another film
+    // historically" is real precedent but not this movie's own measured data. Window mirrors
+    // LOW_PRESENCE_WINDOW_*'s reasoning: these are awareness-building plays with no single optimal day,
+    // so a broad pre-release runway is honestly the best window that can be claimed. Shared by both
+    // playbook generators since the rationale is identical for each. ----
+    static final int PLAYBOOK_CONFIDENCE = 60;
+    static final int PLAYBOOK_WINDOW_START_DAYS = -270;
+    static final int PLAYBOOK_WINDOW_END_DAYS = -14;
 
     // ---- Common-tactic filtering: a (main, sub) classification bucket run by most genre+language
     // peer movies (a teaser or trailer release, say) is something a marketing team already knows to
@@ -510,9 +539,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         addIfPresent(candidates, viralSeedViewCountGapCandidate(entity));
 
         // Common tactics are withheld above (see COMMON_TACTIC_PREVALENCE_THRESHOLD) - only worth
-        // adding back as a fallback once every other generator has had its say, when this movie's
-        // plan is otherwise too thin and it hasn't released yet, and even then only for the ones
-        // tracked posts don't already show as done.
+        // adding back as a fallback once every other data-grounded generator has had its say, when this
+        // movie's plan is otherwise too thin and it hasn't released yet, and even then only for the ones
+        // tracked posts don't already show as done. Evaluated against candidates.size() before the two
+        // curated playbook generators below are added - they'd otherwise always push the count above
+        // COMMON_TACTIC_FILLER_MIN_ACTIONS and silently disable this fallback for every pre-release movie.
         if (!commonTacticCandidates.isEmpty() && candidates.size() < COMMON_TACTIC_FILLER_MIN_ACTIONS
                 && isNotYetReleased(entity)) {
             for (RecommendedActionCandidate candidate : commonTacticCandidates) {
@@ -521,6 +552,9 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                 }
             }
         }
+
+        candidates.addAll(underdogPlaybookCandidates(entity));
+        candidates.addAll(viralStuntPlaybookCandidates(entity, genre));
         return candidates;
     }
 
@@ -1695,6 +1729,197 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    // ==================== Curated marketing-playbook tactics (underdog breakthrough tactics +
+    // viral/PR stunt tactics) ====================
+
+    private record PlaybookTactic(String slug, String title, String guidance, String precedent) {
+    }
+
+    private RecommendedActionCandidate playbookCandidate(String candidateIdPrefix, PlaybookTactic tactic) {
+        return new RecommendedActionCandidate(
+                candidateIdPrefix + tactic.slug(),
+                tactic.title(),
+                RecommendedActionCategory.MEDIUM_IMPACT,
+                PLAYBOOK_CONFIDENCE,
+                PLAYBOOK_WINDOW_START_DAYS, PLAYBOOK_WINDOW_END_DAYS,
+                buildWindowLabel(PLAYBOOK_WINDOW_START_DAYS, PLAYBOOK_WINDOW_END_DAYS),
+                List.of(tactic.guidance(), tactic.precedent()), List.of(), List.of());
+    }
+
+    // ---- Underdog playbook (low-budget / unknown-cast breakthrough tactics) ----
+
+    // Curated once, not computed per movie - see this class's javadoc for why these four are the
+    // exception to "grounded in a real query result" and why hasRealBudget is reused as their trigger.
+    private static final List<PlaybookTactic> UNDERDOG_TACTICS = List.of(
+            new PlaybookTactic(
+                    "curiosity-gap",
+                    "Weaponize the Curiosity Gap",
+                    "A mass audience confronted with a complete unknown usually just ignores it. Instead of a " +
+                            "traditional trailer that explains the plot, release fragmented, unexplained media - " +
+                            "guerrilla teasers or a cryptic digital footprint that poses a question the audience " +
+                            "feels compelled to answer. The mystery prevents people from immediately categorizing " +
+                            "and dismissing what they're looking at, turning passive viewers into active investigators.",
+                    "Industry precedent (not this platform's tracked data): The Blair Witch Project (1999) " +
+                            "distributed real missing-persons posters for its then-unknown cast, blurring the line " +
+                            "between fiction and reality to manufacture an irresistible curiosity gap."),
+            new PlaybookTactic(
+                    "grassroots-tribalism",
+                    "Cultivate Ownership through Grassroots Tribalism",
+                    "Audiences are skeptical of top-down studio advertising but trust their peers. Hyper-target " +
+                            "niche forums or local communities before the mass market, so a small group feels like " +
+                            "it discovered the film. A crowdfunding push does double duty here: it raises capital " +
+                            "and converts early backers into emotionally invested brand ambassadors because their " +
+                            "own identity becomes tied to the project's success - once that localized fire is lit, " +
+                            "the wider public wants in out of fear of missing out.",
+                    "Industry precedent (not this platform's tracked data): Paranormal Activity (2007) built " +
+                            "grassroots buzz city by city through its \"Demand It\" ticket-request campaign before " +
+                            "any wide release, letting local audiences feel they had discovered and championed the " +
+                            "film themselves."),
+            new PlaybookTactic(
+                    "rapid-sentiment-amplification",
+                    "Deploy Rapid Sentiment Amplification",
+                    "Social proof dictates perceived value: when a few voices praise an unknown film, the masses " +
+                            "are more likely to give it a chance. Monitor early reactions across social platforms " +
+                            "and niche communities in real time, and when a positive micro-trend or meme emerges " +
+                            "from a test screening or teaser drop, pivot PR immediately to amplify that specific " +
+                            "narrative - acting on the signal while it's fresh lets a small campaign punch above " +
+                            "its weight before the wider public catches on.",
+                    "Industry precedent (not this platform's tracked data): Get Out (2017) generated strong, " +
+                            "specific positive word-of-mouth from early test-screening reactions that its marketing " +
+                            "team amplified in real time rather than waiting for wide-release reviews."),
+            new PlaybookTactic(
+                    "david-vs-goliath",
+                    "Frame a \"David vs. Goliath\" Narrative",
+                    "People are wired to root for the underdog. Let the marketing tell the story of the production " +
+                            "itself - the budget constraints, the ingenuity required to shoot without resources, and " +
+                            "the passion of an unfamiliar cast. This resets the audience's judgment criteria: they " +
+                            "stop expecting a polished blockbuster and start rooting for an authentic, scrappy piece " +
+                            "of art to succeed.",
+                    "Industry precedent (not this platform's tracked data): El Mariachi (1992, made for roughly " +
+                            "$7,000) built its entire marketing narrative around director Robert Rodriguez's " +
+                            "resourcefulness and unknown cast, turning the budget constraint itself into the story " +
+                            "audiences rooted for.")
+    );
+
+    // Fires only when this movie has no real budget on file - this file's existing proxy (see
+    // hasRealBudget) for the small/independent, unknown-cast productions this platform's data skews
+    // toward - and only pre-release, since every tactic here is an awareness-building play with nothing
+    // left to build once the movie has already released.
+    private List<RecommendedActionCandidate> underdogPlaybookCandidates(ManagedEntity entity) {
+        if (hasRealBudget(entity.getBudget()) || !isNotYetReleased(entity)) {
+            return List.of();
+        }
+        return UNDERDOG_TACTICS.stream()
+                .map(tactic -> playbookCandidate("underdog-playbook-", tactic))
+                .toList();
+    }
+
+    // ---- Viral / PR stunt playbook (star-power breakthrough tactics, not budget/cast-fame gated) ----
+
+    // Curated once, not computed per movie - see this class's javadoc. Unlike UNDERDOG_TACTICS, these
+    // don't depend on the movie being low-budget or the cast being unknown - a manufactured "leak," a
+    // guerrilla OOH stunt, leaning into a fan conspiracy theory, or an absurdist brand tie-in all work
+    // regardless of budget tier, so viralStuntPlaybookCandidates carries no hasRealBudget gate.
+    private static final List<PlaybookTactic> VIRAL_STUNT_PLAYBOOK_TACTICS = List.of(
+            new PlaybookTactic(
+                    "manufactured-leak",
+                    "Manufacture a Viral \"Leaked\" Moment",
+                    "Post an unannounced, intentionally unpolished, faux-candid video to the lead cast's own social " +
+                            "channels - styled as an accidental leak (an awkward video call, a blooper, a " +
+                            "behind-the-scenes argument) rather than a polished ad. Because it reads as authentic, " +
+                            "behind-the-scenes content instead of commercial messaging, it bypasses the audience's " +
+                            "usual ad-filtering instinct and gets shared as entertainment in its own right.",
+                    "Industry precedent (not this platform's tracked data): for the film Marty Supreme, lead actor " +
+                            "Timothee Chalamet posted an unannounced 18-minute video captioned \"video93884728.mp4\" " +
+                            "styled as a leaked, awkward Zoom call pitching absurd marketing ideas to studio " +
+                            "executives - it read as behind-the-scenes entertainment, not an ad, and spread " +
+                            "accordingly."),
+            new PlaybookTactic(
+                    "guerrilla-ooh-stunt",
+                    "Stage a Guerrilla OOH/PR Stunt Around an Invented Visual Motif",
+                    "Invent a distinctive, ownable visual motif (a signature color, prop, or symbol) that emerges " +
+                            "organically from the film's own marketing beats, then manifest it in the physical " +
+                            "world - a red-carpet look built entirely around it, plus a short guerrilla takeover of " +
+                            "a high-foot-traffic public space (branded costumed performers, a pop-up installation) " +
+                            "timed to generate free press coverage rather than paid media spend.",
+                    "Industry precedent (not this platform's tracked data): Marty Supreme's marketing turned a joke " +
+                            "from its own leaked video - a fictional \"Hardcore Orange\" Pantone color - into a real " +
+                            "all-orange red-carpet look and a guerrilla takeover of Times Square with performers in " +
+                            "orange ping-pong-ball helmets, generating widespread free press coverage."),
+            new PlaybookTactic(
+                    "fan-conspiracy-co-creation",
+                    "Lean Into Fan-Made Conspiracy Theories Instead of Debunking Them",
+                    "When fans organically spin up a conspiracy theory about the cast or story on social platforms, " +
+                            "resist the instinct to correct the record. Instead, let the theory stay unresolved and " +
+                            "quietly feed it - a cryptic post, a surprise content drop that plays along - turning " +
+                            "the fan base into active co-creators of the film's mythology rather than passive " +
+                            "recipients of official messaging.",
+                    "Industry precedent (not this platform's tracked data): a TikTok conspiracy theory claimed " +
+                            "Timothee Chalamet was secretly the anonymous rapper \"EsDeeKid.\" Marty Supreme's team " +
+                            "leaned into the mystery instead of denying it, and Chalamet posted an Instagram Reel " +
+                            "rapping the film's title that drew millions of likes and doubled as a surprise music " +
+                            "drop."),
+            new PlaybookTactic(
+                    "absurdist-brand-partnership",
+                    "Secure Absurdist, Pop-Culture-First Brand Partnerships",
+                    "Pursue brand tie-ins chosen for cultural surprise and shareability rather than conventional " +
+                            "demographic fit - a partnership that's funny or unexpected enough to be covered as a " +
+                            "story in its own right generates more organic reach than a standard co-branded " +
+                            "promotion.",
+                    "Industry precedent (not this platform's tracked data): following through on a joke from its " +
+                            "own marketing, Marty Supreme secured a partnership putting its character on a Wheaties " +
+                            "cereal box - an intentionally absurd, pop-culture-first tie-in that generated its own " +
+                            "press coverage.")
+    );
+
+    // The one viral-stunt tactic that IS subject-matter-specific rather than universally applicable -
+    // sponsoring/tying into a real-world tournament only makes sense when the film's own plot centers on
+    // a real competitive sport or activity, so it's gated on isSportsGenre rather than joining the
+    // unconditional list above.
+    private static final PlaybookTactic SPORTS_TOURNAMENT_TACTIC = new PlaybookTactic(
+            "real-world-tournament-tie-in",
+            "Tie Into Real-World Tournaments or Events Aligned With the Film's Subject",
+            "When the film's plot centers on a real-world sport, competition, or activity, partner with or " +
+                    "sponsor an actual tournament or event in that space before release. It bridges the screen and " +
+                    "the audience directly, turning a passive viewing experience into an active, community-driven " +
+                    "physical event tied to the film's own subject matter.",
+            "Industry precedent (not this platform's tracked data): Marty Supreme, whose lead character is loosely " +
+                    "based on real-world table-tennis champion Marty Reisman, tied its marketing to real " +
+                    "table-tennis tournaments - aligning the campaign directly with the sport the film itself is " +
+                    "about.");
+
+    // Genre-specific gate for SPORTS_TOURNAMENT_TACTIC above - mirrors isRomanceGenre's token-matching
+    // approach against the same comma-separated, client-populated genre field.
+    private static boolean isSportsGenre(String genre) {
+        if (genre == null) {
+            return false;
+        }
+        for (String token : genre.split(",")) {
+            if (token.trim().toLowerCase(Locale.ROOT).contains("sport")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Fires pre-release only (see underdogPlaybookCandidates's own doc for why) but, unlike that
+    // generator, carries no budget gate - these tactics don't depend on the movie being low-budget or
+    // the cast being unknown. SPORTS_TOURNAMENT_TACTIC is the one exception, added only when this
+    // entity's own genre field indicates a sports subject.
+    private List<RecommendedActionCandidate> viralStuntPlaybookCandidates(ManagedEntity entity, String genre) {
+        if (!isNotYetReleased(entity)) {
+            return List.of();
+        }
+        List<RecommendedActionCandidate> candidates = new ArrayList<>(VIRAL_STUNT_PLAYBOOK_TACTICS.size() + 1);
+        for (PlaybookTactic tactic : VIRAL_STUNT_PLAYBOOK_TACTICS) {
+            candidates.add(playbookCandidate("viral-stunt-playbook-", tactic));
+        }
+        if (isSportsGenre(genre)) {
+            candidates.add(playbookCandidate("viral-stunt-playbook-", SPORTS_TOURNAMENT_TACTIC));
+        }
+        return candidates;
     }
 
     // ==================== Genre resolution ====================
