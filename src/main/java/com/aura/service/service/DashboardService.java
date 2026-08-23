@@ -909,7 +909,7 @@ public class DashboardService {
     /**
      * Same as {@link #getReach}, but computed by joining/unioning the four raw ingestion tables
      * ({@code x_posts}, {@code instagram_posts}, {@code youtube_comments}, {@code reddit_posts}) directly
-     * on their own {@code entity} column, instead of going through {@code mentions}/{@code mention_entities}.
+     * on {@code entity_keywords}, instead of going through {@code mentions}/{@code mention_entities}.
      * See {@link com.aura.service.repository.MentionRepository#countDistinctAuthorsDirectByEntityId}.
      */
     public ReachResponse getReachDirect(Long entityId) {

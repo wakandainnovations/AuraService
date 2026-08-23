@@ -571,31 +571,34 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     /**
      * Same "unique posters" count as {@link #countDistinctAuthorsByEntityId}, but reads the four raw
      * ingestion tables directly instead of going through {@code mentions}/{@code mention_entities} — each
-     * table is joined straight to {@code managed_entities} on {@code lower(<table>.entity) = lower(name)},
-     * since every raw table carries its own {@code entity} column holding the movie/entity name (populated
-     * by the ingestion pipeline; not every row's value matches an existing managed entity, so this returns
-     * 0 for an entity whose name never appears verbatim in that column, unlike the keyword-linked
-     * {@code mentions} path). Rows with {@code author_type = 'irrelevant'} (an upstream classifier's
-     * judgment that the post isn't really about the entity) are excluded; NULL/blank {@code author_type}
-     * (not yet classified) is still included, matching {@link #findTotalViewsForEntity}'s convention.
+     * table is joined straight to {@code entity_keywords} on {@code lower(<table>.keyword) = lower(keyword)},
+     * the same keyword-equivalence {@link #linkExistingMentionsByKeyword} uses to populate
+     * {@code mention_entities} in the first place, just applied live instead of through a backfill. This
+     * is deliberately keyed on {@code keyword} rather than the raw tables' own {@code entity} column: that
+     * column holds whatever string the ingestion pipeline happened to tag the row with (often an
+     * abbreviation, e.g. {@code "GDN"} for a movie whose {@code managed_entities.name} is {@code "GD
+     * Naidu"}) and does not reliably match {@code managed_entities.name}, which silently undercounts.
+     * Rows with {@code author_type = 'irrelevant'} (an upstream classifier's judgment that the post isn't
+     * really about the entity) are excluded; NULL/blank {@code author_type} (not yet classified) is still
+     * included, matching {@link #findTotalViewsForEntity}'s convention.
      */
     @Query(value = "SELECT COUNT(DISTINCT author) FROM ( " +
             "  SELECT x.author AS author FROM x_posts x " +
-            "    JOIN managed_entities me ON lower(x.entity) = lower(me.name) " +
-            "    WHERE me.id = :entityId AND x.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    JOIN entity_keywords ek ON lower(x.keyword) = lower(ek.keyword) " +
+            "    WHERE ek.entity_id = :entityId AND x.author_type IS DISTINCT FROM 'irrelevant' " +
             "  UNION ALL " +
             "  SELECT y.author FROM youtube_comments y " +
-            "    JOIN managed_entities me ON lower(y.entity) = lower(me.name) " +
-            "    WHERE me.id = :entityId AND y.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    JOIN entity_keywords ek ON lower(y.keyword) = lower(ek.keyword) " +
+            "    WHERE ek.entity_id = :entityId AND y.author_type IS DISTINCT FROM 'irrelevant' " +
             "  UNION ALL " +
             "  SELECT r.author FROM reddit_posts r " +
-            "    JOIN managed_entities me ON lower(r.entity) = lower(me.name) " +
-            "    WHERE me.id = :entityId AND r.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    JOIN entity_keywords ek ON lower(r.keyword) = lower(ek.keyword) " +
+            "    WHERE ek.entity_id = :entityId AND r.author_type IS DISTINCT FROM 'irrelevant' " +
             "  UNION ALL " +
             "  SELECT i.author FROM instagram_posts i " +
-            "    JOIN managed_entities me ON lower(i.entity) = lower(me.name) " +
-            "    WHERE me.id = :entityId AND i.author_type IS DISTINCT FROM 'irrelevant' " +
-            ") authors",
+            "    JOIN entity_keywords ek ON lower(i.keyword) = lower(ek.keyword) " +
+            "    WHERE ek.entity_id = :entityId AND i.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  ) authors",
             nativeQuery = true)
     long countDistinctAuthorsDirectByEntityId(@Param("entityId") Long entityId);
 

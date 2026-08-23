@@ -3108,9 +3108,9 @@ GET /api/dashboard/21/reach
 
 **Endpoint:** `GET /api/dashboard/{entityId}/reach-direct`
 
-**Description:** Same "unique users" metric as [18p](#18p-get-reach-command-center-reach-panel), computed a different way: instead of reading the pre-linked `mentions`/`mention_entities` tables, this joins/UNIONs the four raw ingestion tables (`x_posts`, `instagram_posts`, `youtube_comments`, `reddit_posts`) directly, each on its own `entity` text column (populated by the ingestion pipeline with the movie/entity name) matched case-insensitively against `managed_entities.name`. Posts/comments with `author_type = 'irrelevant'` (an upstream classifier's judgment that the row isn't really about the entity) are excluded; NULL/blank `author_type` (not yet classified) is still counted.
+**Description:** Same "unique users" metric as [18p](#18p-get-reach-command-center-reach-panel), computed a different way: instead of reading the pre-linked `mentions`/`mention_entities` tables, this joins/UNIONs the four raw ingestion tables (`x_posts`, `instagram_posts`, `youtube_comments`, `reddit_posts`) directly against `entity_keywords`, on `lower(<table>.keyword) = lower(entity_keywords.keyword)` — the same keyword-equivalence the `mentions` backfill (`linkExistingMentionsByKeyword`) uses to populate `mention_entities` in the first place, just applied live instead of through that backfill. Posts/comments with `author_type = 'irrelevant'` (an upstream classifier's judgment that the row isn't really about the entity) are excluded; NULL/blank `author_type` (not yet classified) is still counted.
 
-Because the `entity` column isn't populated for every row that the keyword-based `mentions` linking picks up — and conversely can catch rows `mentions` never linked — this can return a different (often larger) count than [18p](#18p-get-reach-command-center-reach-panel) for the same entity. It returns `0` rather than an error for an entity whose name never appears verbatim (case-insensitive) in any raw table's `entity` column.
+This is deliberately keyed on `keyword` rather than each raw table's own `entity` text column: that column holds whatever string the ingestion pipeline happened to tag the row with, which is often an abbreviation that doesn't match `managed_entities.name` — e.g. rows for entity 29 (`managed_entities.name = "GD Naidu"`, tracked keywords `GDN`/`GDNaidu`/`GDNTheMovie`) are tagged `entity = "GDN"`, not `"GD Naidu"`. Matching on `entity` against `managed_entities.name` undercounted that entity by over 90% (293 vs. the correct 10,420); matching on `keyword` against `entity_keywords` avoids that failure mode. Because of the different linking path, this can still return a different count than [18p](#18p-get-reach-command-center-reach-panel) for the same entity (it can catch rows `mentions` never linked, and vice versa). It returns `0` rather than an error for an entity with no `entity_keywords` matching any raw table's `keyword` column.
 
 **Headers:**
 ```
@@ -3122,20 +3122,20 @@ Authorization: Bearer {jwt_token}
 
 **Example Request:**
 ```
-GET /api/dashboard/21/reach-direct
+GET /api/dashboard/29/reach-direct
 ```
 
 **Response:**
 ```json
 {
-  "entityId": 21,
-  "entityName": "Madhavan",
-  "uniqueUsers": 5786
+  "entityId": 29,
+  "entityName": "GD Naidu",
+  "uniqueUsers": 10420
 }
 ```
 
 **Response fields:**
-- `uniqueUsers` — count of distinct (non-null) `author` values across `x_posts`, `instagram_posts`, `youtube_comments`, and `reddit_posts` rows whose `entity` column matches this entity's name and whose `author_type` isn't `'irrelevant'`.
+- `uniqueUsers` — count of distinct (non-null) `author` values across `x_posts`, `instagram_posts`, `youtube_comments`, and `reddit_posts` rows whose `keyword` matches one of this entity's tracked `entity_keywords` and whose `author_type` isn't `'irrelevant'`.
 
 **Status Code:** `200 OK`
 
