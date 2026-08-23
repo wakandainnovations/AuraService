@@ -1741,6 +1741,14 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // ==================== Curated marketing-playbook tactics (underdog breakthrough tactics +
     // viral/PR stunt tactics) ====================
 
+    // Public so RecommendedActionsService (Phase 2) can recognize these two candidate families by
+    // candidateId prefix without duplicating the literal strings - see that class's buildPrompt/
+    // selectAndPhraseWithLlm, where these are the only candidates the LLM is allowed to supply its own
+    // confidencePct for (there being no server-computed sample/query to protect for these, unlike every
+    // other candidate in this file).
+    static final String UNDERDOG_PLAYBOOK_CANDIDATE_ID_PREFIX = "underdog-playbook-";
+    static final String VIRAL_STUNT_PLAYBOOK_CANDIDATE_ID_PREFIX = "viral-stunt-playbook-";
+
     private record PlaybookTactic(String slug, String title, String guidance, String precedent) {
     }
 
@@ -1823,7 +1831,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
             return List.of();
         }
         return UNDERDOG_TACTICS.stream()
-                .map(tactic -> playbookCandidate("underdog-playbook-", tactic))
+                .map(tactic -> playbookCandidate(UNDERDOG_PLAYBOOK_CANDIDATE_ID_PREFIX, tactic))
                 .toList();
     }
 
@@ -1925,10 +1933,10 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
         }
         List<RecommendedActionCandidate> candidates = new ArrayList<>(VIRAL_STUNT_PLAYBOOK_TACTICS.size() + 1);
         for (PlaybookTactic tactic : VIRAL_STUNT_PLAYBOOK_TACTICS) {
-            candidates.add(playbookCandidate("viral-stunt-playbook-", tactic));
+            candidates.add(playbookCandidate(VIRAL_STUNT_PLAYBOOK_CANDIDATE_ID_PREFIX, tactic));
         }
         if (isSportsGenre(genre)) {
-            candidates.add(playbookCandidate("viral-stunt-playbook-", SPORTS_TOURNAMENT_TACTIC));
+            candidates.add(playbookCandidate(VIRAL_STUNT_PLAYBOOK_CANDIDATE_ID_PREFIX, SPORTS_TOURNAMENT_TACTIC));
         }
         return candidates;
     }

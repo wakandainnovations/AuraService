@@ -44,9 +44,13 @@ import java.util.regex.Pattern;
  * {@link RecommendedActionCandidateService} (Phase 1 - never re-derived or second-guessed here) and
  * runs the single LLM call in this feature to select which candidates are worth surfacing for this
  * specific movie and write natural-language prose about them. The LLM never sees a schema field for
- * category, confidencePct, or either window day-offset, and never supplies one - those three numbers
- * flow from the candidate record to {@link RecommendedActionItem} untouched; the LLM's only output is
- * which candidateIds to keep and what to say about them.
+ * category or either window day-offset, and never supplies one - those two flow from the candidate
+ * record to {@link RecommendedActionItem} untouched, same as confidencePct for every candidate except
+ * the two curated playbook families (candidateId prefixed underdog-playbook- or viral-stunt-playbook-,
+ * see {@link #allowsLlmConfidence}): those two have no server-computed sample/query behind their
+ * confidence figure to protect, so the LLM may optionally supply its own 0-100 estimate for just those,
+ * validated in {@link #resolveConfidencePct} and falling back to the server default on anything
+ * malformed. The LLM's only other output is which candidateIds to keep and what to say about them.
  *
  * <p>Generation is persisted to {@link RecommendedActionsCache}. Unlike the simple fixed-cadence
  * refresh used by {@link CommandCenterSummaryService}/{@link AudiencePulseAspectsService}, this
@@ -477,15 +481,17 @@ public class RecommendedActionsService {
             if (title.isEmpty()) {
                 title = candidate.factorName();
             }
+            int confidencePct = resolveConfidencePct(item, candidate, candidateId, entityId);
             warnIfReasonHasUngroundedNumber(candidateId, reason, candidate, entityId);
             if (BRACKET_PLACEHOLDER.matcher(reason).find() || BRACKET_PLACEHOLDER.matcher(title).find()) {
                 log.warn("Recommended actions LLM output a literal bracket placeholder for candidate '{}' " +
                         "(entity {}) — using this candidate's generic fallback reason instead. title=\"{}\" reason=\"{}\"",
                         candidateId, entityId, title, reason);
-                selected.add(toActionItem(candidate, candidate.factorName(), String.join(" ", candidate.supportingFacts())));
+                selected.add(toActionItem(candidate, candidate.factorName(),
+                        String.join(" ", candidate.supportingFacts()), candidate.confidencePct()));
                 continue;
             }
-            selected.add(toActionItem(candidate, title, reason));
+            selected.add(toActionItem(candidate, title, reason, confidencePct));
         }
 
         if (selected.isEmpty()) {
@@ -498,20 +504,58 @@ public class RecommendedActionsService {
 
     // Fallback for an LLM failure/unparseable reply/empty selection: every server-computed candidate,
     // unfiltered, with a generic reason built only from its own supporting facts - so the panel still
-    // shows something grounded in real data rather than going empty because of an LLM hiccup.
+    // shows something grounded in real data rather than going empty because of an LLM hiccup. Always
+    // the server default confidencePct here - there's no LLM response to read one from on this path.
     private static List<RecommendedActionItem> fallbackActions(List<RecommendedActionCandidate> candidates) {
         return candidates.stream()
-                .map(c -> toActionItem(c, c.factorName(), String.join(" ", c.supportingFacts())))
+                .map(c -> toActionItem(c, c.factorName(), String.join(" ", c.supportingFacts()), c.confidencePct()))
                 .toList();
     }
 
-    private static RecommendedActionItem toActionItem(RecommendedActionCandidate candidate, String title, String reason) {
+    // For every candidate EXCEPT the two curated playbook families (underdog-playbook-*,
+    // viral-stunt-playbook-*), confidencePct stays exactly what Phase 1 computed - see this class's own
+    // javadoc; there's a real query/sample/calendar calculation behind those numbers that the LLM has no
+    // way to improve on and every reason to hallucinate. The two playbook families carry no such
+    // computation (PLAYBOOK_CONFIDENCE is a flat, uncalibrated default - see
+    // RecommendedActionCandidateServiceImpl's own doc), so for those only, an LLM-supplied confidencePct
+    // reflecting how well THIS movie's own facts fit the tactic is allowed to override it - validated
+    // to a plain 0-100 integer, falling back to the server default on anything else (missing, non-integer,
+    // out of range) so a malformed response can never produce a bad or missing confidence value.
+    private static boolean allowsLlmConfidence(String candidateId) {
+        return candidateId != null
+                && (candidateId.startsWith(RecommendedActionCandidateServiceImpl.UNDERDOG_PLAYBOOK_CANDIDATE_ID_PREFIX)
+                || candidateId.startsWith(RecommendedActionCandidateServiceImpl.VIRAL_STUNT_PLAYBOOK_CANDIDATE_ID_PREFIX));
+    }
+
+    private static int resolveConfidencePct(
+            JsonNode item, RecommendedActionCandidate candidate, String candidateId, Long entityId) {
+        if (!allowsLlmConfidence(candidateId) || !item.hasNonNull("confidencePct")) {
+            return candidate.confidencePct();
+        }
+        JsonNode confidenceNode = item.get("confidencePct");
+        if (!confidenceNode.isIntegralNumber()) {
+            log.warn("Recommended actions LLM returned a non-integer confidencePct for candidate '{}' (entity {}) " +
+                    "— using server default {} instead.", candidateId, entityId, candidate.confidencePct());
+            return candidate.confidencePct();
+        }
+        int llmConfidencePct = confidenceNode.asInt();
+        if (llmConfidencePct < 0 || llmConfidencePct > 100) {
+            log.warn("Recommended actions LLM returned an out-of-range confidencePct {} for candidate '{}' " +
+                    "(entity {}) — using server default {} instead.",
+                    llmConfidencePct, candidateId, entityId, candidate.confidencePct());
+            return candidate.confidencePct();
+        }
+        return llmConfidencePct;
+    }
+
+    private static RecommendedActionItem toActionItem(
+            RecommendedActionCandidate candidate, String title, String reason, int confidencePct) {
         return new RecommendedActionItem(
                 candidate.candidateId(),
                 candidate.category(),
                 title,
                 ensureReasonNamesExampleHandles(reason, candidate.exampleHandles()),
-                candidate.confidencePct(),
+                confidencePct,
                 candidate.factorName(),
                 candidate.windowStartDaysFromRelease(),
                 candidate.windowEndDaysFromRelease(),

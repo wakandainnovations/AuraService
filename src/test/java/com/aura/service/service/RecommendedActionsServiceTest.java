@@ -178,6 +178,112 @@ class RecommendedActionsServiceTest {
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
     }
 
+    // ==================== LLM-supplied confidencePct (playbook candidates only) ====================
+
+    @Test
+    void llmConfidencePct_usedForUnderdogPlaybookCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "underdog-playbook-curiosity-gap", "Weaponize the Curiosity Gap", 60, -270, -14, "label", "guidance");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
+                        "\"confidencePct\": 78}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(78);
+    }
+
+    @Test
+    void llmConfidencePct_usedForViralStuntPlaybookCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "viral-stunt-playbook-manufactured-leak", "Manufacture a Viral Leak", 60, -270, -14, "label",
+                "guidance");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"viral-stunt-playbook-manufactured-leak\", \"reason\": \"Fits this movie.\", " +
+                        "\"confidencePct\": 45}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(45);
+    }
+
+    @Test
+    void llmConfidencePct_ignoredForOrdinaryCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "factor-46-teaser", "Teaser/Trailer Timing", 90, -45, -30, "label", "some fact");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        // Even if the LLM (against instructions) supplies a confidencePct for a non-playbook candidate,
+        // it must be ignored - only the two curated playbook families are allowed to override it.
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"factor-46-teaser\", \"reason\": \"Grounded reason.\", " +
+                        "\"confidencePct\": 10}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(90);
+    }
+
+    @Test
+    void llmConfidencePct_fallsBackToServerDefaultWhenOutOfRange() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "underdog-playbook-curiosity-gap", "Weaponize the Curiosity Gap", 60, -270, -14, "label", "guidance");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
+                        "\"confidencePct\": 150}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
+    }
+
+    @Test
+    void llmConfidencePct_fallsBackToServerDefaultWhenNonInteger() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "underdog-playbook-curiosity-gap", "Weaponize the Curiosity Gap", 60, -270, -14, "label", "guidance");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
+                        "\"confidencePct\": \"high\"}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
+    }
+
+    @Test
+    void llmConfidencePct_usesServerDefaultWhenOmittedForPlaybookCandidate() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+
+        RecommendedActionCandidate c1 = candidate(
+                "underdog-playbook-curiosity-gap", "Weaponize the Curiosity Gap", 60, -270, -14, "label", "guidance");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\"}]");
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+
+        assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
+    }
+
     // ==================== statisticalEvidence prompt construction ====================
 
     // Covers the F9 contract: buildPrompt must serialize exactly the StatisticalEvidence fields present
