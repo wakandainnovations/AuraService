@@ -1440,13 +1440,47 @@ class RecommendedActionCandidateServiceImplTest {
     }
 
     @Test
-    void underdogPlaybookWithheldWhenBudgetOnFile() {
+    void underdogPlaybookWithheldWhenBudgetAtOrAboveLowBudgetThreshold() {
         ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 5_000_000.0);
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
 
         List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
 
         assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("underdog-playbook-"));
+    }
+
+    @Test
+    void underdogPlaybookSurfacedWhenRealBudgetIsBelowLowBudgetThreshold() {
+        // A real, disclosed budget under LOW_BUDGET_USD_THRESHOLD still counts as "low budget" - not
+        // just an undisclosed budget. Matches a real production movie (Lord Gaaga, budget $735,834).
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada", 735_834.0);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(findCandidate(candidates, "underdog-playbook-curiosity-gap")).isNotNull();
+    }
+
+    @Test
+    void underdogPlaybookWithheldExactlyAtLowBudgetThreshold() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada",
+                RecommendedActionCandidateServiceImpl.LOW_BUDGET_USD_THRESHOLD);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().startsWith("underdog-playbook-"));
+    }
+
+    @Test
+    void underdogPlaybookSurfacedJustBelowLowBudgetThreshold() {
+        ManagedEntity entity = movie(LocalDate.of(2026, 6, 5), "Action", "Kannada",
+                RecommendedActionCandidateServiceImpl.LOW_BUDGET_USD_THRESHOLD - 1);
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(findCandidate(candidates, "underdog-playbook-curiosity-gap")).isNotNull();
     }
 
     @Test

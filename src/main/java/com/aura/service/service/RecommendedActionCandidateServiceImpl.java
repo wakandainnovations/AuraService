@@ -109,10 +109,12 @@ import java.util.stream.Collectors;
  * platform's own tables - labeled as such in {@code supportingFacts} so it's never mistaken for
  * platform-tracked data the way every other candidate's facts are. Both reuse
  * {@link #PlaybookTactic}/{@link #playbookCandidate} for construction, but differ in trigger: this
- * platform tracks no cast-familiarity signal at all, so {@link #underdogPlaybookCandidates} reuses
- * {@link #hasRealBudget} - already this file's documented proxy for "small/independent production" - as
- * a stand-in (an entity with no real budget on file is also, in this platform's actual data,
- * overwhelmingly the unknown-cast case the underdog playbook targets). {@link #viralStuntPlaybookCandidates}
+ * platform tracks no cast-familiarity signal at all, so {@link #underdogPlaybookCandidates} uses
+ * {@link #isLowBudget} - a real disclosed budget under {@link #LOW_BUDGET_USD_THRESHOLD}, or no real
+ * budget on file at all (see {@link #hasRealBudget}, already this file's documented proxy for
+ * "small/independent production") - as a stand-in (a low-budget entity is also, in this platform's
+ * actual data, overwhelmingly the unknown-cast case the underdog playbook targets).
+ * {@link #viralStuntPlaybookCandidates}
  * carries no such restriction (its tactics don't depend on budget or cast fame), except its one
  * subject-matter-specific tactic - real-world tournament tie-ins - which only fires when
  * {@link #isSportsGenre} matches this entity's own (real, client-populated) genre field.
@@ -320,6 +322,11 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // refusal is recorded as the literal value 404 in managed_entities.budget rather than left null.
     // hasRealBudget treats it identically to "no budget on file" everywhere in this generator.
     static final double UNDISCLOSED_BUDGET_SENTINEL = 404.0;
+
+    // A movie with a real, disclosed budget under this figure (USD) still counts as "low budget" for
+    // underdogPlaybookCandidates - a movie with no budget on file at all (see hasRealBudget) is treated
+    // as low budget too, via isLowBudget, without needing this threshold.
+    static final double LOW_BUDGET_USD_THRESHOLD = 1_599_999.0;
 
     // ---- Curated marketing-playbook tactics (underdog breakthrough tactics + viral/PR stunt tactics,
     // see underdogPlaybookCandidates/viralStuntPlaybookCandidates): fixed, deterministic confidence -
@@ -1751,7 +1758,7 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // ---- Underdog playbook (low-budget / unknown-cast breakthrough tactics) ----
 
     // Curated once, not computed per movie - see this class's javadoc for why these four are the
-    // exception to "grounded in a real query result" and why hasRealBudget is reused as their trigger.
+    // exception to "grounded in a real query result" and why isLowBudget is reused as their trigger.
     private static final List<PlaybookTactic> UNDERDOG_TACTICS = List.of(
             new PlaybookTactic(
                     "curiosity-gap",
@@ -1803,12 +1810,16 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
                             "audiences rooted for.")
     );
 
-    // Fires only when this movie has no real budget on file - this file's existing proxy (see
-    // hasRealBudget) for the small/independent, unknown-cast productions this platform's data skews
-    // toward - and only pre-release, since every tactic here is an awareness-building play with nothing
-    // left to build once the movie has already released.
+    // Fires for a "low budget" movie - either no real budget on file at all (this file's existing proxy,
+    // see hasRealBudget, for the small/independent productions this platform's data skews toward) or a
+    // real disclosed budget under LOW_BUDGET_USD_THRESHOLD - and only pre-release, since every tactic
+    // here is an awareness-building play with nothing left to build once the movie has already released.
+    static boolean isLowBudget(Double budget) {
+        return !hasRealBudget(budget) || budget < LOW_BUDGET_USD_THRESHOLD;
+    }
+
     private List<RecommendedActionCandidate> underdogPlaybookCandidates(ManagedEntity entity) {
-        if (hasRealBudget(entity.getBudget()) || !isNotYetReleased(entity)) {
+        if (!isLowBudget(entity.getBudget()) || !isNotYetReleased(entity)) {
             return List.of();
         }
         return UNDERDOG_TACTICS.stream()
