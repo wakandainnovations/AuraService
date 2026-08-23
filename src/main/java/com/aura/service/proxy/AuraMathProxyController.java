@@ -15,11 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/v1")
 @Tag(name = "AuraMath Proxy", description = "Thin proxy over the upstream AuraMath service")
 public class AuraMathProxyController {
+
+    private static final Set<String> VALID_SPREADER_PLATFORMS = Set.of("x", "youtube", "reddit", "instagram");
 
     private final AuraMathProxyService proxy;
     private final AuraMathProperties props;
@@ -69,13 +72,27 @@ public class AuraMathProxyController {
         );
     }
 
-    @Operation(summary = "Get top spreaders for a keyword (cacheable)")
+    @Operation(summary = "Get top spreaders for a keyword, optionally filtered by platform (cacheable)")
     @GetMapping(value = "/top-spreaders/{keyword}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> topSpreaders(@PathVariable("keyword") String keyword) {
+    public ResponseEntity<String> topSpreaders(
+            @PathVariable("keyword") String keyword,
+            @RequestParam(value = "platform", required = false) String platform
+    ) {
+        Map<String, Object> q = null;
+        if (platform != null) {
+            String normalized = platform.toLowerCase();
+            if (!VALID_SPREADER_PLATFORMS.contains(normalized)) {
+                return ResponseEntity.badRequest()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":\"platform must be one of x, youtube, reddit, instagram\"}");
+            }
+            q = new LinkedHashMap<>();
+            q.put("platform", normalized);
+        }
         return proxy.forwardGet(
                 "/v1/top-spreaders/{keyword}",
                 "/api/marketing/top-50-spreaders/" + encodeSegment(keyword),
-                null,
+                q,
                 true,
                 null
         );

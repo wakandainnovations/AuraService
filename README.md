@@ -5831,21 +5831,30 @@ GET /v1/aspect-drivers?entityId=29
 
 **Endpoint:** `GET /v1/top-spreaders/{keyword}`
 
-**Description:** Get the top 50 spreaders for a keyword. Forwards to upstream `GET /api/marketing/top-50-spreaders/{keyword}`.
+**Description:** Get the top 50 spreaders for a keyword, optionally filtered to a single platform. Forwards to upstream `GET /api/marketing/top-50-spreaders/{keyword}`. When `platform` is provided, it is lower-cased and forwarded as an upstream query parameter; an unrecognized value returns `400` without calling upstream.
 
 **Authentication:** Not required
 
 **Path Parameters:**
 - `keyword` - The keyword to get top spreaders for
 
+**Query Parameters:**
+- `platform` (optional) - Restrict results to one platform. One of `x`, `youtube`, `reddit`, `instagram` (case-insensitive). Omit to get spreaders across all platforms.
+
 **Example Request:**
 ```
 GET /v1/top-spreaders/fantasy
+GET /v1/top-spreaders/fantasy?platform=youtube
 ```
 
 **Cache:** 60-second TTL
 
 **Status Code:** `200 OK` (upstream status preserved)
+
+**Validation Error (400 Bad Request):**
+```json
+{ "error": "platform must be one of x, youtube, reddit, instagram" }
+```
 
 ---
 

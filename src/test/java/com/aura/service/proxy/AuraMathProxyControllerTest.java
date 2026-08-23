@@ -132,6 +132,32 @@ class AuraMathProxyControllerTest {
     }
 
     // ------------------------------------------------------------------
+    // 3a. /v1/top-spreaders/{keyword}?platform= — happy path, platform forwarded lowercase
+    // ------------------------------------------------------------------
+    @Test
+    void topSpreaders_withPlatform_forwardsLowercasedPlatform() throws Exception {
+        enqueueJson("[\"alice\"]");
+
+        mvc.perform(get("/v1/top-spreaders/{k}", "comedy").param("platform", "YouTube"))
+                .andExpect(status().isOk());
+
+        RecordedRequest req = takeRequest();
+        assertThat(req.getPath()).isEqualTo("/api/marketing/top-50-spreaders/comedy?platform=youtube");
+    }
+
+    // ------------------------------------------------------------------
+    // 3b. /v1/top-spreaders/{keyword}?platform= — invalid platform rejected without upstream call
+    // ------------------------------------------------------------------
+    @Test
+    void topSpreaders_invalidPlatform_returns400_withoutUpstreamCall() throws Exception {
+        mvc.perform(get("/v1/top-spreaders/{k}", "comedy").param("platform", "tiktok"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
+
+        assertThat(upstream.getRequestCount()).isZero();
+    }
+
+    // ------------------------------------------------------------------
     // 4. POST /v1/find-lookalikes — happy path
     // ------------------------------------------------------------------
     @Test
