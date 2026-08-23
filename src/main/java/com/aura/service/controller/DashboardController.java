@@ -10,6 +10,7 @@ import com.aura.service.service.DashboardService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.RecommendedActionsService;
 import com.aura.service.service.TopSpreaderContentService;
+import com.aura.service.service.TopSpreaderInsightsService;
 import com.aura.service.service.UserEntityViewService;
 import com.aura.service.service.WhatsChangedService;
 import com.aura.service.service.WhatsNewService;
@@ -45,6 +46,7 @@ public class DashboardController {
     private final AudiencePulseAspectsService audiencePulseAspectsService;
     private final RecommendedActionsService recommendedActionsService;
     private final TopSpreaderContentService topSpreaderContentService;
+    private final TopSpreaderInsightsService topSpreaderInsightsService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -273,6 +275,19 @@ public class DashboardController {
         assertOwned(entityId);
         TopSpreaderContentResponse response = topSpreaderContentService.getTopSpreaderContent(
                 entityId, language, spreaderLimit, postsPerSpreader);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{entityId}/top-spreaders/insights")
+    public ResponseEntity<TopSpreaderInsightsResponse> getTopSpreaderInsights(
+            @PathVariable Long entityId,
+            @RequestParam(required = false) String language,
+            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int spreaderLimit,
+            @RequestParam(defaultValue = "5") @Min(1) @Max(10) int postsPerSpreader,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        assertOwned(entityId);
+        TopSpreaderInsightsResponse response = topSpreaderInsightsService.getInsights(
+                entityId, language, spreaderLimit, postsPerSpreader, refresh);
         return ResponseEntity.ok(response);
     }
 

@@ -3240,6 +3240,78 @@ GET /api/dashboard/21/top-spreaders/content?language=Tamil&spreaderLimit=5&posts
 
 ---
 
+### 18s. Get Top Spreaders' AI Insights
+
+**Endpoint:** `GET /api/dashboard/{entityId}/top-spreaders/insights`
+
+**Description:** Sends the same top-spreader data as [18r](#18r-get-top-spreaders-content) to the LLM to produce collaboration recommendations for the marketing team: a short summary of which spreaders are delivering the most impact, plus concrete per-spreader actions (e.g. "Collaborate with Cinema Vikatan for exclusive interviews").
+
+Follows this platform's "Java computes every number, the LLM only selects and writes prose" split (same convention as [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel)): each spreader with at least one resolved post is ranked by `totalViews` (the only real reach proxy AuraMath provides) and split into thirds — top third `HIGH_IMPACT`, next third `MEDIUM_IMPACT`, rest `LOW_IMPACT` — **before** the LLM ever sees the data. The LLM is given each spreader's impact tier, `totalViews`, average engagement rate, dominant sentiment, and real sample post content, and may only (1) pick up to 5 spreaders worth a collaboration recommendation and (2) write the `action` text for each, grounded in that spreader's real sample content (e.g. music-focused posts suggest a BGM-breakdown collaboration, interview/reaction content suggests an interview or reaction-style one). It never supplies — and its `impact` is never trusted even if it tries — the impact tier; that's always merged back from the server-computed candidate by `spreaderId`. A spreader with no locally-resolved post content is excluded entirely, since there's nothing real to ground a recommendation in.
+
+Generation is cached in memory per (entity, language, spreaderLimit, postsPerSpreader) for 10 minutes to avoid re-billing the LLM on every dashboard load; pass `refresh=true` to force regeneration.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `language` (optional) - restricts spreaders to this language's snapshot, same as [18r](#18r-get-top-spreaders-content). Omitted: spreaders are deduped across every language the entity is tracked in.
+- `spreaderLimit` (optional, default `10`, 1-50) - max spreaders considered, ranked by AuraMath's `totalViews` descending.
+- `postsPerSpreader` (optional, default `5`, 1-10) - max posts resolved per spreader before impact-tier ranking and LLM grounding.
+- `refresh` (optional, default `false`) - bypass the 10-minute cache and regenerate immediately.
+
+**Example Request:**
+```
+GET /api/dashboard/21/top-spreaders/insights?language=Tamil&spreaderLimit=10&postsPerSpreader=5
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "language": "Tamil",
+  "summary": "Cinema Vikatan and Behindwoods TV are delivering the highest impact with strong positive sentiment. Consider collaborations with Filmy Reacts for high engagement and Tamil Talkies for music-driven content.",
+  "actions": [
+    {
+      "spreaderId": "Cinema Vikatan",
+      "action": "Collaborate with Cinema Vikatan for exclusive interviews",
+      "impact": "HIGH_IMPACT"
+    },
+    {
+      "spreaderId": "Tamil Talkies",
+      "action": "Release a BGM breakdown with Tamil Talkies",
+      "impact": "HIGH_IMPACT"
+    },
+    {
+      "spreaderId": "Behindwoods TV",
+      "action": "Plan a live Q&A with Behindwoods TV",
+      "impact": "MEDIUM_IMPACT"
+    }
+  ],
+  "generatedAt": "2026-08-23T10:15:00Z"
+}
+```
+
+**Response fields:**
+- `summary` — 2-3 sentence plain-English overview of which spreaders are delivering the most impact and what kind of collaboration each seems suited for; LLM-authored, grounded only in the spreader data sent to it.
+- `actions[].spreaderId` — matches a `spreaders[].globalUserId` from [18r](#18r-get-top-spreaders-content).
+- `actions[].action` — LLM-authored, specific collaboration recommendation grounded in that spreader's real sample post content.
+- `actions[].impact` — `HIGH_IMPACT` / `MEDIUM_IMPACT` / `LOW_IMPACT`, the same server-computed reach tier used by [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel)'s `category`; never LLM-authored.
+- `generatedAt` — when this response was generated (reflects the cached generation time, not necessarily the request time).
+- An entity with no spreaders carrying resolved post content returns `summary: ""` and `actions: []` rather than erroring — there's nothing grounded to generate insights from yet.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+- `400 Bad Request` — The LLM response could not be parsed as JSON, or was missing `summary`/`actions` (transient upstream issue; retry, or pass `refresh=true` on the next call).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
