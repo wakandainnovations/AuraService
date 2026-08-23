@@ -321,10 +321,9 @@ public class DashboardController {
     @GetMapping("/{entityId}/recommended-actions")
     public ResponseEntity<RecommendedActionsResponse> getRecommendedActions(
             @PathVariable Long entityId,
-            @RequestParam(defaultValue = "false") boolean refresh,
-            @RequestParam(defaultValue = "false") boolean allPhases) {
+            @RequestParam(defaultValue = "false") boolean refresh) {
         assertOwned(entityId);
-        RecommendedActionsResponse response = recommendedActionsService.getRecommendedActions(entityId, refresh, allPhases);
+        RecommendedActionsResponse response = recommendedActionsService.getRecommendedActions(entityId, refresh);
         return ResponseEntity.ok(response);
     }
 

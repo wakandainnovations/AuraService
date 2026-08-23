@@ -132,33 +132,26 @@ public class RecommendedActionsService {
      *                lands in the cache for the next call regardless. When no plan has ever been
      *                generated for this entity, there's nothing cached to respond with, so this one call
      *                still generates synchronously and waits for it, refresh or not.
-     * @param allPhases when true, returns the whole cached plan ungrouped/unfiltered (the full
-     *                  campaign roadmap) instead of only the actions whose window currently contains
-     *                  today. An entity with no releaseDate can't have a "current" window computed, so
-     *                  it always gets the full-plan behavior regardless of this flag. Also falls back
-     *                  when the window filter would leave nothing - the curated factor windows (see
-     *                  {@code WINDOW_BY_FACTOR}) don't blanket every day of a movie's runway, so "no
-     *                  factor's window covers today" is a real gap, not a signal that there's nothing
-     *                  to recommend; the panel should never render empty when a grounded plan actually
-     *                  exists for this entity. Once the movie has released, that fallback excludes
-     *                  actions whose window is entirely pre-release (e.g. trailer/teaser timing, first-
-     *                  single timing) since those are no longer actionable, falling back further to the
-     *                  full plan only if nothing post-release-relevant remains. The ACTIVE portion of
-     *                  the result (whichever of the above it ends up being) is then capped at {@link
-     *                  #MAX_ACTIVE_ACTIONS_IN_RESPONSE} random actions - see {@link #capActiveActions} -
-     *                  and every DONE/IRRELEVANT action is appended after it, uncapped: those are
-     *                  already-handled history the marketing team has already triaged, not more of the
-     *                  same queue that needs trimming.
+     *                <p>The ACTIVE portion of the plan is capped at {@link #MAX_ACTIVE_ACTIONS_IN_RESPONSE}
+     *                random actions - see {@link #capActiveActions} - over the entity's whole active
+     *                pool: more than that many active actions gets a random {@link
+     *                #MAX_ACTIVE_ACTIONS_IN_RESPONSE}, {@link #MAX_ACTIVE_ACTIONS_IN_RESPONSE} or fewer
+     *                gets all of them. This is no longer narrowed by each action's own execution window
+     *                (windowStartDaysFromRelease/windowEndDaysFromRelease) first - that would make the
+     *                capped count fluctuate day to day (as few as 2, say) for reasons this endpoint's
+     *                contract never promised or explained. Every DONE/IRRELEVANT action is appended
+     *                after the capped active set, uncapped: those are already-handled history the
+     *                marketing team has already triaged, not more of the same queue that needs trimming.
      */
     @Transactional
-    public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
+    public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh) {
         ManagedEntity entity = managedEntityRepository.findById(entityId)
                 .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
         GeneratedContent content = getCachedOrGenerate(entityId, refresh);
 
-        // This panel is "what to do right now" - an action the marketing team already marked DONE or
-        // IRRELEVANT (see updateActionStatus) has nothing left to act on, so it's kept out of the
-        // window-filtering/capping logic below, and appended back afterward unfiltered/uncapped.
+        // This panel is "what to do" - an action the marketing team already marked DONE or IRRELEVANT
+        // (see updateActionStatus) has nothing left to act on, so it's kept out of the capping logic
+        // below and appended back afterward uncapped.
         List<RecommendedActionItem> activeActions = content.actions().stream()
                 .filter(a -> a.getStatus() == RecommendedActionStatus.ACTIVE)
                 .toList();
@@ -167,20 +160,10 @@ public class RecommendedActionsService {
                         || a.getStatus() == RecommendedActionStatus.IRRELEVANT)
                 .toList();
 
-        Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
-        List<RecommendedActionItem> actions = (allPhases || daysToRelease == null)
-                ? activeActions
-                : filterToCurrentWindow(activeActions, daysToRelease);
-        if (actions.isEmpty() && !activeActions.isEmpty()) {
-            List<RecommendedActionItem> fallback = (daysToRelease != null && daysToRelease > 0)
-                    ? filterOutExpiredPreRelease(activeActions)
-                    : activeActions;
-            actions = fallback.isEmpty() ? activeActions : fallback;
-        }
-
-        List<RecommendedActionItem> response = new ArrayList<>(capActiveActions(actions, entityId));
+        List<RecommendedActionItem> response = new ArrayList<>(capActiveActions(activeActions, entityId));
         response.addAll(doneOrIrrelevantActions);
 
+        Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
         return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, response, content.generatedAt());
     }
 
@@ -201,9 +184,9 @@ public class RecommendedActionsService {
      * Full accumulated plan for an entity - every action ever recommended, past or present, each
      * carrying whatever status the marketing team last set on it (default {@link
      * RecommendedActionStatus#ACTIVE} for one never explicitly updated). Unlike {@link
-     * #getRecommendedActions}, this never filters by status or by today's execution window - it's the
-     * "what has and hasn't been handled" audit view, not the "what to do today" panel. {@code
-     * statusFilter} narrows to one status (e.g. only DONE, or only ACTIVE) when non-null.
+     * #getRecommendedActions}, this never caps or randomly samples the ACTIVE portion - it's the
+     * "what has and hasn't been handled" audit view, not the "what to do" panel. {@code statusFilter}
+     * narrows to one status (e.g. only DONE, or only ACTIVE) when non-null.
      */
     @Transactional(readOnly = true)
     public RecommendedActionsResponse getAllRecommendedActions(Long entityId, RecommendedActionStatus statusFilter) {
@@ -328,25 +311,10 @@ public class RecommendedActionsService {
         }
     }
 
-    private static List<RecommendedActionItem> filterToCurrentWindow(List<RecommendedActionItem> actions, int todayOffset) {
-        return actions.stream()
-                .filter(a -> todayOffset >= a.getWindowStartDaysFromRelease() && todayOffset <= a.getWindowEndDaysFromRelease())
-                .toList();
-    }
-
-    // Drops actions whose window ends before release day (e.g. trailer/teaser timing, first-single
-    // timing) - once a movie has released, those pre-release-only beats are no longer actionable and
-    // shouldn't resurface just because no window covers today.
-    private static List<RecommendedActionItem> filterOutExpiredPreRelease(List<RecommendedActionItem> actions) {
-        return actions.stream()
-                .filter(a -> a.getWindowEndDaysFromRelease() >= 0)
-                .toList();
-    }
-
-    // Signed day-offset of "today" from entity.releaseDate, using the same sign convention as
-    // RecommendedActionCandidate's own window offsets (negative = before release, positive = after) so
-    // the two can be compared directly. Null when the entity has no releaseDate - callers fall back to
-    // the full, unfiltered plan in that case rather than computing a meaningless window membership.
+    // Signed day-offset of "today" from entity.releaseDate (negative = before release, positive =
+    // after), same sign convention as RecommendedActionCandidate's own window offsets - purely
+    // informational on RecommendedActionsResponse.daysToRelease now, not used to filter which actions
+    // are returned (see getRecommendedActions). Null when the entity has no releaseDate.
     private Integer todayOffsetFromRelease(LocalDate releaseDate) {
         if (releaseDate == null) {
             return null;

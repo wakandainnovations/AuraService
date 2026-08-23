@@ -273,8 +273,11 @@ public class EntityMarketingReportService {
         var topSpreaderInsights = optional("top-spreader-insights", id, () -> topSpreaderInsightsService.getInsights(
                 id, null, TOP_SPREADER_LIMIT, TOP_SPREADER_POSTS_PER_SPREADER, false));
 
+        // The report wants the full accumulated plan (every status, no 5-action cap), not the
+        // "what to do" panel's capped/randomly-sampled ACTIVE subset - see
+        // RecommendedActionsService.getAllRecommendedActions's own doc for that distinction.
         var recommendedActions = optional("recommended-actions", id,
-                () -> recommendedActionsService.getRecommendedActions(id, false, true));
+                () -> recommendedActionsService.getAllRecommendedActions(id, null));
 
         var aiSummary = optional("ai-summary", id, () -> commandCenterSummaryService.getAiSummary(id, false));
         var todaysHighlights = optional("todays-highlights", id,

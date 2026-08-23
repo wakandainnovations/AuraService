@@ -42,7 +42,7 @@ import static org.mockito.Mockito.when;
  * ({@link RecommendedActionCandidateService} is mocked, never re-implemented here); this test only
  * checks the Phase 2 concerns layered on top - cache hit/miss plumbing, the LLM select-and-phrase
  * merge (including dropping an unrecognized candidateId), the fallback path when the LLM call fails,
- * and the day-offset window filtering (including its boundary days). Collaborators are mocked as
+ * and the ACTIVE-action capping/DONE-IRRELEVANT-inclusion logic. Collaborators are mocked as
  * interfaces per this project's Java 25 / Mockito constraint (see
  * RecommendedActionCandidateServiceImplTest for the same convention).
  */
@@ -121,7 +121,7 @@ class RecommendedActionsServiceTest {
                 Instant.parse("2026-08-01T00:00:00Z"));
         when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getTitle()).isEqualTo("Cached Title");
@@ -143,7 +143,7 @@ class RecommendedActionsServiceTest {
                 Instant.parse("2026-08-01T00:00:00Z"));
         when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true);
 
         // Responds with the existing cached content right away - no synchronous LLM/candidate-service
         // call on this request's own thread, which is the whole point of moving refresh to the
@@ -170,7 +170,7 @@ class RecommendedActionsServiceTest {
 
         // refresh=true, but there's nothing cached yet to respond with immediately - this one call has
         // to generate synchronously and wait for it, same as a cache miss without refresh.
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, true);
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
@@ -194,7 +194,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"factor-46-teaser\", \"title\": \"Kick Off Teaser Push\", " +
                         "\"reason\": \"The 30-45 day pre-release window is calibrated as a +25% bonus.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         RecommendedActionItem item = response.getActions().get(0);
@@ -222,7 +222,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"known-id\", \"reason\": \"Grounded reason.\"}, " +
                         "{\"candidateId\": \"unknown-id-not-in-list\", \"reason\": \"Should be dropped.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getReason()).isEqualTo("Grounded reason.");
@@ -242,7 +242,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
                         "\"confidencePct\": 78}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(78);
     }
@@ -260,7 +260,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"viral-stunt-playbook-manufactured-leak\", \"reason\": \"Fits this movie.\", " +
                         "\"confidencePct\": 45}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(45);
     }
@@ -279,7 +279,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"factor-46-teaser\", \"reason\": \"Grounded reason.\", " +
                         "\"confidencePct\": 10}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(90);
     }
@@ -296,7 +296,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
                         "\"confidencePct\": 150}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
     }
@@ -313,7 +313,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\", " +
                         "\"confidencePct\": \"high\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
     }
@@ -329,7 +329,7 @@ class RecommendedActionsServiceTest {
         when(llmService.generateReply(any())).thenReturn(
                 "[{\"candidateId\": \"underdog-playbook-curiosity-gap\", \"reason\": \"Fits this movie well.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions().get(0).getConfidencePct()).isEqualTo(60);
     }
@@ -354,7 +354,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"nonobvious-lever-trailer-before-friday\", " +
                         "\"reason\": \"This is 3.1% (q=0.031) with 57 comparable entities.\"}]");
 
-        service.getRecommendedActions(ENTITY_ID, false, true);
+        service.getRecommendedActions(ENTITY_ID, false);
 
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(llmService).generateReply(promptCaptor.capture());
@@ -384,7 +384,7 @@ class RecommendedActionsServiceTest {
         when(llmService.generateReply(any())).thenReturn(
                 "[{\"candidateId\": \"factor-46-teaser\", \"reason\": \"Grounded reason.\"}]");
 
-        service.getRecommendedActions(ENTITY_ID, false, true);
+        service.getRecommendedActions(ENTITY_ID, false);
 
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(llmService).generateReply(promptCaptor.capture());
@@ -414,7 +414,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"factor-17-evangelist-mobilization\", \"reason\": \"Positive-sentiment " +
                         "accounts for this movie have been identified and should be mobilized.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         RecommendedActionItem item = response.getActions().get(0);
@@ -440,7 +440,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"factor-53-viral-seed-outreach\", \"reason\": \"Reach out to Honest Review " +
                         "and Nikhil to seed the teaser.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getReason())
@@ -465,7 +465,7 @@ class RecommendedActionsServiceTest {
                 "[{\"candidateId\": \"factor-52-low-online-presence\", \"reason\": \"Similar to how [Movie X] " +
                         "(a real movie example) built early buzz through short-form video teasers.\"}]");
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         RecommendedActionItem item = response.getActions().get(0);
@@ -486,7 +486,7 @@ class RecommendedActionsServiceTest {
 
         when(llmService.generateReply(any())).thenThrow(new RuntimeException("LLM unavailable"));
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(1);
         RecommendedActionItem item = response.getActions().get(0);
@@ -495,7 +495,7 @@ class RecommendedActionsServiceTest {
         assertThat(item.getConfidencePct()).isEqualTo(70);
     }
 
-    // ==================== Day-offset window filtering ====================
+    // ==================== daysToRelease is informational only, no longer filters ====================
 
     private void stubCachedActions(List<RecommendedActionItem> actions, LocalDate releaseDate) throws Exception {
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(releaseDate)));
@@ -505,162 +505,35 @@ class RecommendedActionsServiceTest {
         when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
     }
 
+    // Regression coverage for the "Lord Gaaga" bug: an ACTIVE action whose own execution window
+    // doesn't contain today must still be returned - getRecommendedActions no longer narrows by
+    // windowStartDaysFromRelease/windowEndDaysFromRelease at all (see that method's own doc for why:
+    // it made the panel's count fluctuate day to day for reasons the API contract never explained).
+    // daysToRelease is still computed and returned on the response, but purely informational.
     @Test
-    void windowFiltering_includesActionAtStartBoundary() throws Exception {
-        // clock is fixed at 2026-08-10; releaseDate 10 days later means today's offset is -10.
+    void actionOutsideItsOwnWindow_isStillReturned() throws Exception {
         LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-2", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -10, -5, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(inWindow), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).hasSize(1);
-    }
-
-    @Test
-    void windowFiltering_includesActionAtEndBoundary() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-3", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -10, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(inWindow), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).hasSize(1);
-    }
-
-    @Test
-    void windowFiltering_excludesOneDayBeforeStart_butOtherInWindowActionStillSurvives() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-4", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-5", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
-    }
-
-    @Test
-    void windowFiltering_excludesOneDayAfterEnd_butOtherInWindowActionStillSurvives() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-6", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -20, -11, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem inWindow = new RecommendedActionItem("test-candidate-7", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -10, -5, "label2", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(outOfWindow, inWindow), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
-    }
-
-    // A movie whose plan only has actions timed around a marketing calendar the current day doesn't
-    // fall inside (e.g. a movie many weeks further from release than any curated factor window
-    // reaches) must still return its real, grounded plan rather than an empty panel - the plan
-    // existing at all is the signal, not which narrow window happens to contain today. Regression
-    // test for the "Lord Gaaga" bug: a real cached plan existed but every action's window fell
-    // outside today's actual days-to-release, so the filtered response was empty.
-    @Test
-    void windowFiltering_allActionsOutOfWindow_fallsBackToFullPlanInsteadOfEmpty() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow1 = new RecommendedActionItem("test-candidate-8", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -9, -1, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem outOfWindow2 = new RecommendedActionItem("test-candidate-9", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", -20, -11, "label2", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(outOfWindow1, outOfWindow2), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(-10);
-        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T", "T2");
-    }
-
-    // ==================== Post-release fallback excludes pre-release-only actions ====================
-
-    // Regression test for the bug where an already-released movie's action panel resurrected
-    // pre-release-only beats (e.g. "Releasing Teasers and Trailers at Optimal Timing", "Releasing the
-    // First Single at an Optimal Time") once today's offset stopped falling inside any curated window.
-    // Once released, the fallback should prefer actions whose window reaches release day or later
-    // over ones that are entirely pre-release and thus no longer actionable.
-    @Test
-    void windowFiltering_postRelease_fallbackExcludesPreReleaseOnlyActions() throws Exception {
-        // clock fixed at 2026-08-10; releaseDate 30 days earlier means today's offset is +30, past
-        // every window below.
-        LocalDate releaseDate = LocalDate.of(2026, 7, 11);
-        RecommendedActionItem teaserTrailer = new RecommendedActionItem("test-candidate-10", RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem firstSingle = new RecommendedActionItem("test-candidate-11", RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem criticalReviews = new RecommendedActionItem("test-candidate-12", RecommendedActionCategory.HIGH_IMPACT, "Critical Review Ratings on Aggregators",
-                "R", 80, "Critical Reviews", 0, 7, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(teaserTrailer, firstSingle, criticalReviews), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(30);
-        assertThat(response.getActions())
-                .extracting(RecommendedActionItem::getTitle)
-                .containsExactly("Critical Review Ratings on Aggregators");
-    }
-
-    // If the cached plan has nothing post-release-relevant at all, the panel must still not render
-    // empty - falls all the way back to the full plan rather than the (now-empty) filtered set.
-    @Test
-    void windowFiltering_postRelease_fallsBackToFullPlanWhenNoPostReleaseActionsExist() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
-        RecommendedActionItem teaserTrailer = new RecommendedActionItem("test-candidate-13", RecommendedActionCategory.HIGH_IMPACT, "Releasing Teasers and Trailers at Optimal Timing",
-                "R", 90, "Teaser/Trailer Timing", -45, -30, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem firstSingle = new RecommendedActionItem("test-candidate-14", RecommendedActionCategory.HIGH_IMPACT, "Releasing the First Single at an Optimal Time",
-                "R", 90, "First Single Timing", -56, -42, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(teaserTrailer, firstSingle), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isEqualTo(30);
-        assertThat(response.getActions())
-                .extracting(RecommendedActionItem::getTitle)
-                .containsExactlyInAnyOrder(
-                        "Releasing Teasers and Trailers at Optimal Timing",
-                        "Releasing the First Single at an Optimal Time");
-    }
-
-    // windowEndDaysFromRelease == 0 (a release-day action) must survive the post-release fallback
-    // filter, while a purely pre-release window (ending the day before release) must not.
-    @Test
-    void windowFiltering_postRelease_fallbackRetainsActionEndingOnReleaseDayBoundary() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // daysToRelease = +30
-        RecommendedActionItem preReleaseOnly = new RecommendedActionItem("test-candidate-15", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -14, -1, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        RecommendedActionItem releaseDayBoundary = new RecommendedActionItem("test-candidate-16", RecommendedActionCategory.HIGH_IMPACT, "T2", "R2", 90, "Factor2", 0, 0, "label2", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(preReleaseOnly, releaseDayBoundary), releaseDate);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getActions()).extracting(RecommendedActionItem::getTitle).containsExactly("T2");
-    }
-
-    // ==================== No-releaseDate fallback ====================
-
-    @Test
-    void noReleaseDate_returnsFullUnfilteredPlan() throws Exception {
-        RecommendedActionItem action = new RecommendedActionItem("test-candidate-17", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
-        stubCachedActions(List.of(action), null);
-
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, false);
-
-        assertThat(response.getDaysToRelease()).isNull();
-        assertThat(response.getActions()).hasSize(1);
-    }
-
-    // ==================== allPhases bypasses window filter ====================
-
-    @Test
-    void allPhasesTrue_bypassesWindowFilter() throws Exception {
-        LocalDate releaseDate = LocalDate.of(2026, 8, 20);
-        RecommendedActionItem outOfWindow = new RecommendedActionItem("test-candidate-18", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
+        RecommendedActionItem outOfWindow = new RecommendedActionItem(
+                "test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", 50, 60, "label",
+                List.of(), List.of(), RecommendedActionStatus.ACTIVE);
         stubCachedActions(List.of(outOfWindow), releaseDate);
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
+        assertThat(response.getDaysToRelease()).isEqualTo(-10);
+        assertThat(response.getActions()).hasSize(1);
+    }
+
+    @Test
+    void noReleaseDate_daysToReleaseIsNullButActionsStillReturned() throws Exception {
+        RecommendedActionItem action = new RecommendedActionItem(
+                "test-candidate-2", RecommendedActionCategory.HIGH_IMPACT, "T", "R", 90, "Factor", -100, -90,
+                "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE);
+        stubCachedActions(List.of(action), null);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
+
+        assertThat(response.getDaysToRelease()).isNull();
         assertThat(response.getActions()).hasSize(1);
     }
 
@@ -680,7 +553,7 @@ class RecommendedActionsServiceTest {
                 "label", List.of(), List.of(), RecommendedActionStatus.IRRELEVANT);
         stubCachedActions(List.of(active, done, irrelevant), releaseDate);
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         // DONE/IRRELEVANT are already-handled history, not a queue to trim - always included, uncapped,
         // alongside whichever ACTIVE actions made the (possibly random) cut.
@@ -704,7 +577,7 @@ class RecommendedActionsServiceTest {
         all.add(done);
         stubCachedActions(all, releaseDate);
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         List<RecommendedActionItem> returnedActive = response.getActions().stream()
                 .filter(a -> a.getStatus() == RecommendedActionStatus.ACTIVE)
@@ -727,7 +600,7 @@ class RecommendedActionsServiceTest {
         }
         stubCachedActions(activeActions, releaseDate);
 
-        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false, true);
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
 
         assertThat(response.getActions()).hasSize(5);
     }
@@ -759,7 +632,7 @@ class RecommendedActionsServiceTest {
         // refresh=true schedules regeneration in the background rather than running it inline (see
         // getCachedOrGenerate) - capture and run the scheduled task ourselves to exercise the same
         // regenerate/merge/persist path this test is actually covering.
-        service.getRecommendedActions(ENTITY_ID, true, true);
+        service.getRecommendedActions(ENTITY_ID, true);
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
         verify(taskScheduler).schedule(taskCaptor.capture(), any(Instant.class));
         taskCaptor.getValue().run();

@@ -9,6 +9,7 @@ import com.aura.service.dto.EntityStatsAvgResponse;
 import com.aura.service.dto.EntityStatsResponse;
 import com.aura.service.dto.MomentumCausalReportResponse;
 import com.aura.service.dto.RecommendedActionsResponse;
+import com.aura.service.enums.RecommendedActionStatus;
 import com.aura.service.dto.SentimentOverTimeResponse;
 import com.aura.service.dto.TodaysHighlightsResponse;
 import com.aura.service.dto.TopSpreaderContentResponse;
@@ -454,7 +455,7 @@ class EntityMarketingReportServiceTest {
         }
 
         @Override
-        public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
+        public RecommendedActionsResponse getAllRecommendedActions(Long entityId, RecommendedActionStatus statusFilter) {
             return null;
         }
     }

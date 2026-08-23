@@ -35,7 +35,6 @@ class DashboardControllerRecommendedActionsTest {
     static class StubRecommendedActionsService extends RecommendedActionsService {
         Long lastEntityId;
         boolean lastRefresh;
-        boolean lastAllPhases;
         RecommendedActionsResponse response;
 
         StubRecommendedActionsService() {
@@ -43,10 +42,9 @@ class DashboardControllerRecommendedActionsTest {
         }
 
         @Override
-        public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh, boolean allPhases) {
+        public RecommendedActionsResponse getRecommendedActions(Long entityId, boolean refresh) {
             lastEntityId = entityId;
             lastRefresh = refresh;
-            lastAllPhases = allPhases;
             return response;
         }
     }
@@ -71,7 +69,7 @@ class DashboardControllerRecommendedActionsTest {
     }
 
     @Test
-    void getRecommendedActions_defaultsRefreshAndAllPhasesToFalse() throws Exception {
+    void getRecommendedActions_defaultsRefreshToFalse() throws Exception {
         service.response = new RecommendedActionsResponse(
                 ENTITY_ID, "Test Movie", 5,
                 List.of(new RecommendedActionItem("test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10,
@@ -88,19 +86,16 @@ class DashboardControllerRecommendedActionsTest {
 
         assertThat(service.lastEntityId).isEqualTo(ENTITY_ID);
         assertThat(service.lastRefresh).isFalse();
-        assertThat(service.lastAllPhases).isFalse();
     }
 
     @Test
-    void getRecommendedActions_passesRefreshAndAllPhasesParams() throws Exception {
+    void getRecommendedActions_passesRefreshParam() throws Exception {
         service.response = new RecommendedActionsResponse(ENTITY_ID, "Test Movie", null, List.of(), Instant.now());
 
         mvc.perform(get("/api/dashboard/{entityId}/recommended-actions", ENTITY_ID)
-                        .param("refresh", "true")
-                        .param("allPhases", "true"))
+                        .param("refresh", "true"))
                 .andExpect(status().isOk());
 
         assertThat(service.lastRefresh).isTrue();
-        assertThat(service.lastAllPhases).isTrue();
     }
 }
