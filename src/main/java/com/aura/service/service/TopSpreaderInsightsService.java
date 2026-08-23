@@ -6,19 +6,24 @@ import com.aura.service.dto.TopSpreaderContentResponse;
 import com.aura.service.dto.TopSpreaderInsightAction;
 import com.aura.service.dto.TopSpreaderInsightsResponse;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.TopSpreaderInsightsCache;
 import com.aura.service.enums.RecommendedActionCategory;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.exception.ResourceNotFoundException;
-import com.aura.service.proxy.TtlCache;
 import com.aura.service.repository.ManagedEntityRepository;
+import com.aura.service.repository.TopSpreaderInsightsCacheRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -29,6 +34,9 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Sends an entity's top-spreader data (see {@link TopSpreaderContentService}) to the LLM to produce
@@ -40,44 +48,135 @@ import java.util.Map;
  * rather than ever being LLM-authored. A spreader with no locally-resolved post content is excluded
  * entirely - there's nothing real to ground a collaboration recommendation in.
  *
- * <p>Unlike {@code RecommendedActionsService}, this is a simple per-request call with no persisted
- * cache/refresh cycle - only a short in-memory {@link TtlCache} (same TTL convention as
- * {@link TopSpreaderLookupService}) to avoid re-billing the LLM on every dashboard reload. A call/parse
- * failure is rethrown rather than silently falling back, per this codebase's convention for a
- * single-shot LLM call (see {@code ConflictBalanceServiceImpl}).
+ * <p>Generation is persisted to {@link TopSpreaderInsightsCache}, keyed by (entityId, language,
+ * spreaderLimit, postsPerSpreader) - the exact dimensions that shape what's sent to the LLM. A request
+ * is served as follows so the LLM's latency never blocks the UI:
+ * <ul>
+ *   <li>No cache row yet: generate synchronously (there's nothing else to return) and persist.</li>
+ *   <li>Cache row younger than {@link #STALENESS_THRESHOLD} (24h): return it as-is, no LLM call.</li>
+ *   <li>Cache row older than that: return it immediately (stale-but-real data beats a blocked UI), and
+ *       kick off a best-effort background regeneration (see {@link #refreshInBackground}) so the next
+ *       request gets fresh data - deduped per cache key via {@link #inFlightRefreshes} so a burst of
+ *       concurrent requests for the same (entity, language, limits) doesn't fire a burst of LLM calls.</li>
+ *   <li>{@code refresh=true}: always regenerates synchronously and persists, bypassing every rule above -
+ *       same override convention as the other Command Center panels (e.g. {@code ai-summary}).</li>
+ * </ul>
+ * A background regeneration's failure (LLM call/parse error) is logged and swallowed rather than
+ * touching the cache row - the previous (stale but real) data is left in place for the next request to
+ * retry against, rather than being wiped out by a transient upstream failure.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TopSpreaderInsightsService {
 
-    private static final Duration CACHE_TTL = Duration.ofMinutes(10);
+    private static final Duration STALENESS_THRESHOLD = Duration.ofHours(24);
     private static final int SAMPLE_CONTENT_LIMIT = 3;
     private static final int SAMPLE_CONTENT_MAX_CHARS = 240;
     private static final String SPREADER_DATA_PLACEHOLDER = "[Spreader Insights Data]";
+    private static final TypeReference<List<TopSpreaderInsightAction>> ACTION_LIST_TYPE = new TypeReference<>() {
+    };
 
     private final TopSpreaderContentService topSpreaderContentService;
     private final ManagedEntityRepository managedEntityRepository;
+    private final TopSpreaderInsightsCacheRepository cacheRepository;
     private final LLMService llmService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
-    private final TtlCache<TopSpreaderInsightsResponse> cache = new TtlCache<>(1024);
+    // Cache keys with a background regeneration already in flight - prevents a burst of concurrent
+    // requests against the same stale cache row from each kicking off their own redundant LLM call.
+    private final Set<String> inFlightRefreshes = ConcurrentHashMap.newKeySet();
 
     @Value("${llm.prompt.generate.top.spreader.insights}")
     private String llmPrompt;
 
+    // Self-injected proxy: refreshInBackground must be invoked through Spring's proxy (not a direct
+    // this.refreshInBackground(...) call) for its @Async advice to actually apply - same convention as
+    // RecommendedActionsService's `self` field. @Lazy avoids the circular-bean chicken/egg problem.
+    @Autowired
+    @Lazy
+    private TopSpreaderInsightsService self;
+
+    public TopSpreaderInsightsService(
+            TopSpreaderContentService topSpreaderContentService,
+            ManagedEntityRepository managedEntityRepository,
+            TopSpreaderInsightsCacheRepository cacheRepository,
+            LLMService llmService,
+            ObjectMapper objectMapper,
+            Clock clock) {
+        this.topSpreaderContentService = topSpreaderContentService;
+        this.managedEntityRepository = managedEntityRepository;
+        this.cacheRepository = cacheRepository;
+        this.llmService = llmService;
+        this.objectMapper = objectMapper;
+        this.clock = clock;
+    }
+
     public TopSpreaderInsightsResponse getInsights(
             Long entityId, String language, int spreaderLimit, int postsPerSpreader, boolean refresh) {
-        String key = entityId + ":" + (language == null ? "" : language.toLowerCase())
-                + ":" + spreaderLimit + ":" + postsPerSpreader;
+        String cacheLanguage = normalizeLanguage(language);
+
         if (!refresh) {
-            TopSpreaderInsightsResponse cached = cache.get(key);
-            if (cached != null) {
-                return cached;
+            Optional<TopSpreaderInsightsCache> cached = cacheRepository
+                    .findByEntityIdAndLanguageAndSpreaderLimitAndPostsPerSpreader(
+                            entityId, cacheLanguage, spreaderLimit, postsPerSpreader);
+            if (cached.isPresent()) {
+                TopSpreaderInsightsCache row = cached.get();
+                TopSpreaderInsightsResponse response = toResponse(row, entityId, language);
+                if (!isStale(row.getGeneratedAt())) {
+                    return response;
+                }
+                triggerBackgroundRefresh(entityId, language, cacheLanguage, spreaderLimit, postsPerSpreader);
+                return response;
             }
         }
 
+        return regenerateAndStore(entityId, language, cacheLanguage, spreaderLimit, postsPerSpreader);
+    }
+
+    private boolean isStale(Instant generatedAt) {
+        return generatedAt.isBefore(clock.instant().minus(STALENESS_THRESHOLD));
+    }
+
+    private void triggerBackgroundRefresh(
+            Long entityId, String language, String cacheLanguage, int spreaderLimit, int postsPerSpreader) {
+        String dedupeKey = cacheKey(entityId, cacheLanguage, spreaderLimit, postsPerSpreader);
+        if (inFlightRefreshes.add(dedupeKey)) {
+            self.refreshInBackground(entityId, language, cacheLanguage, spreaderLimit, postsPerSpreader, dedupeKey);
+        }
+    }
+
+    /**
+     * Best-effort background regeneration for a stale cache row. Never throws (a failure here must not
+     * surface to whichever request happened to trigger it - that request already got its response from
+     * the stale row) and never touches the cache row on failure, so a transient LLM outage doesn't wipe
+     * out otherwise-usable stale data.
+     */
+    @Async
+    public void refreshInBackground(
+            Long entityId, String language, String cacheLanguage, int spreaderLimit, int postsPerSpreader,
+            String dedupeKey) {
+        try {
+            regenerateAndStore(entityId, language, cacheLanguage, spreaderLimit, postsPerSpreader);
+        } catch (Exception e) {
+            log.warn("Background refresh of top-spreader insights failed for entity {} (language={}, " +
+                    "spreaderLimit={}, postsPerSpreader={}) — leaving previous cached data in place",
+                    entityId, language, spreaderLimit, postsPerSpreader, e);
+        } finally {
+            inFlightRefreshes.remove(dedupeKey);
+        }
+    }
+
+    /**
+     * Generates fresh insights and persists them, replacing whatever was cached under this exact key.
+     * {@code @Transactional} because this runs from both the request thread and (via
+     * {@link #refreshInBackground}) a scheduler-managed async thread, which has no request-bound
+     * Hibernate session the way an HTTP request does under open-in-view - same constraint documented on
+     * {@code RecommendedActionsService#refreshOneEntity}.
+     */
+    @Transactional
+    TopSpreaderInsightsResponse regenerateAndStore(
+            Long entityId, String language, String cacheLanguage, int spreaderLimit, int postsPerSpreader) {
         ManagedEntity entity = managedEntityRepository.findById(entityId)
                 .orElseThrow(() -> new ResourceNotFoundException("Entity not found with id: " + entityId));
         TopSpreaderContentResponse content = topSpreaderContentService.getTopSpreaderContent(
@@ -88,8 +187,58 @@ public class TopSpreaderInsightsService {
                 ? new TopSpreaderInsightsResponse(entityId, language, "", List.of(), clock.instant())
                 : generate(entity, entityId, language, candidates);
 
-        cache.put(key, response, CACHE_TTL.toNanos());
+        persist(entityId, cacheLanguage, spreaderLimit, postsPerSpreader, response);
         return response;
+    }
+
+    private void persist(
+            Long entityId, String cacheLanguage, int spreaderLimit, int postsPerSpreader,
+            TopSpreaderInsightsResponse response) {
+        TopSpreaderInsightsCache row = cacheRepository
+                .findByEntityIdAndLanguageAndSpreaderLimitAndPostsPerSpreader(
+                        entityId, cacheLanguage, spreaderLimit, postsPerSpreader)
+                .orElseGet(TopSpreaderInsightsCache::new);
+        row.setEntityId(entityId);
+        row.setLanguage(cacheLanguage);
+        row.setSpreaderLimit(spreaderLimit);
+        row.setPostsPerSpreader(postsPerSpreader);
+        row.setSummary(response.summary());
+        row.setActionsJson(writeActionsJson(response.actions(), entityId));
+        row.setGeneratedAt(response.generatedAt());
+        cacheRepository.save(row);
+    }
+
+    private TopSpreaderInsightsResponse toResponse(TopSpreaderInsightsCache row, Long entityId, String language) {
+        return new TopSpreaderInsightsResponse(
+                entityId, language, row.getSummary(), readActionsJson(row), row.getGeneratedAt());
+    }
+
+    private String writeActionsJson(List<TopSpreaderInsightAction> actions, Long entityId) {
+        try {
+            return objectMapper.writeValueAsString(actions);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize top-spreader insight actions for entity " + entityId, e);
+        }
+    }
+
+    private List<TopSpreaderInsightAction> readActionsJson(TopSpreaderInsightsCache row) {
+        try {
+            return objectMapper.readValue(row.getActionsJson(), ACTION_LIST_TYPE);
+        } catch (Exception e) {
+            log.error("Failed to deserialize cached top-spreader insight actions for entity {}", row.getEntityId(), e);
+            return List.of();
+        }
+    }
+
+    // Same "" sentinel for a null/blank request language TopSpreaderContentService's own no-filter
+    // convention implies, plus lower-cased so "Tamil" and "tamil" share one cache row - they resolve to
+    // the same underlying snapshot via findByEntityIdAndLanguageIgnoreCase.
+    private static String normalizeLanguage(String language) {
+        return (language == null || language.isBlank()) ? "" : language.toLowerCase();
+    }
+
+    private static String cacheKey(Long entityId, String cacheLanguage, int spreaderLimit, int postsPerSpreader) {
+        return entityId + ":" + cacheLanguage + ":" + spreaderLimit + ":" + postsPerSpreader;
     }
 
     /**

@@ -3248,7 +3248,7 @@ GET /api/dashboard/21/top-spreaders/content?language=Tamil&spreaderLimit=5&posts
 
 Follows this platform's "Java computes every number, the LLM only selects and writes prose" split (same convention as [18l](#18l-get-recommended-actions-command-center-recommended-actions-panel)): each spreader with at least one resolved post is ranked by `totalViews` (the only real reach proxy AuraMath provides) and split into thirds — top third `HIGH_IMPACT`, next third `MEDIUM_IMPACT`, rest `LOW_IMPACT` — **before** the LLM ever sees the data. The LLM is given each spreader's impact tier, `totalViews`, average engagement rate, dominant sentiment, and real sample post content, and may only (1) pick up to 5 spreaders worth a collaboration recommendation and (2) write the `action` text for each, grounded in that spreader's real sample content (e.g. music-focused posts suggest a BGM-breakdown collaboration, interview/reaction content suggests an interview or reaction-style one). It never supplies — and its `impact` is never trusted even if it tries — the impact tier; that's always merged back from the server-computed candidate by `spreaderId`. A spreader with no locally-resolved post content is excluded entirely, since there's nothing real to ground a recommendation in.
 
-Generation is cached in memory per (entity, language, spreaderLimit, postsPerSpreader) for 10 minutes to avoid re-billing the LLM on every dashboard load; pass `refresh=true` to force regeneration.
+Generation is persisted per (entity, language, spreaderLimit, postsPerSpreader) so the LLM's latency never blocks the UI: no cached row yet → generates synchronously (nothing else to return); a row younger than 24h → served straight from the database, no LLM call; a row older than 24h → still served immediately as-is, while a regeneration is kicked off in the background to refresh it for the next request (deduped so a burst of concurrent requests for the same key doesn't fire a burst of LLM calls). A failed background regeneration is logged and leaves the previous cached data untouched rather than erroring or blanking the panel. Pass `refresh=true` to bypass all of this and force a synchronous regeneration regardless of the cached row's age.
 
 **Headers:**
 ```
@@ -3262,7 +3262,7 @@ Authorization: Bearer {jwt_token}
 - `language` (optional) - restricts spreaders to this language's snapshot, same as [18r](#18r-get-top-spreaders-content). Omitted: spreaders are deduped across every language the entity is tracked in.
 - `spreaderLimit` (optional, default `10`, 1-50) - max spreaders considered, ranked by AuraMath's `totalViews` descending.
 - `postsPerSpreader` (optional, default `5`, 1-10) - max posts resolved per spreader before impact-tier ranking and LLM grounding.
-- `refresh` (optional, default `false`) - bypass the 10-minute cache and regenerate immediately.
+- `refresh` (optional, default `false`) - bypass the 24h persisted cache and regenerate immediately, synchronously.
 
 **Example Request:**
 ```
