@@ -38,26 +38,27 @@ public class MarketingAggregationService {
 
     public Object getAggregatedTopSpreaders(String language, String industry,
                                             String state, String genre,
-                                            Long entityId, boolean groupByKeyword) {
-        return aggregateByKeyword("top-spreaders", language, industry, state, genre, entityId, groupByKeyword);
+                                            Long entityId, boolean groupByKeyword,
+                                            String platform) {
+        return aggregateByKeyword("top-spreaders", language, industry, state, genre, entityId, groupByKeyword, platform);
     }
 
     public Object getAggregatedViralSeeds(String language, String industry,
                                           String state, String genre,
                                           Long entityId, boolean groupByKeyword) {
-        return aggregateByKeyword("viral-seeds", language, industry, state, genre, entityId, groupByKeyword);
+        return aggregateByKeyword("viral-seeds", language, industry, state, genre, entityId, groupByKeyword, null);
     }
 
     public Object getAggregatedAspectDrivers(String language, String industry,
                                              String state, String genre,
                                              Long entityId, boolean groupByKeyword) {
-        return aggregateByKeyword("aspect-drivers", language, industry, state, genre, entityId, groupByKeyword);
+        return aggregateByKeyword("aspect-drivers", language, industry, state, genre, entityId, groupByKeyword, null);
     }
 
     public Object getAggregatedMovieBuffs(String language, String industry,
                                           String state, String genre,
                                           Long entityId, boolean groupByKeyword) {
-        return aggregateByKeyword("movie-buffs", language, industry, state, genre, entityId, groupByKeyword);
+        return aggregateByKeyword("movie-buffs", language, industry, state, genre, entityId, groupByKeyword, null);
     }
 
     public Object getAggregatedGenreData(String subType, String language, String industry,
@@ -142,7 +143,7 @@ public class MarketingAggregationService {
 
     private Object aggregateByKeyword(String category, String language, String industry,
                                       String state, String genre,
-                                      Long entityId, boolean groupByKeyword) {
+                                      Long entityId, boolean groupByKeyword, String platform) {
         List<EntityKeyword> keywords = findKeywords(language, industry, state, genre, entityId);
         if (keywords.isEmpty()) {
             return groupByKeyword ? Map.of() : List.of();
@@ -157,7 +158,7 @@ public class MarketingAggregationService {
         if (groupByKeyword) {
             Map<String, JsonNode> grouped = new LinkedHashMap<>();
             for (String keyword : distinctKeywords) {
-                JsonNode data = fetchCategoryData(category, keyword);
+                JsonNode data = fetchCategoryData(category, keyword, platform);
                 if (data != null) {
                     grouped.put(keyword, data);
                 }
@@ -168,7 +169,7 @@ public class MarketingAggregationService {
         ArrayNode merged = objectMapper.createArrayNode();
         Set<String> seen = new LinkedHashSet<>();
         for (String keyword : distinctKeywords) {
-            JsonNode data = fetchCategoryData(category, keyword);
+            JsonNode data = fetchCategoryData(category, keyword, platform);
             if (data != null && data.isArray()) {
                 for (JsonNode element : data) {
                     String dedup = deduplicationKey(element);
@@ -186,7 +187,7 @@ public class MarketingAggregationService {
         return merged;
     }
 
-    private JsonNode fetchCategoryData(String category, String keyword) {
+    private JsonNode fetchCategoryData(String category, String keyword, String platform) {
         String upstreamPath = switch (category) {
             case "top-spreaders" -> "/api/marketing/top-50-spreaders/" + encodeSegment(keyword);
             case "viral-seeds" -> "/api/marketing/viral-seeds";
@@ -201,6 +202,10 @@ public class MarketingAggregationService {
         if ("viral-seeds".equals(category)) {
             Map<String, Object> query = new LinkedHashMap<>();
             query.put("keyword", keyword);
+            response = proxy.forwardGet(wrapperPath, upstreamPath, query, true, null);
+        } else if ("top-spreaders".equals(category) && platform != null) {
+            Map<String, Object> query = new LinkedHashMap<>();
+            query.put("platform", platform);
             response = proxy.forwardGet(wrapperPath, upstreamPath, query, true, null);
         } else {
             response = proxy.forwardGet(wrapperPath, upstreamPath, null, true, null);

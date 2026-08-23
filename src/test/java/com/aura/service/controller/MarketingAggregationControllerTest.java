@@ -422,4 +422,44 @@ class MarketingAggregationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1));
     }
+
+    // ------------------------------------------------------------------
+    // Platform filter — forwarded lower-cased to each per-keyword upstream call
+    // ------------------------------------------------------------------
+    @Test
+    void topSpreaders_withPlatform_forwardsLowercasedPlatformToEachKeyword() throws Exception {
+        when(entityRepository.findKeywordsByFilters("tamil", null, null, null, null))
+                .thenReturn(List.of(
+                        new EntityKeyword("karuppu", "media.movie", "Tamil", null, null, null),
+                        new EntityKeyword("surya", "media.celebrity", "Tamil", null, "Kollywood", null)
+                ));
+
+        enqueueJson("[{\"author\":\"user1\"}]");
+        enqueueJson("[{\"author\":\"user2\"}]");
+
+        mvc.perform(get("/api/marketing/aggregate/top-spreaders")
+                        .param("language", "Tamil")
+                        .param("platform", "YouTube"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        RecordedRequest req1 = takeRequest();
+        assertThat(req1.getPath()).isEqualTo("/api/marketing/top-50-spreaders/karuppu?platform=youtube");
+        RecordedRequest req2 = takeRequest();
+        assertThat(req2.getPath()).isEqualTo("/api/marketing/top-50-spreaders/surya?platform=youtube");
+    }
+
+    // ------------------------------------------------------------------
+    // Platform filter — invalid value rejected before any keyword lookup or upstream call
+    // ------------------------------------------------------------------
+    @Test
+    void topSpreaders_invalidPlatform_returns400_withoutUpstreamCall() throws Exception {
+        mvc.perform(get("/api/marketing/aggregate/top-spreaders")
+                        .param("language", "Tamil")
+                        .param("platform", "tiktok"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
+
+        assertThat(upstream.getRequestCount()).isZero();
+    }
 }

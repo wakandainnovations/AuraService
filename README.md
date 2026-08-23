@@ -5343,6 +5343,9 @@ The shape of the `data` payload depends on `groupBy`:
 Authorization: Bearer {jwt_token}
 ```
 
+**Query Parameters:**
+- `platform` (optional) - Restrict results to one platform. One of `x`, `youtube`, `reddit`, `instagram` (case-insensitive). When provided, it is lower-cased and forwarded on every per-keyword upstream call; an unrecognized value returns `400` without calling upstream. Omit to get spreaders across all platforms.
+
 **Example Requests:**
 ```bash
 # All top spreaders for Tamil movies (flat)
@@ -5356,6 +5359,9 @@ GET /api/marketing/aggregate/top-spreaders?entityId=1
 
 # Multiple filters
 GET /api/marketing/aggregate/top-spreaders?language=Telugu&industry=Tollywood
+
+# Restricted to one platform
+GET /api/marketing/aggregate/top-spreaders?language=Tamil&platform=youtube
 ```
 
 **Response (flat, default):**
@@ -5395,7 +5401,7 @@ GET /api/marketing/aggregate/top-spreaders?language=Telugu&industry=Tollywood
 
 **Status Codes:**
 - `200 OK`
-- `400 Bad Request` — no filter provided
+- `400 Bad Request` — no filter provided, or `platform` is not one of `x`, `youtube`, `reddit`, `instagram`
 
 ---
 

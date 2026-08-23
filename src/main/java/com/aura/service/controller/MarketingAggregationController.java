@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Set;
+
 /**
  * Aggregated Intel — a {@link Feature#AGGREGATED_INTEL DIAMOND}-tier feature. Under-tier users are no
  * longer rejected with a {@code 403}; each endpoint answers {@code 200} with an {@link EntitledResponse}
@@ -28,6 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
         description = "Aggregate marketing data across keywords by language, industry, entity, etc.")
 public class MarketingAggregationController {
 
+    private static final Set<String> VALID_SPREADER_PLATFORMS = Set.of("x", "youtube", "reddit", "instagram");
+
     private final MarketingAggregationService service;
     private final EntityAccessService entityAccessService;
     private final EntitlementService entitlementService;
@@ -40,12 +44,14 @@ public class MarketingAggregationController {
             @Parameter(description = "Filter by state") @RequestParam(required = false) String state,
             @Parameter(description = "Filter by genre (e.g. action, drama)") @RequestParam(required = false) String genre,
             @Parameter(description = "Filter by entity ID") @RequestParam(required = false) Long entityId,
-            @Parameter(description = "Group results by keyword") @RequestParam(required = false) String groupBy
+            @Parameter(description = "Group results by keyword") @RequestParam(required = false) String groupBy,
+            @Parameter(description = "Restrict results to one platform: x, youtube, reddit, or instagram") @RequestParam(required = false) String platform
     ) {
         validateAtLeastOneFilter(language, industry, state, genre, entityId);
+        String normalizedPlatform = validatePlatform(platform);
         boolean grouped = "keyword".equalsIgnoreCase(groupBy);
         return entitlementService.evaluate(Feature.AGGREGATED_INTEL, () -> service.getAggregatedTopSpreaders(
-                language, industry, state, genre, entityId, grouped));
+                language, industry, state, genre, entityId, grouped, normalizedPlatform));
     }
 
     @Operation(summary = "Get aggregated viral seeds across matching keywords")
@@ -131,5 +137,16 @@ public class MarketingAggregationController {
         if (entityId != null) {
             entityAccessService.assertOwnedByCurrentUser(entityId);
         }
+    }
+
+    private static String validatePlatform(String platform) {
+        if (platform == null) {
+            return null;
+        }
+        String normalized = platform.toLowerCase();
+        if (!VALID_SPREADER_PLATFORMS.contains(normalized)) {
+            throw new IllegalArgumentException("platform must be one of: x, youtube, reddit, instagram");
+        }
+        return normalized;
     }
 }
