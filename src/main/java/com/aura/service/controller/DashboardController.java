@@ -381,6 +381,14 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    /** Same as {@link #getReach}, computed by joining the four raw platform tables directly on their {@code entity} column. */
+    @GetMapping("/{entityId}/reach-direct")
+    public ResponseEntity<ReachResponse> getReachDirect(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        ReachResponse response = dashboardService.getReachDirect(entityId);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{entityId}/awareness")
     public ResponseEntity<AwarenessResponse> getAwareness(@PathVariable Long entityId) {
         assertOwned(entityId);

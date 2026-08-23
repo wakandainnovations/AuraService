@@ -907,6 +907,21 @@ public class DashboardService {
     }
 
     /**
+     * Same as {@link #getReach}, but computed by joining/unioning the four raw ingestion tables
+     * ({@code x_posts}, {@code instagram_posts}, {@code youtube_comments}, {@code reddit_posts}) directly
+     * on their own {@code entity} column, instead of going through {@code mentions}/{@code mention_entities}.
+     * See {@link com.aura.service.repository.MentionRepository#countDistinctAuthorsDirectByEntityId}.
+     */
+    public ReachResponse getReachDirect(Long entityId) {
+        ManagedEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        long uniqueUsers = mentionRepository.countDistinctAuthorsDirectByEntityId(entityId);
+
+        return new ReachResponse(entityId, entity.getName(), uniqueUsers);
+    }
+
+    /**
      * High/Medium/Low tier for total views, summed across all platforms (X impressions, Reddit subreddit
      * subscribers, Instagram views/engagement, YouTube per-video view counts — see
      * {@link com.aura.service.repository.MentionRepository#findTotalViewsForEntities}), ranked against

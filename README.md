@@ -3104,6 +3104,46 @@ GET /api/dashboard/21/reach
 
 ---
 
+### 18p-i. Get Reach (Direct Table Join)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/reach-direct`
+
+**Description:** Same "unique users" metric as [18p](#18p-get-reach-command-center-reach-panel), computed a different way: instead of reading the pre-linked `mentions`/`mention_entities` tables, this joins/UNIONs the four raw ingestion tables (`x_posts`, `instagram_posts`, `youtube_comments`, `reddit_posts`) directly, each on its own `entity` text column (populated by the ingestion pipeline with the movie/entity name) matched case-insensitively against `managed_entities.name`. Posts/comments with `author_type = 'irrelevant'` (an upstream classifier's judgment that the row isn't really about the entity) are excluded; NULL/blank `author_type` (not yet classified) is still counted.
+
+Because the `entity` column isn't populated for every row that the keyword-based `mentions` linking picks up — and conversely can catch rows `mentions` never linked — this can return a different (often larger) count than [18p](#18p-get-reach-command-center-reach-panel) for the same entity. It returns `0` rather than an error for an entity whose name never appears verbatim (case-insensitive) in any raw table's `entity` column.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Example Request:**
+```
+GET /api/dashboard/21/reach-direct
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "uniqueUsers": 5786
+}
+```
+
+**Response fields:**
+- `uniqueUsers` — count of distinct (non-null) `author` values across `x_posts`, `instagram_posts`, `youtube_comments`, and `reddit_posts` rows whose `entity` column matches this entity's name and whose `author_type` isn't `'irrelevant'`.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ### 18q. Get Awareness (Command Center "Awareness" panel)
 
 **Endpoint:** `GET /api/dashboard/{entityId}/awareness`
