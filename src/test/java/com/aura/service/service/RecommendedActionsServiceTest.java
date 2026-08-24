@@ -657,6 +657,87 @@ class RecommendedActionsServiceTest {
         assertThat(persistedHistorical.getTitle()).isEqualTo("Historical Title");
     }
 
+    // ==================== Auto-Irrelevant: expired pre-release actions once released ====================
+
+    private void regenerateWithHistoricalAction(LocalDate releaseDate, RecommendedActionItem historicalAction)
+            throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(releaseDate)));
+        RecommendedActionsCache existingRow = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(List.of(historicalAction)), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(existingRow));
+        // No fresh candidates this cycle - generate() short-circuits to List.of() without calling the
+        // LLM, so the historical action above only survives via mergeWithHistory's carry-forward.
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of());
+
+        service.getRecommendedActions(ENTITY_ID, true);
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(taskScheduler).schedule(taskCaptor.capture(), any(Instant.class));
+        taskCaptor.getValue().run();
+    }
+
+    private RecommendedActionItem persistedAction(String candidateId) throws Exception {
+        ArgumentCaptor<RecommendedActionsCache> captor = ArgumentCaptor.forClass(RecommendedActionsCache.class);
+        verify(cacheRepository).save(captor.capture());
+        List<RecommendedActionItem> persisted = MAPPER.readValue(
+                captor.getValue().getActionsJson(), new TypeReference<List<RecommendedActionItem>>() {
+                });
+        return persisted.stream().filter(a -> candidateId.equals(a.getCandidateId())).findFirst().orElseThrow();
+    }
+
+    @Test
+    void regenerate_marksExpiredPreReleaseActionIrrelevantOnceMovieHasReleased() throws Exception {
+        // clock fixed at 2026-08-10; releaseDate 30 days earlier means the movie has released.
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11);
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
+                "factor-46-trailer-teaser-timing", RecommendedActionCategory.HIGH_IMPACT,
+                "Optimize Teaser and Trailer Timing", "R", 90, "Teaser/Trailer Timing", -45, -30, "label",
+                List.of(), List.of(), RecommendedActionStatus.ACTIVE);
+        regenerateWithHistoricalAction(releaseDate, teaserTrailer);
+
+        assertThat(persistedAction("factor-46-trailer-teaser-timing").getStatus())
+                .isEqualTo(RecommendedActionStatus.IRRELEVANT);
+    }
+
+    @Test
+    void regenerate_doesNotMarkActionWhoseWindowReachesReleaseDayOrLater() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // released
+        RecommendedActionItem criticalReviews = new RecommendedActionItem(
+                "factor-94-critical-reviews", RecommendedActionCategory.HIGH_IMPACT,
+                "Critical Review Ratings on Aggregators", "R", 80, "Critical Reviews", 0, 7, "label",
+                List.of(), List.of(), RecommendedActionStatus.ACTIVE);
+        regenerateWithHistoricalAction(releaseDate, criticalReviews);
+
+        assertThat(persistedAction("factor-94-critical-reviews").getStatus())
+                .isEqualTo(RecommendedActionStatus.ACTIVE);
+    }
+
+    @Test
+    void regenerate_doesNotOverrideAlreadyDoneStatusEvenIfWindowExpired() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 7, 11); // released
+        RecommendedActionItem doneTeaser = new RecommendedActionItem(
+                "factor-46-trailer-teaser-timing", RecommendedActionCategory.HIGH_IMPACT,
+                "Optimize Teaser and Trailer Timing", "R", 90, "Teaser/Trailer Timing", -45, -30, "label",
+                List.of(), List.of(), RecommendedActionStatus.DONE);
+        regenerateWithHistoricalAction(releaseDate, doneTeaser);
+
+        assertThat(persistedAction("factor-46-trailer-teaser-timing").getStatus())
+                .isEqualTo(RecommendedActionStatus.DONE);
+    }
+
+    @Test
+    void regenerate_doesNotMarkAnythingIrrelevantWhenMovieNotYetReleased() throws Exception {
+        LocalDate releaseDate = LocalDate.of(2026, 9, 9); // clock fixed at 2026-08-10 - not yet released
+        RecommendedActionItem teaserTrailer = new RecommendedActionItem(
+                "factor-46-trailer-teaser-timing", RecommendedActionCategory.HIGH_IMPACT,
+                "Optimize Teaser and Trailer Timing", "R", 90, "Teaser/Trailer Timing", -45, -30, "label",
+                List.of(), List.of(), RecommendedActionStatus.ACTIVE);
+        regenerateWithHistoricalAction(releaseDate, teaserTrailer);
+
+        assertThat(persistedAction("factor-46-trailer-teaser-timing").getStatus())
+                .isEqualTo(RecommendedActionStatus.ACTIVE);
+    }
+
     // ==================== updateActionStatus ====================
 
     @Test

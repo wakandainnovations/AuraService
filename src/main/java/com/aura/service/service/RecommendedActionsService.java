@@ -59,9 +59,10 @@ import java.util.regex.Pattern;
  * over a small priority movie list and {@link #runFullRefreshCycle()} for the steady-state, spaced,
  * all-entities cycle that follows it 24h later. The facts a plan is built from (genre, budget,
  * historical comps) change rarely, so there's no value in re-running the LLM call more than about once
- * a day per entity; what changes daily is only which phase of the plan is "current", which
- * {@link #getRecommendedActions} computes live against {@code entity.releaseDate} on every call rather
- * than baking it into the cached plan.
+ * a day per entity. {@code daysToRelease} on the response is still computed live against {@code
+ * entity.releaseDate} on every call rather than baked into the cached plan, but is purely informational
+ * now - see {@link #getRecommendedActions}. The one release-date-driven state change that does persist
+ * is {@link #markExpiredPreReleaseActionsIrrelevant}, applied once per regeneration cycle.
  */
 @Slf4j
 @Service
@@ -345,8 +346,34 @@ public class RecommendedActionsService {
     private GeneratedContent regenerateAndStore(Long entityId) {
         GeneratedContent generated = generate(entityId);
         GeneratedContent merged = mergeWithHistory(entityId, generated);
+        markExpiredPreReleaseActionsIrrelevant(merged.actions(), merged.daysToReleaseAtGeneration());
         persist(entityId, merged);
         return merged;
+    }
+
+    // Once a movie has released (daysToReleaseAtGeneration > 0 - see todayOffsetFromRelease's sign
+    // convention), an action whose own execution window is entirely pre-release
+    // (windowEndDaysFromRelease < 0, e.g. trailer/teaser timing, first-single timing) is no longer
+    // actionable. Phase 1 candidate generation already stops producing new instances of these once
+    // released (most generators gate on isNotYetReleased), but mergeWithHistory carries a
+    // not-reselected historical action forward unchanged rather than dropping it - without this step,
+    // one generated while a movie was still upcoming would sit ACTIVE forever. This is a one-time,
+    // persisted status transition, so it only ever needs to run once per action, the first regeneration
+    // after release - unlike a transient per-request window filter, nothing has to recompute this on
+    // every read once it's set. Never touches
+    // an action already DONE or already IRRELEVANT - including one the marketing team marked IRRELEVANT
+    // themselves for an unrelated reason - this only moves ACTIVE -> IRRELEVANT, and only for this one
+    // mechanically-determined reason.
+    private static void markExpiredPreReleaseActionsIrrelevant(
+            List<RecommendedActionItem> actions, int daysToReleaseAtGeneration) {
+        if (daysToReleaseAtGeneration <= 0) {
+            return;
+        }
+        for (RecommendedActionItem action : actions) {
+            if (action.getStatus() == RecommendedActionStatus.ACTIVE && action.getWindowEndDaysFromRelease() < 0) {
+                action.setStatus(RecommendedActionStatus.IRRELEVANT);
+            }
+        }
     }
 
     /**
