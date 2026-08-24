@@ -1,6 +1,7 @@
 package com.aura.service.entity;
 
 import com.aura.service.enums.Platform;
+import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.Sentiment;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -64,6 +65,16 @@ public class Mention {
 
     @Column(name = "sentiment_score")
     private Short sentimentScore;
+
+    /**
+     * Which fixed review aspect (music, direction, acting, ...) this post is mainly about — see
+     * {@link ReviewAspectCategory}. Null until {@code ReviewAspectBreakdownService} classifies it;
+     * unlike {@link #sentiment}, this has no upstream ingestion source and is assigned within
+     * AuraService itself.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "review_aspect_category")
+    private ReviewAspectCategory reviewAspectCategory;
 
     /** Links this post to {@code entity}, initializing the set if needed. */
     public void addManagedEntity(ManagedEntity entity) {

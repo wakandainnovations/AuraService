@@ -56,7 +56,7 @@ class DashboardControllerRecommendedActionsTest {
     void setUp() {
         service = new StubRecommendedActionsService();
         DashboardController controller = new DashboardController(
-                null, null, null, null, mock(EntityAccessService.class), null, null, service, null, null);
+                null, null, null, null, mock(EntityAccessService.class), null, null, service, null, null, null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

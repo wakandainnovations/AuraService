@@ -65,7 +65,7 @@ class DashboardControllerCommandCenterPanelsTest {
         );
 
         DashboardController controller = new DashboardController(
-                dashboardService, null, null, null, entityAccessService, null, null, null, null, null);
+                dashboardService, null, null, null, entityAccessService, null, null, null, null, null, null);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())

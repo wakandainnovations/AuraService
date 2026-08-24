@@ -807,4 +807,39 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "ORDER BY cnt DESC",
             nativeQuery = true)
     List<Object[]> findTopicCategoryBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * A bounded, oldest-first batch of this entity's posts not yet classified into
+     * {@link com.aura.service.enums.ReviewAspectCategory} — the backlog
+     * {@code ReviewAspectBreakdownService} works through per LLM call. Bounded by {@code pageable} so
+     * one classification pass never sends an unbounded number of posts to the LLM in a single request.
+     */
+    @Query("SELECT m FROM Mention m WHERE m.reviewAspectCategory IS NULL AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
+            "ORDER BY m.postDate ASC")
+    List<Mention> findUnclassifiedReviewAspectMentions(@Param("entityId") Long entityId, Pageable pageable);
+
+    /**
+     * Post count and average {@code sentiment_score} per {@link com.aura.service.enums.ReviewAspectCategory}
+     * for the "Aspect Sentiment" breakdown panel. Unlike {@link #findTopicCategoryBreakdownForEntity},
+     * this reads the already-classified {@code mentions.review_aspect_category} column directly (no
+     * per-platform union needed — classification is assigned once per {@link Mention} row regardless of
+     * platform) and excludes posts not yet classified, same NULL-exclusion convention as the topic-category
+     * query.
+     */
+    @Query("SELECT m.reviewAspectCategory, COUNT(m), AVG(m.sentimentScore) FROM Mention m " +
+            "WHERE m.reviewAspectCategory IS NOT NULL AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
+            "GROUP BY m.reviewAspectCategory")
+    List<Object[]> findReviewAspectBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Oldest-first, global (not entity-scoped) backlog of posts not yet classified into a
+     * {@link com.aura.service.enums.ReviewAspectCategory} — used by
+     * {@code ReviewAspectBreakdownService#classifyPendingMentions}'s scheduled sweep. Global rather than
+     * per-entity since classification is a property of the post's own content, independent of which
+     * entity(ies) it's linked to, so a post shared by two entities is never classified twice.
+     */
+    @Query("SELECT m FROM Mention m WHERE m.reviewAspectCategory IS NULL ORDER BY m.postDate ASC")
+    List<Mention> findUnclassifiedReviewAspectMentions(Pageable pageable);
 }

@@ -9,6 +9,7 @@ import com.aura.service.service.CommandCenterSummaryService;
 import com.aura.service.service.DashboardService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.RecommendedActionsService;
+import com.aura.service.service.ReviewAspectBreakdownService;
 import com.aura.service.service.TopSpreaderContentService;
 import com.aura.service.service.TopSpreaderInsightsService;
 import com.aura.service.service.UserEntityViewService;
@@ -47,6 +48,7 @@ public class DashboardController {
     private final RecommendedActionsService recommendedActionsService;
     private final TopSpreaderContentService topSpreaderContentService;
     private final TopSpreaderInsightsService topSpreaderInsightsService;
+    private final ReviewAspectBreakdownService reviewAspectBreakdownService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -263,6 +265,22 @@ public class DashboardController {
     public ResponseEntity<TopicCategoryBreakdownResponse> getTopicCategoryBreakdown(@PathVariable Long entityId) {
         assertOwned(entityId);
         TopicCategoryBreakdownResponse response = dashboardService.getTopicCategoryBreakdown(entityId);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Post count and average sentiment score per fixed review aspect (Music/Songs, Direction,
+     * Acting/Cast Performance, Story, Screenplay, Lead Pair, Runtime, First Half, Second Half, Climax,
+     * VFX, Other). {@code refresh=true} additionally classifies this entity's own pending backlog of
+     * not-yet-categorized posts before returning; otherwise relies on the background sweep in
+     * {@link ReviewAspectBreakdownService}.
+     */
+    @GetMapping("/{entityId}/review-aspect-breakdown")
+    public ResponseEntity<ReviewAspectBreakdownResponse> getReviewAspectBreakdown(
+            @PathVariable Long entityId,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        assertOwned(entityId);
+        ReviewAspectBreakdownResponse response = reviewAspectBreakdownService.getBreakdown(entityId, refresh);
         return ResponseEntity.ok(response);
     }
 
