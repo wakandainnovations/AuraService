@@ -730,9 +730,10 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
      * count when it re-sorts this (already-capped) result for display.
      */
     @Query(value = "SELECT ranked.id, ranked.platform, ranked.post_id, ranked.content, ranked.author, " +
-            "ranked.post_date, ranked.sentiment, ranked.permalink, ranked.sentiment_score FROM ( " +
+            "ranked.post_date, ranked.sentiment, ranked.permalink, ranked.sentiment_score, " +
+            "ranked.review_aspect_category FROM ( " +
             "  SELECT m.id, m.platform, m.post_id, m.content, m.author, m.post_date, m.sentiment, " +
-            "         m.permalink, m.sentiment_score, " +
+            "         m.permalink, m.sentiment_score, m.review_aspect_category, " +
             "         ROW_NUMBER() OVER (PARTITION BY m.author ORDER BY v.views DESC NULLS LAST) AS rn " +
             "  FROM mentions m " +
             "  JOIN mention_entities me ON me.mention_id = m.id " +
