@@ -835,6 +835,79 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
     List<Object[]> findReviewAspectBreakdownForEntity(@Param("entityId") Long entityId);
 
     /**
+     * Majority {@code sentiment} label and post-date span per {@link com.aura.service.enums.ReviewAspectCategory},
+     * read straight off {@code mentions} (no per-platform join needed, same as
+     * {@link #findReviewAspectBreakdownForEntity}). {@code MODE() WITHIN GROUP} is Postgres's built-in
+     * "most frequent value" ordered-set aggregate; the date span feeds
+     * {@code ReviewAspectBreakdownService}'s posts-per-day figure for each aspect.
+     */
+    @Query(value = "SELECT m.review_aspect_category, MODE() WITHIN GROUP (ORDER BY m.sentiment), " +
+            "MIN(m.post_date), MAX(m.post_date) FROM mentions m " +
+            "JOIN mention_entities me ON me.mention_id = m.id " +
+            "WHERE me.managed_entity_id = :entityId AND m.review_aspect_category IS NOT NULL " +
+            "GROUP BY m.review_aspect_category",
+            nativeQuery = true)
+    List<Object[]> findReviewAspectSentimentAndDateRangeForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Total views/likes/comments per {@link com.aura.service.enums.ReviewAspectCategory}, for the
+     * "Aspect Sentiment" panel's views/engagement figures. {@code Mention} itself carries none of these
+     * (see {@link #findReviewAspectBreakdownForEntity}'s Javadoc), so this joins the four raw platform
+     * tables the same way {@link #findTotalViewsForEntity} does, reusing its per-platform view proxy and
+     * {@code author_type <> 'irrelevant'} exclusion: X's real {@code views_count}; Reddit's
+     * {@code subreddit_subscribers} counted once per (category, subreddit) rather than once per post, to
+     * avoid inflating a subreddit's reach every time another post in it lands in the same aspect; Instagram's
+     * {@code views} falling back to {@code like_count + comments_count}; YouTube's video {@code view_count}
+     * counted once per (category, video) rather than once per comment. A video whose comments span more than
+     * one aspect has its views counted once per aspect it appears in, not split between them - the same
+     * "no clean per-comment attribution" trade-off {@code findTotalViewsForEntity} accepts, just applied per
+     * category too. Likes use each platform's like-equivalent ({@code likes_count}/{@code score}); comments
+     * use {@code comment_count}/{@code num_comments}/{@code comments_count}/{@code reply_count} - same
+     * columns {@link #findXPostEngagement} and its per-platform siblings read for the spreader-content
+     * engagement rate.
+     */
+    @Query(value = "SELECT category, SUM(views) AS total_views, SUM(likes) AS total_likes, " +
+            "SUM(comments) AS total_comments FROM ( " +
+            "  SELECT m.review_aspect_category AS category, x.views_count AS views, " +
+            "    x.likes_count AS likes, x.comment_count AS comments FROM x_posts x " +
+            "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND m.review_aspect_category IS NOT NULL " +
+            "      AND x.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT m.review_aspect_category AS category, MAX(r.subreddit_subscribers) AS views, " +
+            "    SUM(r.score) AS likes, SUM(r.num_comments) AS comments FROM reddit_posts r " +
+            "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND m.review_aspect_category IS NOT NULL " +
+            "      AND r.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    GROUP BY m.review_aspect_category, r.community_name " +
+            "  UNION ALL " +
+            "  SELECT m.review_aspect_category AS category, " +
+            "    COALESCE(NULLIF(i.views, 0), COALESCE(i.like_count, 0) + COALESCE(i.comments_count, 0)) AS views, " +
+            "    i.like_count AS likes, i.comments_count AS comments FROM instagram_posts i " +
+            "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
+            "    JOIN mention_entities me ON me.mention_id = m.id " +
+            "    WHERE me.managed_entity_id = :entityId AND m.review_aspect_category IS NOT NULL " +
+            "      AND i.author_type IS DISTINCT FROM 'irrelevant' " +
+            "  UNION ALL " +
+            "  SELECT ev.category AS category, yv.view_count AS views, ev.likes AS likes, ev.comments AS comments FROM ( " +
+            "    SELECT m.review_aspect_category AS category, yc.video_id AS video_id, " +
+            "      SUM(yc.likes_count) AS likes, SUM(yc.reply_count) AS comments FROM youtube_comments yc " +
+            "      JOIN mentions m ON m.post_id = yc.id AND m.platform = 'YOUTUBE' " +
+            "      JOIN mention_entities me ON me.mention_id = m.id " +
+            "      WHERE me.managed_entity_id = :entityId AND m.review_aspect_category IS NOT NULL " +
+            "        AND yc.author_type IS DISTINCT FROM 'irrelevant' " +
+            "      GROUP BY m.review_aspect_category, yc.video_id " +
+            "  ) ev " +
+            "  JOIN (SELECT video_id, MAX(view_count) AS view_count FROM youtube_videos GROUP BY video_id) yv " +
+            "    ON yv.video_id = ev.video_id " +
+            ") metrics " +
+            "GROUP BY category",
+            nativeQuery = true)
+    List<Object[]> findReviewAspectViewsAndEngagementForEntity(@Param("entityId") Long entityId);
+
+    /**
      * Oldest-first, global (not entity-scoped) backlog of posts not yet classified into a
      * {@link com.aura.service.enums.ReviewAspectCategory} — used by
      * {@code ReviewAspectBreakdownService#classifyPendingMentions}'s scheduled sweep. Global rather than

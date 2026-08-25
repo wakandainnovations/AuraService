@@ -13,4 +13,8 @@ public class ReviewAspectStat {
     private long totalPosts;
     private Double averageSentimentScore;
     private double sharePct;
+    private String majoritySentiment;
+    private Long totalViews;
+    private Double engagementRate;
+    private double postsPerDay;
 }

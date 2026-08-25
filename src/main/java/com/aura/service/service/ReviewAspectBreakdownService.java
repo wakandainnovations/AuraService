@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -37,7 +39,11 @@ import java.util.Map;
  * Once classified, a post is never re-classified. The breakdown itself is then a plain SQL GROUP BY
  * (see {@code findReviewAspectBreakdownForEntity}) — real per-post {@code sentiment_score} values
  * averaged in the database, never asked of the LLM (see the "LLM never emits numbers" convention: the
- * LLM only ever returns a category label per post id, nothing numeric).
+ * LLM only ever returns a category label per post id, nothing numeric). Per-aspect majority sentiment,
+ * total views, engagement rate, and posts/day are likewise computed entirely in SQL (see
+ * {@code findReviewAspectSentimentAndDateRangeForEntity} and
+ * {@code findReviewAspectViewsAndEngagementForEntity}) and merged onto each {@link ReviewAspectStat} in
+ * {@link #buildBreakdown}.
  *
  * <p>A background sweep ({@link #classifyPendingMentions}) works through the global backlog of
  * not-yet-classified posts every 2 hours — global, not per-entity, since classification is a property
@@ -185,6 +191,14 @@ public class ReviewAspectBreakdownService {
 
     private ReviewAspectBreakdownResponse buildBreakdown(ManagedEntity entity) {
         List<Object[]> rows = mentionRepository.findReviewAspectBreakdownForEntity(entity.getId());
+        Map<String, Object[]> sentimentAndDateRangeByCategory = new HashMap<>();
+        for (Object[] row : mentionRepository.findReviewAspectSentimentAndDateRangeForEntity(entity.getId())) {
+            sentimentAndDateRangeByCategory.put((String) row[0], row);
+        }
+        Map<String, Object[]> viewsAndEngagementByCategory = new HashMap<>();
+        for (Object[] row : mentionRepository.findReviewAspectViewsAndEngagementForEntity(entity.getId())) {
+            viewsAndEngagementByCategory.put((String) row[0], row);
+        }
 
         long totalClassifiedPosts = 0;
         for (Object[] row : rows) {
@@ -197,7 +211,23 @@ public class ReviewAspectBreakdownService {
             long count = ((Number) row[1]).longValue();
             Double averageSentimentScore = row[2] != null ? ((Number) row[2]).doubleValue() : null;
             double sharePct = totalClassifiedPosts > 0 ? (double) count / totalClassifiedPosts * 100.0 : 0.0;
-            aspects.add(new ReviewAspectStat(0, category.name().toLowerCase(), count, averageSentimentScore, sharePct));
+
+            Object[] sentimentAndDateRange = sentimentAndDateRangeByCategory.get(category.name());
+            String majoritySentiment = sentimentAndDateRange != null && sentimentAndDateRange[1] != null
+                    ? sentimentAndDateRange[1].toString().toLowerCase() : null;
+            double postsPerDay = postsPerDay(count, sentimentAndDateRange);
+
+            Object[] viewsAndEngagement = viewsAndEngagementByCategory.get(category.name());
+            Long totalViews = viewsAndEngagement != null && viewsAndEngagement[1] != null
+                    ? ((Number) viewsAndEngagement[1]).longValue() : 0L;
+            long totalLikes = viewsAndEngagement != null && viewsAndEngagement[2] != null
+                    ? ((Number) viewsAndEngagement[2]).longValue() : 0L;
+            long totalComments = viewsAndEngagement != null && viewsAndEngagement[3] != null
+                    ? ((Number) viewsAndEngagement[3]).longValue() : 0L;
+            Double engagementRate = totalViews > 0 ? (totalLikes + totalComments) / (double) totalViews : null;
+
+            aspects.add(new ReviewAspectStat(0, category.name().toLowerCase(), count, averageSentimentScore,
+                    sharePct, majoritySentiment, totalViews, engagementRate, postsPerDay));
         }
         aspects.sort(Comparator.comparingLong(ReviewAspectStat::getTotalPosts).reversed());
         for (int i = 0; i < aspects.size(); i++) {
@@ -205,6 +235,23 @@ public class ReviewAspectBreakdownService {
         }
 
         return new ReviewAspectBreakdownResponse(entity.getId(), entity.getName(), totalClassifiedPosts, aspects);
+    }
+
+    // Posts per day over the category's own first-to-last post span (inclusive), not the entity's whole
+    // tracked history - a burst of Climax posts in the days after release should read as high-frequency
+    // even if the movie itself has been tracked for months.
+    private double postsPerDay(long count, Object[] sentimentAndDateRange) {
+        if (sentimentAndDateRange == null || sentimentAndDateRange[2] == null || sentimentAndDateRange[3] == null) {
+            return count;
+        }
+        Instant first = toInstant(sentimentAndDateRange[2]);
+        Instant last = toInstant(sentimentAndDateRange[3]);
+        long days = Math.max(1, ChronoUnit.DAYS.between(first, last) + 1);
+        return count / (double) days;
+    }
+
+    private Instant toInstant(Object value) {
+        return value instanceof java.sql.Timestamp timestamp ? timestamp.toInstant() : (Instant) value;
     }
 
     private static <T> List<List<T>> partition(List<T> list, int size) {
