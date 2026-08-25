@@ -3352,6 +3352,80 @@ GET /api/dashboard/21/top-spreaders/insights?language=Tamil&spreaderLimit=10&pos
 
 ---
 
+### 18t. Get Review Aspect Breakdown ("Aspect Sentiment" panel)
+
+**Endpoint:** `GET /api/dashboard/{entityId}/review-aspect-breakdown`
+
+**Description:** Ranks the entity's buzz by a fixed set of 12 movie-review aspects — `music_songs`, `direction`, `acting_cast_performance`, `story`, `screenplay`, `lead_pair`, `runtime`, `first_half`, `second_half`, `climax`, `vfx`, `other` — telling the marketing team which part of the movie the audience is actually reacting to (e.g. climax buzz spiking after release, music dominating pre-release). Unlike [18h](#18h-get-topic-category-breakdown-what-aspects-resonate)'s `topic_category` (populated upstream, outside this codebase), this taxonomy has no upstream source: each post is classified by a batched LLM call the first time it's seen, then never re-classified. A global background sweep classifies the not-yet-classified backlog every 2 hours; the default (`refresh=false`) read is always a fast SQL read over already-classified posts.
+
+For each aspect the response also reports the majority sentiment, total views, engagement rate, and posts/day — all computed in SQL, never asked of the LLM (the LLM only ever returns a category label per post id — see the "LLM never emits numbers" convention).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` - ID of the managed entity
+
+**Query Parameters:**
+- `refresh` (optional, default `false`) - before reading, synchronously classifies up to 200 of this entity's own not-yet-classified posts (oldest first), instead of waiting for the next scheduled sweep.
+
+**Example Request:**
+```
+GET /api/dashboard/21/review-aspect-breakdown?refresh=true
+```
+
+**Response:**
+```json
+{
+  "entityId": 21,
+  "entityName": "Madhavan",
+  "totalClassifiedPosts": 298,
+  "aspects": [
+    {
+      "rank": 1,
+      "category": "climax",
+      "totalPosts": 82,
+      "averageSentimentScore": 0.61,
+      "sharePct": 27.52,
+      "majoritySentiment": "positive",
+      "totalViews": 154200,
+      "engagementRate": 0.084,
+      "postsPerDay": 6.3
+    },
+    {
+      "rank": 2,
+      "category": "music_songs",
+      "totalPosts": 74,
+      "averageSentimentScore": 0.55,
+      "sharePct": 24.83,
+      "majoritySentiment": "positive",
+      "totalViews": 210500,
+      "engagementRate": 0.071,
+      "postsPerDay": 3.1
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `totalClassifiedPosts` — sum of `totalPosts` across all returned aspects (every classified post linked to the entity; posts still awaiting classification aren't counted).
+- `aspects` — ranked highest-`totalPosts`-first; empty when the entity has no classified posts yet.
+- `aspects[].averageSentimentScore` — real per-post `sentiment_score` averaged in the database for that aspect; `null` if no post in the aspect has a score.
+- `aspects[].sharePct` — `totalPosts` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+- `aspects[].majoritySentiment` — the most common `sentiment` (`positive`/`negative`/`neutral`) among that aspect's posts; `null` only if the aspect has no posts with a sentiment (shouldn't happen in practice, since `sentiment` is required on every post).
+- `aspects[].totalViews` — summed across all platforms using the same per-platform view proxy as the Awareness panel (X's real view count; Reddit's subreddit subscriber count, once per subreddit; Instagram's `views` falling back to likes+comments; YouTube's video view count, once per video) — `0` if none of the aspect's posts resolve to a view count.
+- `aspects[].engagementRate` — `(totalLikes + totalComments) / totalViews` for the aspect; `null` when `totalViews` is 0.
+- `aspects[].postsPerDay` — `totalPosts` divided by the number of days between that aspect's own first and last post (inclusive) — deliberately scoped to the aspect's own activity window, not the entity's whole tracked history, so a short burst of posts (e.g. climax reactions right after release) reads as high-frequency.
+
+**Status Code:** `200 OK`
+
+**Error Responses:**
+- `404 Not Found` — No such entity, or the entity is owned by another user (indistinguishable by design).
+
+---
+
 ## Interaction APIs
 
 ### 19. Generate Reply
