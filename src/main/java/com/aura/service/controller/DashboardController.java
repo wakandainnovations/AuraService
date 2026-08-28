@@ -3,6 +3,7 @@ package com.aura.service.controller;
 import com.aura.service.dto.*;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.RecommendedActionStatus;
+import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.service.AudiencePulseAspectsService;
 import com.aura.service.service.CommandCenterSummaryService;
@@ -413,10 +414,24 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * Also the spot-check/drill-down path for every per-post classification breakdown panel
+     * (review-aspect, topic-category, content-intent, author-type, audience-pulse region): pass the
+     * exact {@code category}/{@code region} value shown in the corresponding breakdown response to
+     * list the underlying posts and their raw {@code content}, so a caller can verify the classifier
+     * rather than trust the aggregate blindly. {@code topicCategory}/{@code contentIntent}/
+     * {@code authorType}/{@code region} match case-insensitively since that taxonomy is
+     * upstream-owned, not a fixed enum in this codebase.
+     */
     @GetMapping("/{entityId}/mentions")
     public ResponseEntity<Page<MentionResponse>> getMentions(
             @PathVariable Long entityId,
             @RequestParam(required = false) Platform platform,
+            @RequestParam(required = false) ReviewAspectCategory reviewAspectCategory,
+            @RequestParam(required = false) String topicCategory,
+            @RequestParam(required = false) String contentIntent,
+            @RequestParam(required = false) String authorType,
+            @RequestParam(required = false) String region,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "" + Integer.MAX_VALUE) int size,
             @RequestParam(required = false) Long ownerId,
@@ -426,7 +441,7 @@ public class DashboardController {
         // non-admin passing ownerId is rejected (403). Otherwise this is the normal ownership check.
         entityAccessService.assertAccessible(entityId, ownerId);
         Page<MentionResponse> response = dashboardService.getMentions(
-                entityId, platform, page, size
+                entityId, platform, reviewAspectCategory, topicCategory, contentIntent, authorType, region, page, size
         );
         if (principal != null) {
             userEntityViewService.recordView(principal.getUsername(), entityId);

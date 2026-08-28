@@ -7,6 +7,7 @@ import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.enums.Platform;
+import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.enums.TimePeriod;
 import com.aura.service.repository.CheckpointRepository;
@@ -586,18 +587,29 @@ public class DashboardService {
     public Page<MentionResponse> getMentions(
             Long entityId,
             Platform platform,
+            ReviewAspectCategory reviewAspectCategory,
+            String topicCategory,
+            String contentIntent,
+            String authorType,
+            String region,
             int page,
             int size
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("post_date").descending());
-        
+
         List<Long> entityIds = (entityId == null) ? new ArrayList<>() : Collections.singletonList(entityId);
-        
+
         String platformName = (platform == null) ? null : platform.name();
-        
+        String reviewAspectCategoryName = (reviewAspectCategory == null) ? null : reviewAspectCategory.name();
+
         Page<Mention> mentions = mentionRepository.findFilteredMentions(
                 entityIds,
                 platformName,
+                reviewAspectCategoryName,
+                topicCategory,
+                contentIntent,
+                authorType,
+                region,
                 pageable
         );
 

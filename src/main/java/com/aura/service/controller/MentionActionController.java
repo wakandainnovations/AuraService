@@ -6,6 +6,8 @@ import com.aura.service.dto.EscalateCrisisResponse;
 import com.aura.service.dto.MentionActionLogEntry;
 import com.aura.service.dto.MentionResponse;
 import com.aura.service.dto.MobilizeAlliesResponse;
+import com.aura.service.dto.OverrideReviewAspectRequest;
+import com.aura.service.dto.OverrideReviewAspectResponse;
 import com.aura.service.dto.PostReplyRequest;
 import com.aura.service.dto.PostReplyResponse;
 import com.aura.service.entity.CrisisPlan;
@@ -14,17 +16,20 @@ import com.aura.service.entity.Mention;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.ReplyTemplate;
+import com.aura.service.entity.ReviewAspectOverride;
 import com.aura.service.entity.User;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.repository.ReviewAspectOverrideRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.ImpressionsResolver;
 import com.aura.service.service.LLMService;
 import com.aura.service.service.MobilizeAlliesService;
 import com.aura.service.service.ReplyTemplateService;
+import com.aura.service.service.ReviewAspectBreakdownService;
 import com.aura.service.service.SocialMediaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -53,6 +58,7 @@ public class MentionActionController {
     private final ReplyDraftRepository replyDraftRepository;
     private final CrisisPlanRepository crisisPlanRepository;
     private final MobilizeActionRepository mobilizeActionRepository;
+    private final ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private final UserRepository userRepository;
     private final MobilizeAlliesService mobilizeAlliesService;
     private final ReplyTemplateService replyTemplateService;
@@ -89,11 +95,13 @@ public class MentionActionController {
         List<ReplyDraft> drafts = replyDraftRepository.findByMentionId(mentionId);
         List<CrisisPlan> plans = crisisPlanRepository.findByMentionId(mentionId);
         List<MobilizeAction> mobilizes = mobilizeActionRepository.findByMentionId(mentionId);
+        List<ReviewAspectOverride> overrides = reviewAspectOverrideRepository.findByMentionId(mentionId);
 
         Set<Long> userIds = new HashSet<>();
         for (ReplyDraft d : drafts) userIds.add(d.getUserId());
         for (CrisisPlan p : plans) userIds.add(p.getCreatedBy());
         for (MobilizeAction m : mobilizes) userIds.add(m.getUserId());
+        for (ReviewAspectOverride o : overrides) userIds.add(o.getUserId());
 
         Map<Long, String> usernames = new java.util.HashMap<>();
         for (User u : userRepository.findAllById(userIds)) {
@@ -101,7 +109,7 @@ public class MentionActionController {
         }
 
         List<MentionActionLogEntry> entries = new ArrayList<>(
-                drafts.size() + plans.size() + mobilizes.size());
+                drafts.size() + plans.size() + mobilizes.size() + overrides.size());
         for (ReplyDraft d : drafts) {
             entries.add(MentionActionLogEntry.builder()
                     .type(MentionActionLogEntry.Type.REPLY_DRAFT)
@@ -129,6 +137,17 @@ public class MentionActionController {
                     .actor(usernames.get(m.getUserId()))
                     .createdAt(m.getCreatedAt())
                     .allyCount(m.getAllyCount())
+                    .build());
+        }
+        for (ReviewAspectOverride o : overrides) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.REVIEW_ASPECT_OVERRIDE)
+                    .id(o.getId())
+                    .actor(usernames.get(o.getUserId()))
+                    .createdAt(o.getCreatedAt())
+                    .previousCategory(o.getPreviousCategory())
+                    .newCategory(o.getNewCategory())
+                    .reason(o.getReason())
                     .build());
         }
 
@@ -275,6 +294,50 @@ public class MentionActionController {
         MobilizeAlliesResponse response = mobilizeAlliesService.getOrComputeAllies(mention);
         recordMobilize(mention, entity, user, response.getAllies().size());
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Human correction of {@link Mention#getReviewAspectCategory()} — the fix for a misclassification
+     * spotted via the drill-down filters on {@code GET /api/dashboard/{entityId}/mentions}. Unlike
+     * {@link ReviewAspectBreakdownService}'s background sweep, this always overwrites the current
+     * value (including an LLM-assigned one), and every override is recorded so the correction is
+     * itself auditable via {@link #listActions}.
+     */
+    @PostMapping("/override-review-aspect")
+    public ResponseEntity<OverrideReviewAspectResponse> overrideReviewAspect(
+            @PathVariable("mentionId") Long mentionId,
+            @Valid @RequestBody OverrideReviewAspectRequest request,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        Mention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
+            return ResponseEntity.notFound().build();
+        }
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
+        User user = requireUser(principal);
+
+        var previousCategory = mention.getReviewAspectCategory();
+        mention.setReviewAspectCategory(request.getCategory());
+        mention = mentionRepository.save(mention);
+
+        Instant createdAt = Instant.now();
+        ReviewAspectOverride override = reviewAspectOverrideRepository.save(ReviewAspectOverride.builder()
+                .mentionId(mention.getId())
+                .entityId(entity.getId())
+                .userId(user.getId())
+                .previousCategory(previousCategory)
+                .newCategory(request.getCategory())
+                .reason(request.getReason())
+                .createdAt(createdAt)
+                .build());
+
+        return ResponseEntity.ok(new OverrideReviewAspectResponse(
+                toMentionResponse(mention),
+                override.getId(),
+                previousCategory,
+                request.getCategory(),
+                createdAt
+        ));
     }
 
     private void recordMobilize(Mention mention, ManagedEntity entity, User user, int allyCount) {

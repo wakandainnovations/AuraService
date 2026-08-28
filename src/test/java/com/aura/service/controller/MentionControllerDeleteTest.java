@@ -8,6 +8,7 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.repository.ReviewAspectOverrideRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MentionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +31,7 @@ class MentionControllerDeleteTest {
     private ReplyDraftRepository replyDraftRepository;
     private MobilizeActionRepository mobilizeActionRepository;
     private CrisisPlanRepository crisisPlanRepository;
+    private ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private EntityAccessService entityAccess;
     private MockMvc mvc;
 
@@ -40,6 +42,7 @@ class MentionControllerDeleteTest {
         replyDraftRepository = mock(ReplyDraftRepository.class);
         mobilizeActionRepository = mock(MobilizeActionRepository.class);
         crisisPlanRepository = mock(CrisisPlanRepository.class);
+        reviewAspectOverrideRepository = mock(ReviewAspectOverrideRepository.class);
         entityAccess = mock(EntityAccessService.class);
 
         MentionService service = new MentionService(
@@ -48,6 +51,7 @@ class MentionControllerDeleteTest {
                 replyDraftRepository,
                 mobilizeActionRepository,
                 crisisPlanRepository,
+                reviewAspectOverrideRepository,
                 entityAccess);
         MentionController controller = new MentionController(service);
 
@@ -78,6 +82,7 @@ class MentionControllerDeleteTest {
         verify(replyDraftRepository).deleteByMentionId(1L);
         verify(mobilizeActionRepository).deleteByMentionId(1L);
         verify(crisisPlanRepository).deleteByMentionId(1L);
+        verify(reviewAspectOverrideRepository).deleteByMentionId(1L);
         verify(mentionRepository).unlinkMentionFromEntities(1L);
         verify(mentionRepository).delete(m);
     }
@@ -94,5 +99,6 @@ class MentionControllerDeleteTest {
         verify(replyDraftRepository, never()).deleteByMentionId(anyLong());
         verify(mobilizeActionRepository, never()).deleteByMentionId(anyLong());
         verify(crisisPlanRepository, never()).deleteByMentionId(anyLong());
+        verify(reviewAspectOverrideRepository, never()).deleteByMentionId(anyLong());
     }
 }

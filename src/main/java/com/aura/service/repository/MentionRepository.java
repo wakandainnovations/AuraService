@@ -239,18 +239,56 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "(SELECT e FROM m.managedEntities e WHERE e.type = 'MOVIE')")
     List<Mention> findMovieLinkedMentionsByAuthor(@Param("author") String author);
 
+    /**
+     * {@code topicCategory}/{@code contentIntent}/{@code authorType}/{@code region} filter on the
+     * same upstream per-platform columns as {@link #findTopicCategoryBreakdownForEntity}/
+     * {@link #findContentIntentBreakdownForEntity}/{@link #findAuthorTypeBreakdownForEntity}/
+     * {@link #findRegionBuzzForEntity} — the left joins to the four raw ingestion tables resolve
+     * each mention's own row (keyed on {@code post_id}+{@code platform}, so at most one join
+     * matches per mention, no row duplication) purely so its classification column can be read;
+     * {@code COALESCE} picks whichever platform-specific join actually matched. This is the
+     * drill-down counterpart to those aggregate breakdowns (Audience Pulse included) and to
+     * {@code review_aspect_category} filtering — lets a caller go from "340 posts tagged
+     * Screenplay" or "62 posts from Karnataka" to the actual posts, to spot-check the classifier
+     * rather than trust the aggregate blindly. Matched case-insensitively since the upstream
+     * taxonomy isn't a Java enum (unlike {@code review_aspect_category}, it has no fixed/documented
+     * value set this codebase owns).
+     */
     @Query(value = "SELECT DISTINCT m.* FROM mentions m " +
-           "LEFT JOIN mention_entities me ON me.mention_id = m.id WHERE " +
-           "(:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
-           "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR))",
+           "LEFT JOIN mention_entities me ON me.mention_id = m.id " +
+           "LEFT JOIN x_posts x ON x.id = m.post_id AND m.platform = 'X' " +
+           "LEFT JOIN youtube_comments y ON y.id = m.post_id AND m.platform = 'YOUTUBE' " +
+           "LEFT JOIN reddit_posts r ON r.id = m.post_id AND m.platform = 'REDDIT' " +
+           "LEFT JOIN instagram_posts i ON i.id = m.post_id AND m.platform = 'INSTAGRAM' " +
+           "WHERE (:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
+           "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR)) " +
+           "AND (CAST(:reviewAspectCategory AS VARCHAR) IS NULL OR m.review_aspect_category = CAST(:reviewAspectCategory AS VARCHAR)) " +
+           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
+           "AND (CAST(:contentIntent AS VARCHAR) IS NULL OR LOWER(COALESCE(x.content_intent, y.content_intent, r.content_intent, i.content_intent)) = LOWER(CAST(:contentIntent AS VARCHAR))) " +
+           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
+           "AND (CAST(:region AS VARCHAR) IS NULL OR LOWER(COALESCE(x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR)))",
            countQuery = "SELECT count(DISTINCT m.id) FROM mentions m " +
-           "LEFT JOIN mention_entities me ON me.mention_id = m.id WHERE " +
-           "(:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
-           "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR))",
+           "LEFT JOIN mention_entities me ON me.mention_id = m.id " +
+           "LEFT JOIN x_posts x ON x.id = m.post_id AND m.platform = 'X' " +
+           "LEFT JOIN youtube_comments y ON y.id = m.post_id AND m.platform = 'YOUTUBE' " +
+           "LEFT JOIN reddit_posts r ON r.id = m.post_id AND m.platform = 'REDDIT' " +
+           "LEFT JOIN instagram_posts i ON i.id = m.post_id AND m.platform = 'INSTAGRAM' " +
+           "WHERE (:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
+           "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR)) " +
+           "AND (CAST(:reviewAspectCategory AS VARCHAR) IS NULL OR m.review_aspect_category = CAST(:reviewAspectCategory AS VARCHAR)) " +
+           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
+           "AND (CAST(:contentIntent AS VARCHAR) IS NULL OR LOWER(COALESCE(x.content_intent, y.content_intent, r.content_intent, i.content_intent)) = LOWER(CAST(:contentIntent AS VARCHAR))) " +
+           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
+           "AND (CAST(:region AS VARCHAR) IS NULL OR LOWER(COALESCE(x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR)))",
            nativeQuery = true)
     Page<Mention> findFilteredMentions(
         @Param("entityIds") List<Long> entityIds,
         @Param("platform") String platform,
+        @Param("reviewAspectCategory") String reviewAspectCategory,
+        @Param("topicCategory") String topicCategory,
+        @Param("contentIntent") String contentIntent,
+        @Param("authorType") String authorType,
+        @Param("region") String region,
         Pageable pageable
     );
 

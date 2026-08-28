@@ -1928,13 +1928,22 @@ Authorization: Bearer {jwt_token}
 
 **Query Parameters:**
 - `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
+- `reviewAspectCategory` - Filter to posts classified into this [Review Aspect Breakdown](#18t-get-review-aspect-breakdown-aspect-sentiment-panel) category (e.g. `SCREENPLAY`). Matches `mentions.review_aspect_category` exactly (a real enum) — an unrecognized value is rejected with `400 Bad Request`. Optional.
+- `topicCategory` - Filter to posts classified into this [Topic Category Breakdown](#18h-get-topic-category-breakdown-what-aspects-resonate) category (e.g. `music_songs`). Matched case-insensitively against whichever raw ingestion table (`x_posts`/`youtube_comments`/`reddit_posts`/`instagram_posts`) the post came from, since this taxonomy is populated upstream and isn't a fixed enum in this codebase — pass the exact `category` string a breakdown response returned. Optional.
+- `contentIntent` - Filter to posts classified into this [Content Intent Breakdown](#18g-get-content-intent-breakdown-what-kind-of-buzz) category (e.g. `official_promo`). Same upstream, case-insensitive matching as `topicCategory`. Optional.
+- `authorType` - Filter to posts classified into this [Author Type Breakdown](#18f-get-author-type-breakdown-whos-talking) category (e.g. `verified_celebrity_influencer`). Same upstream, case-insensitive matching as `topicCategory`. Optional.
+- `region` - Filter to posts from this region, as returned by [Get Audience Pulse](#18d-get-audience-pulse-top-regions-by-buzz) (e.g. `Tamil Nadu`). Matched against the upstream `predicted_region` column, same case-insensitive convention as `topicCategory`. Optional.
 - `page` - Page number (default: 0)
 - `size` - Page size (default: all mentions are returned if not specified)
 - `ownerId` — (admin only) require `entityId` to belong to this user; a non-admin who supplies it gets `403 Forbidden`. Optional.
 
+**Spot-checking a classification breakdown:** every per-post classification panel (review-aspect, topic-category, content-intent, author-type, audience-pulse region) reports only aggregates. To verify the underlying posts rather than trust the aggregate blindly, call this endpoint with the matching filter and the exact `category`/`region` value the breakdown returned — e.g. after seeing `{"category": "screenplay", "totalPosts": 340, ...}` from Review Aspect Breakdown, call `GET /api/dashboard/21/mentions?reviewAspectCategory=SCREENPLAY` to read those 340 posts' actual `content`. If a post there is wrong, correct it with [Override Review Aspect Category](#26e-override-review-aspect-category) (review-aspect only — `topicCategory`/`contentIntent`/`authorType`/`region` are populated upstream, outside this codebase, and can't be corrected here).
+
 **Example Request:**
 ```
 GET /api/dashboard/1/mentions?platform=X&page=0&size=5
+GET /api/dashboard/1/mentions?reviewAspectCategory=SCREENPLAY&page=0&size=20
+GET /api/dashboard/1/mentions?region=Tamil%20Nadu&page=0&size=20
 ```
 
 **Response:**
@@ -2373,6 +2382,8 @@ GET /api/dashboard/21/audience-pulse
 - `regions[].rank` — 1-based position after sorting by `mentionCount` descending.
 - `regions[].mentionCount` — raw post/comment count for that region (buzz), summed across all four platforms.
 - `regions[].sharePct` — `mentionCount` as a percentage of `totalMentions` (0 when `totalMentions` is 0).
+
+**Spot-checking a region:** this endpoint reports only aggregates. To verify the underlying posts for a region rather than trust the count blindly, call [Get Filtered Mentions](#16-get-filtered-mentions) with the exact `region` string returned above, e.g. `GET /api/dashboard/21/mentions?region=Tamil%20Nadu` to read the 96 posts behind the Tamil Nadu row. Matched case-insensitively against the same upstream `predicted_region` column — there's no correction endpoint for it, since (like `topicCategory`/`contentIntent`/`authorType`) it's populated outside this codebase.
 
 **Status Code:** `200 OK`
 
@@ -3866,16 +3877,17 @@ Per-mention actions that wrap the LLM and social-media services into auditable, 
 - **Escalate to crisis** generates a crisis-management plan via `LLMService.generateCrisisPlan` using the mention's content as the crisis description, and persists a `CrisisPlan` row attributed to the calling user.
 - **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes. Every call (including cache hits) persists a `MobilizeAction` row attributed to the calling user so the action log can show prior mobilize attempts.
 - **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The report is then forwarded to a per-platform moderation strategy (`AbuseReportDispatcher`) chosen from the mention's platform (X, Reddit, YouTube, Instagram); the strategy returns an external ticket reference that is stamped onto `externalRef`. Platform strategies are stubs today (they log and return a fake ticket id) — the real platform APIs (Reddit `/api/report`, X media moderation endpoints, etc.) are plugged into those strategies later.
+- **Override review aspect category** lets a human correct a misclassified [`reviewAspectCategory`](#18t-get-review-aspect-breakdown-aspect-sentiment-panel) — the fix for a bad post spotted via the [`reviewAspectCategory` filter](#16-get-filtered-mentions) on `GET /api/dashboard/{entityId}/mentions`. Unlike the background classification sweep, this always overwrites the current value (LLM-assigned or not), and every override persists a `ReviewAspectOverride` row so the correction itself is auditable via List actions.
 
 Every action response except **Report abuse** includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch; Report abuse returns the persisted `AbuseReport` directly.
 
-> **Ownership:** Every per-mention route is scoped to the owner of the entity the mention belongs to. If the mention does not exist, the route returns `404 Not Found`; if it exists but its entity is owned by another user, it also returns `404 Not Found` (the two are indistinguishable so existence is never leaked). This applies to list actions, draft/post reply, escalate, mobilize, report abuse, and delete.
+> **Ownership:** Every per-mention route is scoped to the owner of the entity the mention belongs to. If the mention does not exist, the route returns `404 Not Found`; if it exists but its entity is owned by another user, it also returns `404 Not Found` (the two are indistinguishable so existence is never leaked). This applies to list actions, draft/post reply, escalate, mobilize, override review aspect, report abuse, and delete.
 
 ### 22. List Mention Actions
 
 **Endpoint:** `GET /api/mentions/{mentionId}/actions`
 
-**Description:** Return every `ReplyDraft`, `CrisisPlan`, and `MobilizeAction` row recorded for the mention, merged into a single timeline sorted by `createdAt` descending (newest first). Each row carries the acting user's username so the UI can show "you already drafted a reply 2h ago" and prevent users from double-acting.
+**Description:** Return every `ReplyDraft`, `CrisisPlan`, `MobilizeAction`, and `ReviewAspectOverride` row recorded for the mention, merged into a single timeline sorted by `createdAt` descending (newest first). Each row carries the acting user's username so the UI can show "you already drafted a reply 2h ago" and prevent users from double-acting.
 
 **Headers:**
 ```
@@ -3927,19 +3939,37 @@ GET /api/mentions/9123/actions
     "text": "We hear you, and we're sorry the film didn't land for you...",
     "postedAt": "2026-05-21T09:05:00Z",
     "planText": null,
-    "allyCount": null
+    "allyCount": null,
+    "previousCategory": null,
+    "newCategory": null,
+    "reason": null
+  },
+  {
+    "type": "REVIEW_ASPECT_OVERRIDE",
+    "id": 44,
+    "actor": "ops_user",
+    "createdAt": "2026-05-21T12:00:00Z",
+    "draftStatus": null,
+    "text": null,
+    "postedAt": null,
+    "planText": null,
+    "allyCount": null,
+    "previousCategory": "STORY",
+    "newCategory": "SCREENPLAY",
+    "reason": "actually about the screenplay, not the story"
   }
 ]
 ```
 
 **Response fields:**
-- `type` — one of `REPLY_DRAFT`, `CRISIS_PLAN`, `MOBILIZE`.
+- `type` — one of `REPLY_DRAFT`, `CRISIS_PLAN`, `MOBILIZE`, `REVIEW_ASPECT_OVERRIDE`.
 - `id` — primary key of the underlying row (e.g. the `ReplyDraft.id`).
 - `actor` — username of the user who triggered the action (resolved from `User.id`). May be `null` if the user record was hard-deleted.
 - `createdAt` — when the action was recorded (sort key).
 - `draftStatus`, `text`, `postedAt` — set only for `REPLY_DRAFT` rows. `draftStatus` is `DRAFT` or `POSTED`; `postedAt` is `null` for unposted drafts.
 - `planText` — set only for `CRISIS_PLAN` rows; the full generated plan body.
 - `allyCount` — set only for `MOBILIZE` rows; number of allies returned by that call (`0` if no keywords or no positive supporters matched).
+- `previousCategory`, `newCategory`, `reason` — set only for `REVIEW_ASPECT_OVERRIDE` rows. `previousCategory` is `null` if the post was still unclassified when the override was made; `reason` is the optional free-text note the correcting user supplied.
 
 **Notes:**
 - Each `ReplyDraft` is a single row even after it's been posted — the draft creation and the subsequent post are not separate timeline entries. Use `postedAt`/`draftStatus` to distinguish.
@@ -4292,7 +4322,7 @@ GET /api/mentions/9123/abuse-reports
 
 **Endpoint:** `DELETE /api/mentions/{mentionId}`
 
-**Description:** Permanently remove a mention from the `mentions` table. Intended for purging **false-positive mentions** — posts that were attributed to an entity but should not have been (e.g. a post that slipped past sentiment scoring with a non-zero sentiment value despite being irrelevant). The delete also cleans up every record that hangs off the mention in the same transaction — abuse reports, reply drafts, mobilize actions, and crisis plans filed against it — so no orphaned rows remain. This is a hard delete and cannot be undone.
+**Description:** Permanently remove a mention from the `mentions` table. Intended for purging **false-positive mentions** — posts that were attributed to an entity but should not have been (e.g. a post that slipped past sentiment scoring with a non-zero sentiment value despite being irrelevant). The delete also cleans up every record that hangs off the mention in the same transaction — abuse reports, reply drafts, mobilize actions, crisis plans, and [review-aspect overrides](#26e-override-review-aspect-category) filed against it — so no orphaned rows remain. This is a hard delete and cannot be undone.
 
 **Headers:**
 ```
@@ -4385,6 +4415,79 @@ GET /api/abuse-reports?status=SUBMITTED
 - `mention` — summary of the reported mention (`id`, `author`, `text`, `platform`, `permalink`); `null` if the mention has since been deleted.
 
 **Status Code:** `200 OK`
+
+---
+
+### 26e. Override Review Aspect Category
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/override-review-aspect`
+
+**Description:** Human correction of a mention's [`reviewAspectCategory`](#18t-get-review-aspect-breakdown-aspect-sentiment-panel) — the fix for a misclassification spotted via the [`reviewAspectCategory` filter](#16-get-filtered-mentions) on `GET /api/dashboard/{entityId}/mentions`. Unlike the background classification sweep (which never re-touches a post once classified), this endpoint always overwrites the current value, whether it was LLM-assigned or previously overridden. Every call persists a `ReviewAspectOverride` row — the previous category, the new category, who made the change, an optional free-text reason, and a timestamp — so the correction itself shows up in [List Mention Actions](#22-list-mention-actions) rather than silently replacing the LLM's answer.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID whose review-aspect classification is being corrected
+
+**Request Body:**
+```json
+{
+  "category": "SCREENPLAY",
+  "reason": "actually about the screenplay, not the story"
+}
+```
+
+**Request fields:**
+- `category` *(required)* — the correct aspect. One of `MUSIC_SONGS`, `DIRECTION`, `ACTING_CAST_PERFORMANCE`, `STORY`, `SCREENPLAY`, `LEAD_PAIR`, `RUNTIME`, `FIRST_HALF`, `SECOND_HALF`, `CLIMAX`, `VFX`, `OTHER`. An unrecognized value is rejected with `400 Bad Request`.
+- `reason` *(optional)* — free-text note on why the prior classification was wrong; stored on the audit row and shown in the action history.
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/override-review-aspect
+```
+
+**Response:**
+```json
+{
+  "mention": {
+    "id": 9123,
+    "managedEntityId": 1,
+    "platform": "X",
+    "postId": "tweet_12345",
+    "content": "the writing in the second act really falls apart",
+    "author": "fan42",
+    "postDate": "2026-05-21T11:50:00Z",
+    "sentiment": "NEGATIVE",
+    "permalink": "https://x.com/fan42/status/9123",
+    "sentimentScore": 22,
+    "impressions": "12904"
+  },
+  "overrideId": 44,
+  "previousCategory": "STORY",
+  "newCategory": "SCREENPLAY",
+  "createdAt": "2026-05-21T12:00:00Z"
+}
+```
+
+**Response fields:**
+- `mention` — full `MentionResponse` for the corrected post, so the UI can re-render it without a second fetch.
+- `overrideId` — id of the persisted `ReviewAspectOverride` audit row.
+- `previousCategory` — the value being replaced; `null` if the post was still unclassified.
+- `newCategory` — the value just set (echoes the request's `category`).
+- `createdAt` — server timestamp of the correction.
+
+**Status Codes:**
+- `200 OK` — Category corrected and audit row persisted.
+- `400 Bad Request` — `category` is missing or not a valid `ReviewAspectCategory` value.
+- `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design).
+
+**Notes:**
+- Scoped to `reviewAspectCategory` only — the one classification taxonomy AuraService itself assigns. `topicCategory`, `contentIntent`, and `authorType` are populated upstream, outside this codebase, and cannot be corrected here; overriding a local copy of an upstream value would just diverge from the source of truth on the next ingestion sync.
+- This does not re-invoke the LLM. Re-asking the same prompt against the same post risks reproducing the same mistake — the correction here is a human-supplied answer, not a second automated guess.
 
 ---
 

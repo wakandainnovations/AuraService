@@ -6,6 +6,7 @@ import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
+import com.aura.service.repository.ReviewAspectOverrideRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,7 @@ public class MentionService {
     private final ReplyDraftRepository replyDraftRepository;
     private final MobilizeActionRepository mobilizeActionRepository;
     private final CrisisPlanRepository crisisPlanRepository;
+    private final ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private final EntityAccessService entityAccessService;
 
     /**
@@ -43,6 +45,7 @@ public class MentionService {
         replyDraftRepository.deleteByMentionId(mentionId);
         mobilizeActionRepository.deleteByMentionId(mentionId);
         crisisPlanRepository.deleteByMentionId(mentionId);
+        reviewAspectOverrideRepository.deleteByMentionId(mentionId);
         mentionRepository.unlinkMentionFromEntities(mentionId);
 
         mentionRepository.delete(mention);
