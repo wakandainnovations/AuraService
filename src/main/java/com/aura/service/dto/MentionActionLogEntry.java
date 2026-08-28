@@ -19,7 +19,9 @@ public class MentionActionLogEntry {
         REPLY_DRAFT,
         CRISIS_PLAN,
         MOBILIZE,
-        REVIEW_ASPECT_OVERRIDE
+        REVIEW_ASPECT_OVERRIDE,
+        TOPIC_CATEGORY_OVERRIDE,
+        AUTHOR_TYPE_OVERRIDE
     }
 
     private Type type;
@@ -35,7 +37,13 @@ public class MentionActionLogEntry {
 
     private Integer allyCount;
 
+    /** Set only for {@code REVIEW_ASPECT_OVERRIDE} — the one taxonomy with a fixed Java enum. */
     private ReviewAspectCategory previousCategory;
     private ReviewAspectCategory newCategory;
+
+    /** Set only for {@code TOPIC_CATEGORY_OVERRIDE}/{@code AUTHOR_TYPE_OVERRIDE} — plain strings, since that upstream taxonomy has no fixed enum here. */
+    private String previousCategoryValue;
+    private String newCategoryValue;
+
     private String reason;
 }

@@ -1,6 +1,8 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.OverrideCategoryRequest;
 import com.aura.service.dto.OverrideReviewAspectRequest;
+import com.aura.service.entity.AuthorTypeOverride;
 import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
@@ -8,16 +10,19 @@ import com.aura.service.entity.Mention;
 import com.aura.service.entity.MobilizeAction;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.ReviewAspectOverride;
+import com.aura.service.entity.TopicCategoryOverride;
 import com.aura.service.entity.User;
 import com.aura.service.enums.Platform;
 import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.Sentiment;
+import com.aura.service.repository.AuthorTypeOverrideRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReplyTemplateRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
+import com.aura.service.repository.TopicCategoryOverrideRepository;
 import com.aura.service.repository.UserRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
@@ -84,6 +89,8 @@ class MentionActionControllerTest {
     private CrisisPlanRepository crisisPlanRepository;
     private MobilizeActionRepository mobilizeActionRepository;
     private ReviewAspectOverrideRepository reviewAspectOverrideRepository;
+    private TopicCategoryOverrideRepository topicCategoryOverrideRepository;
+    private AuthorTypeOverrideRepository authorTypeOverrideRepository;
     private UserRepository userRepository;
     private StubSpreaderLookup spreaderLookup;
 
@@ -126,8 +133,12 @@ class MentionActionControllerTest {
         crisisPlanRepository = mock(CrisisPlanRepository.class);
         mobilizeActionRepository = mock(MobilizeActionRepository.class);
         reviewAspectOverrideRepository = mock(ReviewAspectOverrideRepository.class);
+        topicCategoryOverrideRepository = mock(TopicCategoryOverrideRepository.class);
+        authorTypeOverrideRepository = mock(AuthorTypeOverrideRepository.class);
         userRepository = mock(UserRepository.class);
         when(reviewAspectOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
+        when(topicCategoryOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
+        when(authorTypeOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
         spreaderLookup = new StubSpreaderLookup();
 
         MobilizeAlliesService mobilizeAlliesService =
@@ -151,6 +162,8 @@ class MentionActionControllerTest {
                 crisisPlanRepository,
                 mobilizeActionRepository,
                 reviewAspectOverrideRepository,
+                topicCategoryOverrideRepository,
+                authorTypeOverrideRepository,
                 userRepository,
                 mobilizeAlliesService,
                 new ReplyTemplateService(mock(ReplyTemplateRepository.class)),
@@ -728,6 +741,156 @@ class MentionActionControllerTest {
 
         verify(mentionRepository, never()).save(any());
         verify(reviewAspectOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideTopicCategory_neverWritesTheUpstreamMentionRowAndPersistsOverlayInstead() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findCurrentTopicCategory(MENTION_ID)).thenReturn("cast_performance");
+        when(topicCategoryOverrideRepository.save(any(TopicCategoryOverride.class))).thenAnswer(inv -> {
+            TopicCategoryOverride o = inv.getArgument(0);
+            o.setId(50L);
+            return o;
+        });
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest(
+                "music_songs", "actually about the soundtrack, not the cast");
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-topic-category", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mention.id").value(MENTION_ID))
+                .andExpect(jsonPath("$.overrideId").value(50))
+                .andExpect(jsonPath("$.previousCategory").value("cast_performance"))
+                .andExpect(jsonPath("$.newCategory").value("music_songs"))
+                .andExpect(jsonPath("$.createdAt").exists());
+
+        // The upstream raw row is never touched by this endpoint — only the overlay table is written.
+        verify(mentionRepository, never()).save(any());
+
+        ArgumentCaptor<TopicCategoryOverride> captor = ArgumentCaptor.forClass(TopicCategoryOverride.class);
+        verify(topicCategoryOverrideRepository).save(captor.capture());
+        TopicCategoryOverride saved = captor.getValue();
+        assertThat(saved.getMentionId()).isEqualTo(MENTION_ID);
+        assertThat(saved.getEntityId()).isEqualTo(ENTITY_ID);
+        assertThat(saved.getUserId()).isEqualTo(USER_ID);
+        assertThat(saved.getPreviousCategory()).isEqualTo("cast_performance");
+        assertThat(saved.getNewCategory()).isEqualTo("music_songs");
+        assertThat(saved.getReason()).isEqualTo("actually about the soundtrack, not the cast");
+        assertThat(saved.getCreatedAt()).isNotNull();
+    }
+
+    @Test
+    void overrideTopicCategory_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest("music_songs", null);
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-topic-category", 404L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        verify(topicCategoryOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideTopicCategory_returns400WhenCategoryBlank() throws Exception {
+        String body = mapper.writeValueAsString(java.util.Map.of("category", ""));
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-topic-category", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(topicCategoryOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideAuthorType_neverWritesTheUpstreamMentionRowAndPersistsOverlayInstead() throws Exception {
+        Mention mention = buildMention(Sentiment.NEGATIVE);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findCurrentAuthorType(MENTION_ID)).thenReturn("bot_spam");
+        when(authorTypeOverrideRepository.save(any(AuthorTypeOverride.class))).thenAnswer(inv -> {
+            AuthorTypeOverride o = inv.getArgument(0);
+            o.setId(60L);
+            return o;
+        });
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest(
+                "general_public", "this is a real fan account, not a bot");
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-author-type", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overrideId").value(60))
+                .andExpect(jsonPath("$.previousCategory").value("bot_spam"))
+                .andExpect(jsonPath("$.newCategory").value("general_public"));
+
+        verify(mentionRepository, never()).save(any());
+
+        ArgumentCaptor<AuthorTypeOverride> captor = ArgumentCaptor.forClass(AuthorTypeOverride.class);
+        verify(authorTypeOverrideRepository).save(captor.capture());
+        assertThat(captor.getValue().getPreviousCategory()).isEqualTo("bot_spam");
+        assertThat(captor.getValue().getNewCategory()).isEqualTo("general_public");
+    }
+
+    @Test
+    void overrideAuthorType_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest("general_public", null);
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-author-type", 404L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        verify(authorTypeOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void listActions_includesTopicCategoryAndAuthorTypeOverrides() throws Exception {
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(buildMention(Sentiment.POSITIVE)));
+        when(replyDraftRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(crisisPlanRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+        when(mobilizeActionRepository.findByMentionId(MENTION_ID)).thenReturn(List.of());
+
+        TopicCategoryOverride topicOverride = TopicCategoryOverride.builder()
+                .id(50L).mentionId(MENTION_ID).entityId(ENTITY_ID).userId(USER_ID)
+                .previousCategory("cast_performance").newCategory("music_songs")
+                .reason("wrong bucket")
+                .createdAt(Instant.parse("2026-05-21T13:00:00Z"))
+                .build();
+        when(topicCategoryOverrideRepository.findByMentionId(MENTION_ID)).thenReturn(List.of(topicOverride));
+
+        AuthorTypeOverride authorOverride = AuthorTypeOverride.builder()
+                .id(60L).mentionId(MENTION_ID).entityId(ENTITY_ID).userId(USER_ID)
+                .previousCategory("bot_spam").newCategory("general_public")
+                .reason(null)
+                .createdAt(Instant.parse("2026-05-21T14:00:00Z"))
+                .build();
+        when(authorTypeOverrideRepository.findByMentionId(MENTION_ID)).thenReturn(List.of(authorOverride));
+
+        User u1 = new User(); u1.setId(USER_ID); u1.setUsername(USERNAME);
+        u1.setPassword("x"); u1.setRole("USER");
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1));
+
+        mvc.perform(get("/api/mentions/{id}/actions", MENTION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].type").value("AUTHOR_TYPE_OVERRIDE"))
+                .andExpect(jsonPath("$[0].id").value(60))
+                .andExpect(jsonPath("$[0].previousCategoryValue").value("bot_spam"))
+                .andExpect(jsonPath("$[0].newCategoryValue").value("general_public"))
+                .andExpect(jsonPath("$[1].type").value("TOPIC_CATEGORY_OVERRIDE"))
+                .andExpect(jsonPath("$[1].id").value(50))
+                .andExpect(jsonPath("$[1].previousCategoryValue").value("cast_performance"))
+                .andExpect(jsonPath("$[1].newCategoryValue").value("music_songs"))
+                .andExpect(jsonPath("$[1].reason").value("wrong bucket"));
     }
 
     @Test

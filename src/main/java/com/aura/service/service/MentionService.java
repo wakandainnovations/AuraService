@@ -2,11 +2,13 @@ package com.aura.service.service;
 
 import com.aura.service.entity.Mention;
 import com.aura.service.repository.AbuseReportRepository;
+import com.aura.service.repository.AuthorTypeOverrideRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
+import com.aura.service.repository.TopicCategoryOverrideRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,8 @@ public class MentionService {
     private final MobilizeActionRepository mobilizeActionRepository;
     private final CrisisPlanRepository crisisPlanRepository;
     private final ReviewAspectOverrideRepository reviewAspectOverrideRepository;
+    private final TopicCategoryOverrideRepository topicCategoryOverrideRepository;
+    private final AuthorTypeOverrideRepository authorTypeOverrideRepository;
     private final EntityAccessService entityAccessService;
 
     /**
@@ -46,6 +50,8 @@ public class MentionService {
         mobilizeActionRepository.deleteByMentionId(mentionId);
         crisisPlanRepository.deleteByMentionId(mentionId);
         reviewAspectOverrideRepository.deleteByMentionId(mentionId);
+        topicCategoryOverrideRepository.deleteByMentionId(mentionId);
+        authorTypeOverrideRepository.deleteByMentionId(mentionId);
         mentionRepository.unlinkMentionFromEntities(mentionId);
 
         mentionRepository.delete(mention);

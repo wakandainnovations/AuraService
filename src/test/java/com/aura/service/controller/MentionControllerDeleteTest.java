@@ -6,9 +6,11 @@ import com.aura.service.exception.GlobalExceptionHandler;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
+import com.aura.service.repository.AuthorTypeOverrideRepository;
 import com.aura.service.repository.MobilizeActionRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
+import com.aura.service.repository.TopicCategoryOverrideRepository;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.MentionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +34,8 @@ class MentionControllerDeleteTest {
     private MobilizeActionRepository mobilizeActionRepository;
     private CrisisPlanRepository crisisPlanRepository;
     private ReviewAspectOverrideRepository reviewAspectOverrideRepository;
+    private TopicCategoryOverrideRepository topicCategoryOverrideRepository;
+    private AuthorTypeOverrideRepository authorTypeOverrideRepository;
     private EntityAccessService entityAccess;
     private MockMvc mvc;
 
@@ -43,6 +47,8 @@ class MentionControllerDeleteTest {
         mobilizeActionRepository = mock(MobilizeActionRepository.class);
         crisisPlanRepository = mock(CrisisPlanRepository.class);
         reviewAspectOverrideRepository = mock(ReviewAspectOverrideRepository.class);
+        topicCategoryOverrideRepository = mock(TopicCategoryOverrideRepository.class);
+        authorTypeOverrideRepository = mock(AuthorTypeOverrideRepository.class);
         entityAccess = mock(EntityAccessService.class);
 
         MentionService service = new MentionService(
@@ -52,6 +58,8 @@ class MentionControllerDeleteTest {
                 mobilizeActionRepository,
                 crisisPlanRepository,
                 reviewAspectOverrideRepository,
+                topicCategoryOverrideRepository,
+                authorTypeOverrideRepository,
                 entityAccess);
         MentionController controller = new MentionController(service);
 
@@ -83,6 +91,8 @@ class MentionControllerDeleteTest {
         verify(mobilizeActionRepository).deleteByMentionId(1L);
         verify(crisisPlanRepository).deleteByMentionId(1L);
         verify(reviewAspectOverrideRepository).deleteByMentionId(1L);
+        verify(topicCategoryOverrideRepository).deleteByMentionId(1L);
+        verify(authorTypeOverrideRepository).deleteByMentionId(1L);
         verify(mentionRepository).unlinkMentionFromEntities(1L);
         verify(mentionRepository).delete(m);
     }
@@ -100,5 +110,7 @@ class MentionControllerDeleteTest {
         verify(mobilizeActionRepository, never()).deleteByMentionId(anyLong());
         verify(crisisPlanRepository, never()).deleteByMentionId(anyLong());
         verify(reviewAspectOverrideRepository, never()).deleteByMentionId(anyLong());
+        verify(topicCategoryOverrideRepository, never()).deleteByMentionId(anyLong());
+        verify(authorTypeOverrideRepository, never()).deleteByMentionId(anyLong());
     }
 }

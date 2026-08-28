@@ -253,6 +253,13 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
      * rather than trust the aggregate blindly. Matched case-insensitively since the upstream
      * taxonomy isn't a Java enum (unlike {@code review_aspect_category}, it has no fixed/documented
      * value set this codebase owns).
+     *
+     * <p>{@code topicCategory}/{@code authorType} additionally resolve each mention's latest
+     * {@code topic_category_overrides}/{@code author_type_overrides} row ahead of the raw upstream
+     * column (same overlay {@link #findTopicCategoryBreakdownForEntity}/
+     * {@link #findAuthorTypeBreakdownForEntity} apply), so a corrected post is findable under its
+     * corrected value. {@code contentIntent}/{@code region} have no override endpoint yet and so
+     * still read the raw upstream column only.
      */
     @Query(value = "SELECT DISTINCT m.* FROM mentions m " +
            "LEFT JOIN mention_entities me ON me.mention_id = m.id " +
@@ -263,9 +270,13 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
            "WHERE (:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
            "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR)) " +
            "AND (CAST(:reviewAspectCategory AS VARCHAR) IS NULL OR m.review_aspect_category = CAST(:reviewAspectCategory AS VARCHAR)) " +
-           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
+           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(" +
+           "(SELECT tco.new_category FROM topic_category_overrides tco WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), " +
+           "x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
            "AND (CAST(:contentIntent AS VARCHAR) IS NULL OR LOWER(COALESCE(x.content_intent, y.content_intent, r.content_intent, i.content_intent)) = LOWER(CAST(:contentIntent AS VARCHAR))) " +
-           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
+           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(" +
+           "(SELECT ato.new_category FROM author_type_overrides ato WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), " +
+           "x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
            "AND (CAST(:region AS VARCHAR) IS NULL OR LOWER(COALESCE(x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR)))",
            countQuery = "SELECT count(DISTINCT m.id) FROM mentions m " +
            "LEFT JOIN mention_entities me ON me.mention_id = m.id " +
@@ -276,9 +287,13 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
            "WHERE (:entityIds IS NULL OR me.managed_entity_id IN (:entityIds)) " +
            "AND (CAST(:platform AS VARCHAR) IS NULL OR m.platform = CAST(:platform AS VARCHAR)) " +
            "AND (CAST(:reviewAspectCategory AS VARCHAR) IS NULL OR m.review_aspect_category = CAST(:reviewAspectCategory AS VARCHAR)) " +
-           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
+           "AND (CAST(:topicCategory AS VARCHAR) IS NULL OR LOWER(COALESCE(" +
+           "(SELECT tco.new_category FROM topic_category_overrides tco WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), " +
+           "x.topic_category, y.topic_category, r.topic_category, i.topic_category)) = LOWER(CAST(:topicCategory AS VARCHAR))) " +
            "AND (CAST(:contentIntent AS VARCHAR) IS NULL OR LOWER(COALESCE(x.content_intent, y.content_intent, r.content_intent, i.content_intent)) = LOWER(CAST(:contentIntent AS VARCHAR))) " +
-           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
+           "AND (CAST(:authorType AS VARCHAR) IS NULL OR LOWER(COALESCE(" +
+           "(SELECT ato.new_category FROM author_type_overrides ato WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), " +
+           "x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
            "AND (CAST(:region AS VARCHAR) IS NULL OR LOWER(COALESCE(x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR)))",
            nativeQuery = true)
     Page<Mention> findFilteredMentions(
@@ -533,24 +548,39 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
      * {@code bot_spam}, ...), for the "who's talking" panel. Rows the pipeline classified as
      * {@code 'irrelevant'} (case-insensitive) or left {@code NULL} (not yet enriched) are excluded,
      * same as {@link #findRegionBuzzForEntity}. Ordered by count descending.
+     *
+     * <p>Each branch's value is the latest {@code author_type_overrides} row for that mention (by
+     * {@code created_at}) when one exists, else the raw upstream column — see
+     * {@link com.aura.service.entity.AuthorTypeOverride} for why the override is a separate overlay
+     * table rather than a write to {@code x_posts}/etc. A corrected post is counted under its
+     * corrected bucket, matching what {@code GET /api/dashboard/{entityId}/mentions?authorType=...}
+     * returns for the drill-down.
      */
     @Query(value = "SELECT author_type, COUNT(*) AS cnt FROM ( " +
-            "  SELECT x.author_type FROM x_posts x " +
+            "  SELECT COALESCE((SELECT ato.new_category FROM author_type_overrides ato " +
+            "    WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), x.author_type) AS author_type " +
+            "    FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT y.author_type FROM youtube_comments y " +
+            "  SELECT COALESCE((SELECT ato.new_category FROM author_type_overrides ato " +
+            "    WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), y.author_type) AS author_type " +
+            "    FROM youtube_comments y " +
             "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT r.author_type FROM reddit_posts r " +
+            "  SELECT COALESCE((SELECT ato.new_category FROM author_type_overrides ato " +
+            "    WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), r.author_type) AS author_type " +
+            "    FROM reddit_posts r " +
             "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT i.author_type FROM instagram_posts i " +
+            "  SELECT COALESCE((SELECT ato.new_category FROM author_type_overrides ato " +
+            "    WHERE ato.mention_id = m.id ORDER BY ato.created_at DESC LIMIT 1), i.author_type) AS author_type " +
+            "    FROM instagram_posts i " +
             "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
@@ -560,6 +590,25 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "ORDER BY cnt DESC",
             nativeQuery = true)
     List<Object[]> findAuthorTypeBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Current effective {@code author_type} for one mention — the latest override if one exists,
+     * else the raw upstream value. Used by {@code override-author-type} to report {@code
+     * previousCategory} accurately (what the caller was actually shown before this call), not just
+     * the raw upstream value if a prior override already superseded it.
+     */
+    @Query(value = "SELECT COALESCE(" +
+            "(SELECT ato.new_category FROM author_type_overrides ato WHERE ato.mention_id = :mentionId " +
+            "  ORDER BY ato.created_at DESC LIMIT 1), " +
+            "x.author_type, y.author_type, r.author_type, i.author_type) " +
+            "FROM mentions m " +
+            "LEFT JOIN x_posts x ON x.id = m.post_id AND m.platform = 'X' " +
+            "LEFT JOIN youtube_comments y ON y.id = m.post_id AND m.platform = 'YOUTUBE' " +
+            "LEFT JOIN reddit_posts r ON r.id = m.post_id AND m.platform = 'REDDIT' " +
+            "LEFT JOIN instagram_posts i ON i.id = m.post_id AND m.platform = 'INSTAGRAM' " +
+            "WHERE m.id = :mentionId",
+            nativeQuery = true)
+    String findCurrentAuthorType(@Param("mentionId") Long mentionId);
 
     /**
      * Post count per {@code content_intent} ({@code official_promo}, {@code fan_amplified_promo},
@@ -820,23 +869,36 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "ON yv.video_id = yc.video_id WHERE yc.id IN (:postIds)", nativeQuery = true)
     List<Object[]> findYoutubePostViews(@Param("postIds") Collection<String> postIds);
 
+    /**
+     * Each branch's value is the latest {@code topic_category_overrides} row for that mention (by
+     * {@code created_at}) when one exists, else the raw upstream column — same overlay convention as
+     * {@link #findAuthorTypeBreakdownForEntity}; see {@link com.aura.service.entity.TopicCategoryOverride}.
+     */
     @Query(value = "SELECT topic_category, COUNT(*) AS cnt FROM ( " +
-            "  SELECT x.topic_category FROM x_posts x " +
+            "  SELECT COALESCE((SELECT tco.new_category FROM topic_category_overrides tco " +
+            "    WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), x.topic_category) AS topic_category " +
+            "    FROM x_posts x " +
             "    JOIN mentions m ON m.post_id = x.id AND m.platform = 'X' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT y.topic_category FROM youtube_comments y " +
+            "  SELECT COALESCE((SELECT tco.new_category FROM topic_category_overrides tco " +
+            "    WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), y.topic_category) AS topic_category " +
+            "    FROM youtube_comments y " +
             "    JOIN mentions m ON m.post_id = y.id AND m.platform = 'YOUTUBE' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT r.topic_category FROM reddit_posts r " +
+            "  SELECT COALESCE((SELECT tco.new_category FROM topic_category_overrides tco " +
+            "    WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), r.topic_category) AS topic_category " +
+            "    FROM reddit_posts r " +
             "    JOIN mentions m ON m.post_id = r.id AND m.platform = 'REDDIT' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
             "  UNION ALL " +
-            "  SELECT i.topic_category FROM instagram_posts i " +
+            "  SELECT COALESCE((SELECT tco.new_category FROM topic_category_overrides tco " +
+            "    WHERE tco.mention_id = m.id ORDER BY tco.created_at DESC LIMIT 1), i.topic_category) AS topic_category " +
+            "    FROM instagram_posts i " +
             "    JOIN mentions m ON m.post_id = i.id AND m.platform = 'INSTAGRAM' " +
             "    JOIN mention_entities me ON me.mention_id = m.id " +
             "    WHERE me.managed_entity_id = :entityId " +
@@ -846,6 +908,23 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             "ORDER BY cnt DESC",
             nativeQuery = true)
     List<Object[]> findTopicCategoryBreakdownForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Current effective {@code topic_category} for one mention — the latest override if one exists,
+     * else the raw upstream value. Same purpose as {@link #findCurrentAuthorType}.
+     */
+    @Query(value = "SELECT COALESCE(" +
+            "(SELECT tco.new_category FROM topic_category_overrides tco WHERE tco.mention_id = :mentionId " +
+            "  ORDER BY tco.created_at DESC LIMIT 1), " +
+            "x.topic_category, y.topic_category, r.topic_category, i.topic_category) " +
+            "FROM mentions m " +
+            "LEFT JOIN x_posts x ON x.id = m.post_id AND m.platform = 'X' " +
+            "LEFT JOIN youtube_comments y ON y.id = m.post_id AND m.platform = 'YOUTUBE' " +
+            "LEFT JOIN reddit_posts r ON r.id = m.post_id AND m.platform = 'REDDIT' " +
+            "LEFT JOIN instagram_posts i ON i.id = m.post_id AND m.platform = 'INSTAGRAM' " +
+            "WHERE m.id = :mentionId",
+            nativeQuery = true)
+    String findCurrentTopicCategory(@Param("mentionId") Long mentionId);
 
     /**
      * A bounded, oldest-first batch of this entity's posts not yet classified into

@@ -1929,15 +1929,15 @@ Authorization: Bearer {jwt_token}
 **Query Parameters:**
 - `platform` - Filter by platform (X, REDDIT, YOUTUBE, INSTAGRAM) - Optional
 - `reviewAspectCategory` - Filter to posts classified into this [Review Aspect Breakdown](#18t-get-review-aspect-breakdown-aspect-sentiment-panel) category (e.g. `SCREENPLAY`). Matches `mentions.review_aspect_category` exactly (a real enum) — an unrecognized value is rejected with `400 Bad Request`. Optional.
-- `topicCategory` - Filter to posts classified into this [Topic Category Breakdown](#18h-get-topic-category-breakdown-what-aspects-resonate) category (e.g. `music_songs`). Matched case-insensitively against whichever raw ingestion table (`x_posts`/`youtube_comments`/`reddit_posts`/`instagram_posts`) the post came from, since this taxonomy is populated upstream and isn't a fixed enum in this codebase — pass the exact `category` string a breakdown response returned. Optional.
-- `contentIntent` - Filter to posts classified into this [Content Intent Breakdown](#18g-get-content-intent-breakdown-what-kind-of-buzz) category (e.g. `official_promo`). Same upstream, case-insensitive matching as `topicCategory`. Optional.
-- `authorType` - Filter to posts classified into this [Author Type Breakdown](#18f-get-author-type-breakdown-whos-talking) category (e.g. `verified_celebrity_influencer`). Same upstream, case-insensitive matching as `topicCategory`. Optional.
-- `region` - Filter to posts from this region, as returned by [Get Audience Pulse](#18d-get-audience-pulse-top-regions-by-buzz) (e.g. `Tamil Nadu`). Matched against the upstream `predicted_region` column, same case-insensitive convention as `topicCategory`. Optional.
+- `topicCategory` - Filter to posts classified into this [Topic Category Breakdown](#18h-get-topic-category-breakdown-what-aspects-resonate) category (e.g. `music_songs`). Matched case-insensitively; resolves each post's *latest override* (see [Override Topic Category](#26f-override-topic-category)) ahead of the raw upstream column (`x_posts`/`youtube_comments`/`reddit_posts`/`instagram_posts`) it came from, since this taxonomy is populated upstream and isn't a fixed enum in this codebase — pass the exact `category` string a breakdown response returned. Optional.
+- `contentIntent` - Filter to posts classified into this [Content Intent Breakdown](#18g-get-content-intent-breakdown-what-kind-of-buzz) category (e.g. `official_promo`). Same upstream, case-insensitive matching as `topicCategory`, but no override endpoint exists for it yet — reads the raw upstream column only. Optional.
+- `authorType` - Filter to posts classified into this [Author Type Breakdown](#18f-get-author-type-breakdown-whos-talking) category (e.g. `verified_celebrity_influencer`). Same override-aware matching as `topicCategory` — see [Override Author Type](#26g-override-author-type). Optional.
+- `region` - Filter to posts from this region, as returned by [Get Audience Pulse](#18d-get-audience-pulse-top-regions-by-buzz) (e.g. `Tamil Nadu`). Matched against the upstream `predicted_region` column, same case-insensitive convention as `topicCategory`, but no override endpoint exists for it yet — reads the raw upstream column only. Optional.
 - `page` - Page number (default: 0)
 - `size` - Page size (default: all mentions are returned if not specified)
 - `ownerId` — (admin only) require `entityId` to belong to this user; a non-admin who supplies it gets `403 Forbidden`. Optional.
 
-**Spot-checking a classification breakdown:** every per-post classification panel (review-aspect, topic-category, content-intent, author-type, audience-pulse region) reports only aggregates. To verify the underlying posts rather than trust the aggregate blindly, call this endpoint with the matching filter and the exact `category`/`region` value the breakdown returned — e.g. after seeing `{"category": "screenplay", "totalPosts": 340, ...}` from Review Aspect Breakdown, call `GET /api/dashboard/21/mentions?reviewAspectCategory=SCREENPLAY` to read those 340 posts' actual `content`. If a post there is wrong, correct it with [Override Review Aspect Category](#26e-override-review-aspect-category) (review-aspect only — `topicCategory`/`contentIntent`/`authorType`/`region` are populated upstream, outside this codebase, and can't be corrected here).
+**Spot-checking a classification breakdown:** every per-post classification panel (review-aspect, topic-category, content-intent, author-type, audience-pulse region) reports only aggregates. To verify the underlying posts rather than trust the aggregate blindly, call this endpoint with the matching filter and the exact `category`/`region` value the breakdown returned — e.g. after seeing `{"category": "screenplay", "totalPosts": 340, ...}` from Review Aspect Breakdown, call `GET /api/dashboard/21/mentions?reviewAspectCategory=SCREENPLAY` to read those 340 posts' actual `content`. If a post there is wrong, correct it: [Override Review Aspect Category](#26e-override-review-aspect-category) for `reviewAspectCategory`, [Override Topic Category](#26f-override-topic-category) for `topicCategory`, [Override Author Type](#26g-override-author-type) for `authorType`. `contentIntent`/`region` have no override endpoint yet — those two are populated upstream, outside this codebase, and can only be verified here, not corrected.
 
 **Example Request:**
 ```
@@ -2383,7 +2383,7 @@ GET /api/dashboard/21/audience-pulse
 - `regions[].mentionCount` — raw post/comment count for that region (buzz), summed across all four platforms.
 - `regions[].sharePct` — `mentionCount` as a percentage of `totalMentions` (0 when `totalMentions` is 0).
 
-**Spot-checking a region:** this endpoint reports only aggregates. To verify the underlying posts for a region rather than trust the count blindly, call [Get Filtered Mentions](#16-get-filtered-mentions) with the exact `region` string returned above, e.g. `GET /api/dashboard/21/mentions?region=Tamil%20Nadu` to read the 96 posts behind the Tamil Nadu row. Matched case-insensitively against the same upstream `predicted_region` column — there's no correction endpoint for it, since (like `topicCategory`/`contentIntent`/`authorType`) it's populated outside this codebase.
+**Spot-checking a region:** this endpoint reports only aggregates. To verify the underlying posts for a region rather than trust the count blindly, call [Get Filtered Mentions](#16-get-filtered-mentions) with the exact `region` string returned above, e.g. `GET /api/dashboard/21/mentions?region=Tamil%20Nadu` to read the 96 posts behind the Tamil Nadu row. Matched case-insensitively against the same upstream `predicted_region` column — there's no correction endpoint for it yet (unlike `topicCategory`/`authorType`, which now have [Override Topic Category](#26f-override-topic-category)/[Override Author Type](#26g-override-author-type)); `region` is populated outside this codebase and can only be verified here, not corrected.
 
 **Status Code:** `200 OK`
 
@@ -2477,6 +2477,8 @@ GET /api/dashboard/21/author-type-breakdown
 - `totalClassifiedPosts` — sum of `count` across all returned author types (i.e. every non-`irrelevant`, non-null-`author_type` post/comment linked to the entity). Excludes not-yet-classified rows, so this can be smaller than the entity's total mention count.
 - `authorTypes` — ranked highest-count-first; empty when the entity has no classified posts yet.
 - `authorTypes[].sharePct` — `count` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+
+**Spot-checking and correcting:** to verify the posts behind a bucket, call [Get Filtered Mentions](#16-get-filtered-mentions) with `authorType=<value>`. If a post is wrong, correct it with [Override Author Type](#26g-override-author-type) — every override is applied here too (the count moves from the old bucket to the new one on the next call), since AuraService overlays the correction on top of the raw upstream value rather than mutating it.
 
 **Status Code:** `200 OK`
 
@@ -2575,6 +2577,8 @@ GET /api/dashboard/21/topic-category-breakdown
 - `totalClassifiedPosts` — sum of `count` across all returned topics (every non-`irrelevant`, non-null-`topic_category` post/comment linked to the entity).
 - `topics` — ranked highest-count-first; empty when the entity has no classified posts yet.
 - `topics[].sharePct` — `count` as a percentage of `totalClassifiedPosts` (0 when `totalClassifiedPosts` is 0).
+
+**Spot-checking and correcting:** to verify the posts behind a bucket, call [Get Filtered Mentions](#16-get-filtered-mentions) with `topicCategory=<value>`. If a post is wrong, correct it with [Override Topic Category](#26f-override-topic-category) — every override is applied here too, since AuraService overlays the correction on top of the raw upstream value rather than mutating it.
 
 **Status Code:** `200 OK`
 
@@ -3878,10 +3882,11 @@ Per-mention actions that wrap the LLM and social-media services into auditable, 
 - **Mobilize allies** pulls the entity's keywords, fans out parallel calls to `GET /v1/top-spreaders/{keyword}` (via the existing AuraMath WebClient and `TopSpreaderLookupService`), filters the union of spreaders down to authors whose mention sentiment for this entity is predominantly `POSITIVE`, and returns the top 10 with a per-ally suggested DM template generated via `LLMService`. Responses are cached in-process per `(entityId, mentionId)` for 5 minutes. Every call (including cache hits) persists a `MobilizeAction` row attributed to the calling user so the action log can show prior mobilize attempts.
 - **Report abuse** files an abuse complaint against the mention and persists an `AbuseReport` row attributed to the calling user with `status=SUBMITTED`. The report is then forwarded to a per-platform moderation strategy (`AbuseReportDispatcher`) chosen from the mention's platform (X, Reddit, YouTube, Instagram); the strategy returns an external ticket reference that is stamped onto `externalRef`. Platform strategies are stubs today (they log and return a fake ticket id) — the real platform APIs (Reddit `/api/report`, X media moderation endpoints, etc.) are plugged into those strategies later.
 - **Override review aspect category** lets a human correct a misclassified [`reviewAspectCategory`](#18t-get-review-aspect-breakdown-aspect-sentiment-panel) — the fix for a bad post spotted via the [`reviewAspectCategory` filter](#16-get-filtered-mentions) on `GET /api/dashboard/{entityId}/mentions`. Unlike the background classification sweep, this always overwrites the current value (LLM-assigned or not), and every override persists a `ReviewAspectOverride` row so the correction itself is auditable via List actions.
+- **Override topic category** / **Override author type** let a human correct a misclassified `topicCategory`/`authorType`. Unlike the review-aspect override, these never write to the upstream ingestion tables (`x_posts`/`youtube_comments`/`reddit_posts`/`instagram_posts`) — that data is populated by a pipeline outside this codebase, and a direct write here could be silently clobbered on the next upstream sync. Instead each correction appends a `TopicCategoryOverride`/`AuthorTypeOverride` row, and every read path that reports that classification (the drill-down filter, and the [Topic Category](#18h-get-topic-category-breakdown-what-aspects-resonate)/[Author Type](#18f-get-author-type-breakdown-whos-talking) breakdowns) resolves the latest override ahead of the raw upstream value.
 
 Every action response except **Report abuse** includes a `mention` object shaped like `MentionResponse` so the UI can render the action result without a second fetch; Report abuse returns the persisted `AbuseReport` directly.
 
-> **Ownership:** Every per-mention route is scoped to the owner of the entity the mention belongs to. If the mention does not exist, the route returns `404 Not Found`; if it exists but its entity is owned by another user, it also returns `404 Not Found` (the two are indistinguishable so existence is never leaked). This applies to list actions, draft/post reply, escalate, mobilize, override review aspect, report abuse, and delete.
+> **Ownership:** Every per-mention route is scoped to the owner of the entity the mention belongs to. If the mention does not exist, the route returns `404 Not Found`; if it exists but its entity is owned by another user, it also returns `404 Not Found` (the two are indistinguishable so existence is never leaked). This applies to list actions, draft/post reply, escalate, mobilize, override review aspect, override topic category, override author type, report abuse, and delete.
 
 ### 22. List Mention Actions
 
@@ -3957,19 +3962,35 @@ GET /api/mentions/9123/actions
     "previousCategory": "STORY",
     "newCategory": "SCREENPLAY",
     "reason": "actually about the screenplay, not the story"
+  },
+  {
+    "type": "TOPIC_CATEGORY_OVERRIDE",
+    "id": 50,
+    "actor": "ops_user",
+    "createdAt": "2026-05-21T13:00:00Z",
+    "draftStatus": null,
+    "text": null,
+    "postedAt": null,
+    "planText": null,
+    "allyCount": null,
+    "previousCategoryValue": "cast_performance",
+    "newCategoryValue": "music_songs",
+    "reason": "wrong bucket"
   }
 ]
 ```
 
 **Response fields:**
-- `type` — one of `REPLY_DRAFT`, `CRISIS_PLAN`, `MOBILIZE`, `REVIEW_ASPECT_OVERRIDE`.
+- `type` — one of `REPLY_DRAFT`, `CRISIS_PLAN`, `MOBILIZE`, `REVIEW_ASPECT_OVERRIDE`, `TOPIC_CATEGORY_OVERRIDE`, `AUTHOR_TYPE_OVERRIDE`.
 - `id` — primary key of the underlying row (e.g. the `ReplyDraft.id`).
 - `actor` — username of the user who triggered the action (resolved from `User.id`). May be `null` if the user record was hard-deleted.
 - `createdAt` — when the action was recorded (sort key).
 - `draftStatus`, `text`, `postedAt` — set only for `REPLY_DRAFT` rows. `draftStatus` is `DRAFT` or `POSTED`; `postedAt` is `null` for unposted drafts.
 - `planText` — set only for `CRISIS_PLAN` rows; the full generated plan body.
 - `allyCount` — set only for `MOBILIZE` rows; number of allies returned by that call (`0` if no keywords or no positive supporters matched).
-- `previousCategory`, `newCategory`, `reason` — set only for `REVIEW_ASPECT_OVERRIDE` rows. `previousCategory` is `null` if the post was still unclassified when the override was made; `reason` is the optional free-text note the correcting user supplied.
+- `previousCategory`, `newCategory` — set only for `REVIEW_ASPECT_OVERRIDE` rows (typed values from the fixed enum). `previousCategory` is `null` if the post was still unclassified when the override was made.
+- `previousCategoryValue`, `newCategoryValue` — set only for `TOPIC_CATEGORY_OVERRIDE`/`AUTHOR_TYPE_OVERRIDE` rows (plain strings, since that upstream taxonomy has no fixed enum in this codebase). `previousCategoryValue` is `null` if the post's classification had no value (upstream or override) before this correction.
+- `reason` — the optional free-text note the correcting user supplied, on any of the three override types.
 
 **Notes:**
 - Each `ReplyDraft` is a single row even after it's been posted — the draft creation and the subsequent post are not separate timeline entries. Use `postedAt`/`draftStatus` to distinguish.
@@ -4322,7 +4343,7 @@ GET /api/mentions/9123/abuse-reports
 
 **Endpoint:** `DELETE /api/mentions/{mentionId}`
 
-**Description:** Permanently remove a mention from the `mentions` table. Intended for purging **false-positive mentions** — posts that were attributed to an entity but should not have been (e.g. a post that slipped past sentiment scoring with a non-zero sentiment value despite being irrelevant). The delete also cleans up every record that hangs off the mention in the same transaction — abuse reports, reply drafts, mobilize actions, crisis plans, and [review-aspect overrides](#26e-override-review-aspect-category) filed against it — so no orphaned rows remain. This is a hard delete and cannot be undone.
+**Description:** Permanently remove a mention from the `mentions` table. Intended for purging **false-positive mentions** — posts that were attributed to an entity but should not have been (e.g. a post that slipped past sentiment scoring with a non-zero sentiment value despite being irrelevant). The delete also cleans up every record that hangs off the mention in the same transaction — abuse reports, reply drafts, mobilize actions, crisis plans, [review-aspect overrides](#26e-override-review-aspect-category), [topic-category overrides](#26f-override-topic-category), and [author-type overrides](#26g-override-author-type) filed against it — so no orphaned rows remain. This is a hard delete and cannot be undone.
 
 **Headers:**
 ```
@@ -4486,8 +4507,119 @@ POST /api/mentions/9123/actions/override-review-aspect
 - `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design).
 
 **Notes:**
-- Scoped to `reviewAspectCategory` only — the one classification taxonomy AuraService itself assigns. `topicCategory`, `contentIntent`, and `authorType` are populated upstream, outside this codebase, and cannot be corrected here; overriding a local copy of an upstream value would just diverge from the source of truth on the next ingestion sync.
+- This is the only override endpoint that writes to the mention's own row (`mentions.review_aspect_category`) — the taxonomy AuraService itself assigns, so there's no upstream source to diverge from. `topicCategory` and `authorType` are corrected differently — see [Override Topic Category](#26f-override-topic-category)/[Override Author Type](#26g-override-author-type). `contentIntent` and `region` still have no override endpoint at all.
 - This does not re-invoke the LLM. Re-asking the same prompt against the same post risks reproducing the same mistake — the correction here is a human-supplied answer, not a second automated guess.
+
+---
+
+### 26f. Override Topic Category
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/override-topic-category`
+
+**Description:** Human correction of a mention's [`topicCategory`](#18h-get-topic-category-breakdown-what-aspects-resonate) — the fix for a misclassification spotted via the [`topicCategory` filter](#16-get-filtered-mentions) on `GET /api/dashboard/{entityId}/mentions`. Unlike [Override Review Aspect Category](#26e-override-review-aspect-category), this **never writes to the upstream ingestion tables** (`x_posts`/`youtube_comments`/`reddit_posts`/`instagram_posts`) — that data is populated by a pipeline outside this codebase, and AuraService doesn't own its schema. A direct write there could be silently clobbered the next time that pipeline re-syncs the row, or corrupt data other consumers of those tables rely on.
+
+Instead this appends a `TopicCategoryOverride` row. Every read path that reports `topic_category` — this endpoint's own `previousCategory`, the [Topic Category Breakdown](#18h-get-topic-category-breakdown-what-aspects-resonate), and the `topicCategory` filter on Get Filtered Mentions — resolves the **latest** override for a mention (by timestamp) ahead of the raw upstream column, falling back to upstream when no override exists. A mention can be corrected more than once; each call appends a new row rather than editing the last one, so the full correction history is preserved and visible via [List Mention Actions](#22-list-mention-actions).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID whose topic-category classification is being corrected
+
+**Request Body:**
+```json
+{
+  "category": "music_songs",
+  "reason": "actually about the soundtrack, not the cast"
+}
+```
+
+**Request fields:**
+- `category` *(required, non-blank)* — the correct topic. A plain string, not validated against a fixed list — AuraService doesn't own this upstream taxonomy — so pass the exact `topicCategory` value the breakdown response returned (e.g. `cast_performance`, `music_songs`, `story_screenplay`, `direction_technical_craft`, `box_office_commercial`, `politics_personal_life_crossover`, `general`).
+- `reason` *(optional)* — free-text note on why the prior classification was wrong; stored on the audit row and shown in the action history.
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/override-topic-category
+```
+
+**Response:**
+```json
+{
+  "mention": { "id": 9123, "managedEntityId": 1, "platform": "X", "postId": "tweet_12345", "..." : "..." },
+  "overrideId": 50,
+  "previousCategory": "cast_performance",
+  "newCategory": "music_songs",
+  "createdAt": "2026-05-21T13:00:00Z"
+}
+```
+
+**Response fields:**
+- `mention` — full `MentionResponse` for the corrected post.
+- `overrideId` — id of the persisted `TopicCategoryOverride` audit row.
+- `previousCategory` — the effective value being replaced (the latest prior override if one exists, else the raw upstream value); `null` if the post had no topic category at all yet.
+- `newCategory` — the value just set (echoes the request's `category`).
+- `createdAt` — server timestamp of the correction.
+
+**Status Codes:**
+- `200 OK` — Correction recorded.
+- `400 Bad Request` — `category` is missing or blank.
+- `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design).
+
+---
+
+### 26g. Override Author Type
+
+**Endpoint:** `POST /api/mentions/{mentionId}/actions/override-author-type`
+
+**Description:** Human correction of a mention's [`authorType`](#18f-get-author-type-breakdown-whos-talking) — same append-only overlay design as [Override Topic Category](#26f-override-topic-category) (never writes to the upstream ingestion tables; appends an `AuthorTypeOverride` row that every read path resolves ahead of the raw upstream column).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Path Parameters:**
+- `mentionId` — Mention ID whose author-type classification is being corrected
+
+**Request Body:**
+```json
+{
+  "category": "general_public",
+  "reason": "this is a real fan account, not a bot"
+}
+```
+
+**Request fields:**
+- `category` *(required, non-blank)* — the correct author type. A plain string — pass the exact `authorType` value the breakdown response returned (e.g. `general_public`, `fan_page`, `media_press`, `official_studio`, `verified_celebrity_influencer`, `bot_spam`).
+- `reason` *(optional)* — free-text note on why the prior classification was wrong.
+
+**Example Request:**
+```
+POST /api/mentions/9123/actions/override-author-type
+```
+
+**Response:**
+```json
+{
+  "mention": { "id": 9123, "managedEntityId": 1, "platform": "X", "postId": "tweet_12345", "..." : "..." },
+  "overrideId": 60,
+  "previousCategory": "bot_spam",
+  "newCategory": "general_public",
+  "createdAt": "2026-05-21T14:00:00Z"
+}
+```
+
+**Response fields:** Same shape as [Override Topic Category](#26f-override-topic-category)'s response.
+
+**Status Codes:**
+- `200 OK` — Correction recorded.
+- `400 Bad Request` — `category` is missing or blank.
+- `404 Not Found` — No mention with the given id, or the mention's entity is owned by another user (indistinguishable by design).
 
 ---
 
