@@ -60,7 +60,11 @@ public class Checkpoint {
     private CheckpointStage stage;
 
     // True for the 9 rows auto-seeded by CheckpointDefaultsService; false for user-added checkpoints.
-    @Column(name = "is_default", nullable = false)
+    // columnDefinition carries an explicit DB-side default so ddl-auto=update's
+    // "add column is_default boolean not null" succeeds against the already-populated checkpoints
+    // table (Postgres rejects a NOT NULL column add with no default when rows already exist) -
+    // existing rows land on false, same as this field's Java-side default.
+    @Column(name = "is_default", nullable = false, columnDefinition = "boolean not null default false")
     @Builder.Default
     private boolean isDefault = false;
 

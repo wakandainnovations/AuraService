@@ -18,9 +18,12 @@ import com.aura.service.repository.ManagedEntityRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -80,6 +83,17 @@ public class EntityMarketingReportService {
     private final AudiencePulseAspectsService audiencePulseAspectsService;
     private final EntityMarketingReportCacheRepository cacheRepository;
     private final ManagedEntityRepository managedEntityRepository;
+
+    // Self-injected proxy: refreshOneEntityForBatch below must be invoked through Spring's proxy
+    // (not a direct this.refreshOneEntityForBatch(...) self-call) for its @Transactional advice to
+    // apply - required because refreshAllReports runs off a scheduler thread with no request-bound
+    // Hibernate session, so entities loaded via ManagedEntityRepository.findAll() can't have their
+    // lazy collections (e.g. ManagedEntity.keywords, read deep inside assembleForBatch) resolved
+    // without one. Same pattern as ViralSeedSyncService.self - see that field's doc comment. @Lazy
+    // avoids the circular-bean chicken/egg problem at construction time.
+    @Autowired
+    @Lazy
+    private EntityMarketingReportService self;
 
     public EntityMarketingReportService(EntityService entityService,
                                         DashboardService dashboardService,
@@ -149,17 +163,33 @@ public class EntityMarketingReportService {
      */
     @Scheduled(fixedDelayString = "PT24H")
     public void refreshAllReports() {
-        List<ManagedEntity> entities = managedEntityRepository.findAll();
-        log.info("Refreshing marketing reports for {} entities", entities.size());
-        for (ManagedEntity entity : entities) {
+        List<Long> entityIds = managedEntityRepository.findAll().stream().map(ManagedEntity::getId).toList();
+        log.info("Refreshing marketing reports for {} entities", entityIds.size());
+        for (Long entityId : entityIds) {
             try {
-                EntityMarketingReportResponse report =
-                        assembleForBatch(entity, DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS);
-                persist(entity.getId(), DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS, report);
+                self.refreshOneEntityForBatch(entityId);
             } catch (Exception e) {
-                log.error("Failed to refresh marketing report for entity {}", entity.getId(), e);
+                log.error("Failed to refresh marketing report for entity {}", entityId, e);
             }
         }
+    }
+
+    /**
+     * Must be called via {@link #self}, not directly - see that field's doc comment. Re-fetches the
+     * entity by id (rather than taking a {@link ManagedEntity} from {@link #refreshAllReports}'s
+     * earlier, transaction-less {@code findAll()}) so its lazy collections - e.g.
+     * {@code ManagedEntity.keywords}, read deep inside {@link #assembleForBatch} - are bound to this
+     * method's own session; a detached entity's lazy collections can't be initialized just by calling
+     * it from within a new transaction. Not read-only: {@link #persist} at the end saves the cache row.
+     */
+    @Transactional
+    void refreshOneEntityForBatch(Long entityId) {
+        ManagedEntity entity = managedEntityRepository.findById(entityId).orElse(null);
+        if (entity == null) {
+            return;
+        }
+        EntityMarketingReportResponse report = assembleForBatch(entity, DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS);
+        persist(entity.getId(), DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS, report);
     }
 
     private void persist(Long id, TimePeriod period, int windowDays, EntityMarketingReportResponse report) {

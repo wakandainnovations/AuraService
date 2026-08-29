@@ -430,6 +430,11 @@ public class DashboardService {
         List<CheckpointImpact> impacts = new ArrayList<>();
         for (Checkpoint cp : checkpoints) {
             LocalDate cpDate = cp.getCheckpointDate();
+            if (cpDate == null) {
+                // Default pre-release stage checkpoints start with no date until the user sets one;
+                // there's no before/after window to measure impact over until then.
+                continue;
+            }
             Instant beforeStart = cpDate.minusDays(windowDays).atStartOfDay(ZoneOffset.UTC).toInstant();
             Instant beforeEnd = cpDate.atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
             Instant afterStart = cpDate.atStartOfDay(ZoneOffset.UTC).toInstant();

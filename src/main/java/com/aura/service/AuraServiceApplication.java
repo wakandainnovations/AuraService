@@ -31,6 +31,12 @@ public class AuraServiceApplication {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
         scheduler.setPoolSize(10);
         scheduler.setThreadNamePrefix("app-scheduler-");
+        // Without this, context shutdown proceeds (and starts tearing down entityManagerFactory)
+        // while a long-running job like ViralSeedSyncService's per-entity loop is still mid-flight,
+        // so its next DB call throws BeanCreationNotAllowedException. Waiting here makes shutdown
+        // block until in-flight scheduled runs finish before singleton destruction begins.
+        scheduler.setWaitForTasksToCompleteOnShutdown(true);
+        scheduler.setAwaitTerminationSeconds(30);
         scheduler.initialize();
         return scheduler;
     }
