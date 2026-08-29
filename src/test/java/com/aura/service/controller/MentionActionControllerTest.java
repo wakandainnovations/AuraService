@@ -3,11 +3,13 @@ package com.aura.service.controller;
 import com.aura.service.dto.OverrideCategoryRequest;
 import com.aura.service.dto.OverrideReviewAspectRequest;
 import com.aura.service.entity.AuthorTypeOverride;
+import com.aura.service.entity.ContentIntentOverride;
 import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.EntityKeyword;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.MobilizeAction;
+import com.aura.service.entity.RegionOverride;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.ReviewAspectOverride;
 import com.aura.service.entity.TopicCategoryOverride;
@@ -16,9 +18,11 @@ import com.aura.service.enums.Platform;
 import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.Sentiment;
 import com.aura.service.repository.AuthorTypeOverrideRepository;
+import com.aura.service.repository.ContentIntentOverrideRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
+import com.aura.service.repository.RegionOverrideRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReplyTemplateRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
@@ -91,6 +95,8 @@ class MentionActionControllerTest {
     private ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private TopicCategoryOverrideRepository topicCategoryOverrideRepository;
     private AuthorTypeOverrideRepository authorTypeOverrideRepository;
+    private ContentIntentOverrideRepository contentIntentOverrideRepository;
+    private RegionOverrideRepository regionOverrideRepository;
     private UserRepository userRepository;
     private StubSpreaderLookup spreaderLookup;
 
@@ -135,10 +141,14 @@ class MentionActionControllerTest {
         reviewAspectOverrideRepository = mock(ReviewAspectOverrideRepository.class);
         topicCategoryOverrideRepository = mock(TopicCategoryOverrideRepository.class);
         authorTypeOverrideRepository = mock(AuthorTypeOverrideRepository.class);
+        contentIntentOverrideRepository = mock(ContentIntentOverrideRepository.class);
+        regionOverrideRepository = mock(RegionOverrideRepository.class);
         userRepository = mock(UserRepository.class);
         when(reviewAspectOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
         when(topicCategoryOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
         when(authorTypeOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
+        when(contentIntentOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
+        when(regionOverrideRepository.findByMentionId(any())).thenReturn(new ArrayList<>());
         spreaderLookup = new StubSpreaderLookup();
 
         MobilizeAlliesService mobilizeAlliesService =
@@ -164,6 +174,8 @@ class MentionActionControllerTest {
                 reviewAspectOverrideRepository,
                 topicCategoryOverrideRepository,
                 authorTypeOverrideRepository,
+                contentIntentOverrideRepository,
+                regionOverrideRepository,
                 userRepository,
                 mobilizeAlliesService,
                 new ReplyTemplateService(mock(ReplyTemplateRepository.class)),
@@ -850,6 +862,114 @@ class MentionActionControllerTest {
                 .andExpect(status().isNotFound());
 
         verify(authorTypeOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideContentIntent_neverWritesTheUpstreamMentionRowAndPersistsOverlayInstead() throws Exception {
+        Mention mention = buildMention(Sentiment.POSITIVE);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findCurrentContentIntent(MENTION_ID)).thenReturn("organic_opinion");
+        when(contentIntentOverrideRepository.save(any(ContentIntentOverride.class))).thenAnswer(inv -> {
+            ContentIntentOverride o = inv.getArgument(0);
+            o.setId(70L);
+            return o;
+        });
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest(
+                "official_promo", "this is a studio-boosted post, not organic");
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-content-intent", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mention.id").value(MENTION_ID))
+                .andExpect(jsonPath("$.overrideId").value(70))
+                .andExpect(jsonPath("$.previousCategory").value("organic_opinion"))
+                .andExpect(jsonPath("$.newCategory").value("official_promo"))
+                .andExpect(jsonPath("$.createdAt").exists());
+
+        verify(mentionRepository, never()).save(any());
+
+        ArgumentCaptor<ContentIntentOverride> captor = ArgumentCaptor.forClass(ContentIntentOverride.class);
+        verify(contentIntentOverrideRepository).save(captor.capture());
+        ContentIntentOverride saved = captor.getValue();
+        assertThat(saved.getMentionId()).isEqualTo(MENTION_ID);
+        assertThat(saved.getEntityId()).isEqualTo(ENTITY_ID);
+        assertThat(saved.getUserId()).isEqualTo(USER_ID);
+        assertThat(saved.getPreviousCategory()).isEqualTo("organic_opinion");
+        assertThat(saved.getNewCategory()).isEqualTo("official_promo");
+        assertThat(saved.getReason()).isEqualTo("this is a studio-boosted post, not organic");
+        assertThat(saved.getCreatedAt()).isNotNull();
+    }
+
+    @Test
+    void overrideContentIntent_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest("official_promo", null);
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-content-intent", 404L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        verify(contentIntentOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideContentIntent_returns400WhenCategoryBlank() throws Exception {
+        String body = mapper.writeValueAsString(java.util.Map.of("category", ""));
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-content-intent", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(contentIntentOverrideRepository, never()).save(any());
+    }
+
+    @Test
+    void overrideRegion_neverWritesTheUpstreamMentionRowAndPersistsOverlayInstead() throws Exception {
+        Mention mention = buildMention(Sentiment.NEGATIVE);
+        when(mentionRepository.findById(MENTION_ID)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findCurrentRegion(MENTION_ID)).thenReturn("Karnataka");
+        when(regionOverrideRepository.save(any(RegionOverride.class))).thenAnswer(inv -> {
+            RegionOverride o = inv.getArgument(0);
+            o.setId(80L);
+            return o;
+        });
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest(
+                "Tamil Nadu", "author's profile location is Chennai, not Bangalore");
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-region", MENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overrideId").value(80))
+                .andExpect(jsonPath("$.previousCategory").value("Karnataka"))
+                .andExpect(jsonPath("$.newCategory").value("Tamil Nadu"));
+
+        verify(mentionRepository, never()).save(any());
+
+        ArgumentCaptor<RegionOverride> captor = ArgumentCaptor.forClass(RegionOverride.class);
+        verify(regionOverrideRepository).save(captor.capture());
+        assertThat(captor.getValue().getPreviousCategory()).isEqualTo("Karnataka");
+        assertThat(captor.getValue().getNewCategory()).isEqualTo("Tamil Nadu");
+    }
+
+    @Test
+    void overrideRegion_returns404WhenMentionMissing() throws Exception {
+        when(mentionRepository.findById(404L)).thenReturn(Optional.empty());
+
+        OverrideCategoryRequest request = new OverrideCategoryRequest("Tamil Nadu", null);
+
+        mvc.perform(post("/api/mentions/{id}/actions/override-region", 404L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        verify(regionOverrideRepository, never()).save(any());
     }
 
     @Test

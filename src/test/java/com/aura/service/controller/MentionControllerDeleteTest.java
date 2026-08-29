@@ -7,7 +7,9 @@ import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.AuthorTypeOverrideRepository;
+import com.aura.service.repository.ContentIntentOverrideRepository;
 import com.aura.service.repository.MobilizeActionRepository;
+import com.aura.service.repository.RegionOverrideRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
 import com.aura.service.repository.TopicCategoryOverrideRepository;
@@ -36,6 +38,8 @@ class MentionControllerDeleteTest {
     private ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private TopicCategoryOverrideRepository topicCategoryOverrideRepository;
     private AuthorTypeOverrideRepository authorTypeOverrideRepository;
+    private ContentIntentOverrideRepository contentIntentOverrideRepository;
+    private RegionOverrideRepository regionOverrideRepository;
     private EntityAccessService entityAccess;
     private MockMvc mvc;
 
@@ -49,6 +53,8 @@ class MentionControllerDeleteTest {
         reviewAspectOverrideRepository = mock(ReviewAspectOverrideRepository.class);
         topicCategoryOverrideRepository = mock(TopicCategoryOverrideRepository.class);
         authorTypeOverrideRepository = mock(AuthorTypeOverrideRepository.class);
+        contentIntentOverrideRepository = mock(ContentIntentOverrideRepository.class);
+        regionOverrideRepository = mock(RegionOverrideRepository.class);
         entityAccess = mock(EntityAccessService.class);
 
         MentionService service = new MentionService(
@@ -60,6 +66,8 @@ class MentionControllerDeleteTest {
                 reviewAspectOverrideRepository,
                 topicCategoryOverrideRepository,
                 authorTypeOverrideRepository,
+                contentIntentOverrideRepository,
+                regionOverrideRepository,
                 entityAccess);
         MentionController controller = new MentionController(service);
 
@@ -93,6 +101,8 @@ class MentionControllerDeleteTest {
         verify(reviewAspectOverrideRepository).deleteByMentionId(1L);
         verify(topicCategoryOverrideRepository).deleteByMentionId(1L);
         verify(authorTypeOverrideRepository).deleteByMentionId(1L);
+        verify(contentIntentOverrideRepository).deleteByMentionId(1L);
+        verify(regionOverrideRepository).deleteByMentionId(1L);
         verify(mentionRepository).unlinkMentionFromEntities(1L);
         verify(mentionRepository).delete(m);
     }
@@ -112,5 +122,7 @@ class MentionControllerDeleteTest {
         verify(reviewAspectOverrideRepository, never()).deleteByMentionId(anyLong());
         verify(topicCategoryOverrideRepository, never()).deleteByMentionId(anyLong());
         verify(authorTypeOverrideRepository, never()).deleteByMentionId(anyLong());
+        verify(contentIntentOverrideRepository, never()).deleteByMentionId(anyLong());
+        verify(regionOverrideRepository, never()).deleteByMentionId(anyLong());
     }
 }

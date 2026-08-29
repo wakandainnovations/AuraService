@@ -13,19 +13,23 @@ import com.aura.service.dto.OverrideReviewAspectResponse;
 import com.aura.service.dto.PostReplyRequest;
 import com.aura.service.dto.PostReplyResponse;
 import com.aura.service.entity.AuthorTypeOverride;
+import com.aura.service.entity.ContentIntentOverride;
 import com.aura.service.entity.CrisisPlan;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.Mention;
 import com.aura.service.entity.MobilizeAction;
+import com.aura.service.entity.RegionOverride;
 import com.aura.service.entity.ReplyDraft;
 import com.aura.service.entity.ReplyTemplate;
 import com.aura.service.entity.ReviewAspectOverride;
 import com.aura.service.entity.TopicCategoryOverride;
 import com.aura.service.entity.User;
 import com.aura.service.repository.AuthorTypeOverrideRepository;
+import com.aura.service.repository.ContentIntentOverrideRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
+import com.aura.service.repository.RegionOverrideRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
 import com.aura.service.repository.TopicCategoryOverrideRepository;
@@ -67,6 +71,8 @@ public class MentionActionController {
     private final ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private final TopicCategoryOverrideRepository topicCategoryOverrideRepository;
     private final AuthorTypeOverrideRepository authorTypeOverrideRepository;
+    private final ContentIntentOverrideRepository contentIntentOverrideRepository;
+    private final RegionOverrideRepository regionOverrideRepository;
     private final UserRepository userRepository;
     private final MobilizeAlliesService mobilizeAlliesService;
     private final ReplyTemplateService replyTemplateService;
@@ -106,6 +112,8 @@ public class MentionActionController {
         List<ReviewAspectOverride> reviewAspectOverrides = reviewAspectOverrideRepository.findByMentionId(mentionId);
         List<TopicCategoryOverride> topicCategoryOverrides = topicCategoryOverrideRepository.findByMentionId(mentionId);
         List<AuthorTypeOverride> authorTypeOverrides = authorTypeOverrideRepository.findByMentionId(mentionId);
+        List<ContentIntentOverride> contentIntentOverrides = contentIntentOverrideRepository.findByMentionId(mentionId);
+        List<RegionOverride> regionOverrides = regionOverrideRepository.findByMentionId(mentionId);
 
         Set<Long> userIds = new HashSet<>();
         for (ReplyDraft d : drafts) userIds.add(d.getUserId());
@@ -114,6 +122,8 @@ public class MentionActionController {
         for (ReviewAspectOverride o : reviewAspectOverrides) userIds.add(o.getUserId());
         for (TopicCategoryOverride o : topicCategoryOverrides) userIds.add(o.getUserId());
         for (AuthorTypeOverride o : authorTypeOverrides) userIds.add(o.getUserId());
+        for (ContentIntentOverride o : contentIntentOverrides) userIds.add(o.getUserId());
+        for (RegionOverride o : regionOverrides) userIds.add(o.getUserId());
 
         Map<Long, String> usernames = new java.util.HashMap<>();
         for (User u : userRepository.findAllById(userIds)) {
@@ -122,7 +132,8 @@ public class MentionActionController {
 
         List<MentionActionLogEntry> entries = new ArrayList<>(
                 drafts.size() + plans.size() + mobilizes.size() + reviewAspectOverrides.size()
-                        + topicCategoryOverrides.size() + authorTypeOverrides.size());
+                        + topicCategoryOverrides.size() + authorTypeOverrides.size()
+                        + contentIntentOverrides.size() + regionOverrides.size());
         for (ReplyDraft d : drafts) {
             entries.add(MentionActionLogEntry.builder()
                     .type(MentionActionLogEntry.Type.REPLY_DRAFT)
@@ -177,6 +188,28 @@ public class MentionActionController {
         for (AuthorTypeOverride o : authorTypeOverrides) {
             entries.add(MentionActionLogEntry.builder()
                     .type(MentionActionLogEntry.Type.AUTHOR_TYPE_OVERRIDE)
+                    .id(o.getId())
+                    .actor(usernames.get(o.getUserId()))
+                    .createdAt(o.getCreatedAt())
+                    .previousCategoryValue(o.getPreviousCategory())
+                    .newCategoryValue(o.getNewCategory())
+                    .reason(o.getReason())
+                    .build());
+        }
+        for (ContentIntentOverride o : contentIntentOverrides) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.CONTENT_INTENT_OVERRIDE)
+                    .id(o.getId())
+                    .actor(usernames.get(o.getUserId()))
+                    .createdAt(o.getCreatedAt())
+                    .previousCategoryValue(o.getPreviousCategory())
+                    .newCategoryValue(o.getNewCategory())
+                    .reason(o.getReason())
+                    .build());
+        }
+        for (RegionOverride o : regionOverrides) {
+            entries.add(MentionActionLogEntry.builder()
+                    .type(MentionActionLogEntry.Type.REGION_OVERRIDE)
                     .id(o.getId())
                     .actor(usernames.get(o.getUserId()))
                     .createdAt(o.getCreatedAt())
@@ -438,6 +471,82 @@ public class MentionActionController {
         String previousCategory = mentionRepository.findCurrentAuthorType(mentionId);
         Instant createdAt = Instant.now();
         AuthorTypeOverride override = authorTypeOverrideRepository.save(AuthorTypeOverride.builder()
+                .mentionId(mention.getId())
+                .entityId(entity.getId())
+                .userId(user.getId())
+                .previousCategory(previousCategory)
+                .newCategory(request.getCategory())
+                .reason(request.getReason())
+                .createdAt(createdAt)
+                .build());
+
+        return ResponseEntity.ok(new OverrideCategoryResponse(
+                toMentionResponse(mention),
+                override.getId(),
+                previousCategory,
+                request.getCategory(),
+                createdAt
+        ));
+    }
+
+    /**
+     * Human correction of a mention's {@code content_intent}. Same append-only overlay design as
+     * {@link #overrideTopicCategory} — see {@link ContentIntentOverride}.
+     */
+    @PostMapping("/override-content-intent")
+    public ResponseEntity<OverrideCategoryResponse> overrideContentIntent(
+            @PathVariable("mentionId") Long mentionId,
+            @Valid @RequestBody OverrideCategoryRequest request,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        Mention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
+            return ResponseEntity.notFound().build();
+        }
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
+        User user = requireUser(principal);
+
+        String previousCategory = mentionRepository.findCurrentContentIntent(mentionId);
+        Instant createdAt = Instant.now();
+        ContentIntentOverride override = contentIntentOverrideRepository.save(ContentIntentOverride.builder()
+                .mentionId(mention.getId())
+                .entityId(entity.getId())
+                .userId(user.getId())
+                .previousCategory(previousCategory)
+                .newCategory(request.getCategory())
+                .reason(request.getReason())
+                .createdAt(createdAt)
+                .build());
+
+        return ResponseEntity.ok(new OverrideCategoryResponse(
+                toMentionResponse(mention),
+                override.getId(),
+                previousCategory,
+                request.getCategory(),
+                createdAt
+        ));
+    }
+
+    /**
+     * Human correction of a mention's {@code predicted_region}. Same append-only overlay design as
+     * {@link #overrideTopicCategory} — see {@link RegionOverride}.
+     */
+    @PostMapping("/override-region")
+    public ResponseEntity<OverrideCategoryResponse> overrideRegion(
+            @PathVariable("mentionId") Long mentionId,
+            @Valid @RequestBody OverrideCategoryRequest request,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        Mention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
+            return ResponseEntity.notFound().build();
+        }
+        ManagedEntity entity = entityAccessService.assertMentionAccessible(mention);
+        User user = requireUser(principal);
+
+        String previousCategory = mentionRepository.findCurrentRegion(mentionId);
+        Instant createdAt = Instant.now();
+        RegionOverride override = regionOverrideRepository.save(RegionOverride.builder()
                 .mentionId(mention.getId())
                 .entityId(entity.getId())
                 .userId(user.getId())

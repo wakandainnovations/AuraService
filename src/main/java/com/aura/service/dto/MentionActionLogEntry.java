@@ -21,7 +21,9 @@ public class MentionActionLogEntry {
         MOBILIZE,
         REVIEW_ASPECT_OVERRIDE,
         TOPIC_CATEGORY_OVERRIDE,
-        AUTHOR_TYPE_OVERRIDE
+        AUTHOR_TYPE_OVERRIDE,
+        CONTENT_INTENT_OVERRIDE,
+        REGION_OVERRIDE
     }
 
     private Type type;
@@ -41,7 +43,11 @@ public class MentionActionLogEntry {
     private ReviewAspectCategory previousCategory;
     private ReviewAspectCategory newCategory;
 
-    /** Set only for {@code TOPIC_CATEGORY_OVERRIDE}/{@code AUTHOR_TYPE_OVERRIDE} — plain strings, since that upstream taxonomy has no fixed enum here. */
+    /**
+     * Set only for {@code TOPIC_CATEGORY_OVERRIDE}/{@code AUTHOR_TYPE_OVERRIDE}/
+     * {@code CONTENT_INTENT_OVERRIDE}/{@code REGION_OVERRIDE} — plain strings, since none of those
+     * upstream taxonomies have a fixed enum here.
+     */
     private String previousCategoryValue;
     private String newCategoryValue;
 

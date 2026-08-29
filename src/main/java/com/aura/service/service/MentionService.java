@@ -3,9 +3,11 @@ package com.aura.service.service;
 import com.aura.service.entity.Mention;
 import com.aura.service.repository.AbuseReportRepository;
 import com.aura.service.repository.AuthorTypeOverrideRepository;
+import com.aura.service.repository.ContentIntentOverrideRepository;
 import com.aura.service.repository.CrisisPlanRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.MobilizeActionRepository;
+import com.aura.service.repository.RegionOverrideRepository;
 import com.aura.service.repository.ReplyDraftRepository;
 import com.aura.service.repository.ReviewAspectOverrideRepository;
 import com.aura.service.repository.TopicCategoryOverrideRepository;
@@ -25,6 +27,8 @@ public class MentionService {
     private final ReviewAspectOverrideRepository reviewAspectOverrideRepository;
     private final TopicCategoryOverrideRepository topicCategoryOverrideRepository;
     private final AuthorTypeOverrideRepository authorTypeOverrideRepository;
+    private final ContentIntentOverrideRepository contentIntentOverrideRepository;
+    private final RegionOverrideRepository regionOverrideRepository;
     private final EntityAccessService entityAccessService;
 
     /**
@@ -52,6 +56,8 @@ public class MentionService {
         reviewAspectOverrideRepository.deleteByMentionId(mentionId);
         topicCategoryOverrideRepository.deleteByMentionId(mentionId);
         authorTypeOverrideRepository.deleteByMentionId(mentionId);
+        contentIntentOverrideRepository.deleteByMentionId(mentionId);
+        regionOverrideRepository.deleteByMentionId(mentionId);
         mentionRepository.unlinkMentionFromEntities(mentionId);
 
         mentionRepository.delete(mention);
