@@ -281,7 +281,16 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
            "x.author_type, y.author_type, r.author_type, i.author_type)) = LOWER(CAST(:authorType AS VARCHAR))) " +
            "AND (CAST(:region AS VARCHAR) IS NULL OR LOWER(COALESCE(" +
            "(SELECT ro.new_category FROM region_overrides ro WHERE ro.mention_id = m.id ORDER BY ro.created_at DESC LIMIT 1), " +
-           "x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR)))",
+           "x.predicted_region, y.predicted_region, r.predicted_region, i.predicted_region)) = LOWER(CAST(:region AS VARCHAR))) " +
+           // Explicit top-level ORDER BY, since this query's WHERE clause now contains its own
+           // per-override "ORDER BY ... LIMIT 1" subqueries (see the overlay COALESCEs above).
+           // Hibernate's native-query Pageable/Sort support finds the query's *last* ORDER BY
+           // token to append the paging sort to - with a Sort-bearing Pageable it mistook one of
+           // those subquery ORDER BYs for the outer query's, appending ", m.post_date desc" after
+           // an already-closed subquery instead of adding a real top-level ORDER BY, which
+           // Postgres then rejected as a syntax error. Owning the sort here (and passing an
+           // unsorted Pageable from DashboardService.getMentions) sidesteps that entirely.
+           "ORDER BY m.post_date DESC",
            countQuery = "SELECT count(DISTINCT m.id) FROM mentions m " +
            "LEFT JOIN mention_entities me ON me.mention_id = m.id " +
            "LEFT JOIN x_posts x ON x.id = m.post_id AND m.platform = 'X' " +

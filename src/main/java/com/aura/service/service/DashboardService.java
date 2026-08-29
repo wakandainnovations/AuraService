@@ -595,7 +595,10 @@ public class DashboardService {
             int page,
             int size
     ) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by("post_date").descending());
+        // No Sort here - findFilteredMentions bakes its own "ORDER BY m.post_date DESC" into the
+        // native query text. Attaching a Sort to this Pageable makes Hibernate try to inject an
+        // ORDER BY itself, which it gets wrong for this query (see the comment on that query).
+        Pageable pageable = PageRequest.of(page, size);
 
         List<Long> entityIds = (entityId == null) ? new ArrayList<>() : Collections.singletonList(entityId);
 
