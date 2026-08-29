@@ -41,7 +41,7 @@ class EntityServiceMentionBackfillTest {
         LicenseService licenseService = mock(LicenseService.class);
         IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
-                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class));
+                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class), mock(CheckpointDefaultsService.class));
         // save() assigns an id (as IDENTITY would) so the backfill is invoked with the persisted id.
         when(entityRepository.save(any(ManagedEntity.class))).thenAnswer(invocation -> {
             ManagedEntity e = invocation.getArgument(0);

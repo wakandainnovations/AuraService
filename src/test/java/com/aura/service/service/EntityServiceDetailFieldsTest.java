@@ -33,7 +33,7 @@ class EntityServiceDetailFieldsTest {
         LicenseService licenseService = mock(LicenseService.class);
         IndianMacroEconomicDataService macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
-                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class));
+                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class), mock(CheckpointDefaultsService.class));
     }
 
     @Test

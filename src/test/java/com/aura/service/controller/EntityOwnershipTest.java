@@ -7,6 +7,7 @@ import com.aura.service.repository.CheckpointRepository;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.MentionRepository;
 import com.aura.service.repository.UserRepository;
+import com.aura.service.service.CheckpointDefaultsService;
 import com.aura.service.service.EntityAccessServiceImpl;
 import com.aura.service.service.EntityImageMatcher;
 import com.aura.service.service.EntityService;
@@ -68,7 +69,7 @@ class EntityOwnershipTest {
         EntityImageMatcher imageMatcher = mock(EntityImageMatcher.class);
         EntityService service = new EntityService(
                 entityRepository, checkpointRepository, mentionRepository, entityAccess, licenseService,
-                macroEconomicDataService, imageMatcher);
+                macroEconomicDataService, imageMatcher, mock(CheckpointDefaultsService.class));
         EntityController controller = new EntityController(service);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)

@@ -1,10 +1,12 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.CheckpointRecommendationsResponse;
 import com.aura.service.dto.CheckpointResponse;
 import com.aura.service.dto.CreateCheckpointRequest;
 import com.aura.service.dto.EntitledResponse;
 import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.licensing.Feature;
+import com.aura.service.service.CheckpointRecommendationService;
 import com.aura.service.service.CheckpointService;
 import com.aura.service.service.EntitlementService;
 import jakarta.validation.Valid;
@@ -25,6 +27,7 @@ import java.util.List;
 public class CheckpointController {
 
     private final CheckpointService checkpointService;
+    private final CheckpointRecommendationService checkpointRecommendationService;
     private final EntitlementService entitlementService;
 
     @PostMapping
@@ -35,6 +38,13 @@ public class CheckpointController {
     @GetMapping("/entity/{entityId}")
     public EntitledResponse<List<CheckpointResponse>> listByEntity(@PathVariable("entityId") Long entityId) {
         return entitlementService.evaluate(Feature.CHECKPOINTS, () -> checkpointService.listByEntity(entityId));
+    }
+
+    @GetMapping("/entity/{entityId}/recommendations")
+    public EntitledResponse<CheckpointRecommendationsResponse> recommendations(
+            @PathVariable("entityId") Long entityId) {
+        return entitlementService.evaluate(Feature.CHECKPOINTS,
+                () -> checkpointRecommendationService.getRecommendations(entityId));
     }
 
     @PatchMapping("/{checkpointId}")

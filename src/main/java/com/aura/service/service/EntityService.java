@@ -46,6 +46,7 @@ public class EntityService {
     private final LicenseService licenseService;
     private final IndianMacroEconomicDataService macroEconomicDataService;
     private final EntityImageMatcher imageMatcher;
+    private final CheckpointDefaultsService checkpointDefaultsService;
 
     @Value("${entity.images.base-path}")
     private String imagesBasePath;
@@ -89,6 +90,9 @@ public class EntityService {
         // Attribute any mentions already collected for these keywords, so a brand-new entity sees its
         // keywords' history on the dashboards instead of an empty join table.
         resyncMentionLinks(entity.getId());
+        if ("MOVIE".equalsIgnoreCase(entityType)) {
+            checkpointDefaultsService.seedDefaults(entity);
+        }
 
         return mapToDetailResponse(entity);
     }
@@ -130,6 +134,9 @@ public class EntityService {
         entity = entityRepository.save(entity);
         // Keywords may have changed; re-derive this entity's mention links from the new keyword set.
         resyncMentionLinks(entity.getId());
+        if ("MOVIE".equalsIgnoreCase(entityType)) {
+            checkpointDefaultsService.recomputeReleaseDerivedStages(entity);
+        }
 
         return mapToDetailResponse(entity);
     }

@@ -43,7 +43,7 @@ class EntityServiceMovieFinancialFieldsTest {
         LicenseService licenseService = mock(LicenseService.class);
         macroEconomicDataService = mock(IndianMacroEconomicDataService.class);
         service = new EntityService(entityRepository, checkpointRepository, mentionRepository,
-                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class));
+                entityAccess, licenseService, macroEconomicDataService, mock(EntityImageMatcher.class), mock(CheckpointDefaultsService.class));
         when(entityRepository.save(any(ManagedEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(entityAccess.currentUser()).thenReturn(new User());

@@ -109,6 +109,18 @@ class CheckpointGraphSyncServiceImplTest {
     }
 
     @Test
+    void checkpointWithNoDateYetIsSkipped() {
+        Checkpoint checkpoint = checkpointOf(movieEntity());
+        checkpoint.setCheckpointDate(null);
+
+        service.syncCheckpoint(checkpoint);
+
+        verify(graphNodeFactory, never()).materializeCheckpoint(any());
+        verify(graphNodeFactory, never()).materializeMovie(any());
+        verify(graphEdgeRepository, never()).save(any());
+    }
+
+    @Test
     void syncAllCheckpointsSyncsEveryStoredCheckpoint() {
         Checkpoint first = checkpointOf(movieEntity());
         Checkpoint second = checkpointOf(movieEntity());

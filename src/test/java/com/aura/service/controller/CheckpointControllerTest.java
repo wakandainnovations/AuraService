@@ -1,10 +1,15 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.CheckpointRecommendation;
+import com.aura.service.dto.CheckpointRecommendationsResponse;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.AnchorType;
+import com.aura.service.enums.CheckpointStage;
 import com.aura.service.enums.CheckpointType;
 import com.aura.service.enums.LicenseTier;
 import com.aura.service.repository.CheckpointRepository;
+import com.aura.service.service.CheckpointRecommendationService;
 import com.aura.service.service.CheckpointService;
 import com.aura.service.service.EntitlementService;
 import com.aura.service.service.EntitlementServiceImpl;
@@ -51,6 +56,7 @@ class CheckpointControllerTest {
     private EntityAccessService entityAccess;
     private LicenseService licenseService;
     private CheckpointService service;
+    private CheckpointRecommendationService recommendationService;
     private final ObjectMapper mapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -61,6 +67,7 @@ class CheckpointControllerTest {
         entityAccess = mock(EntityAccessService.class);
         licenseService = mock(LicenseService.class);
         service = new CheckpointService(checkpointRepository, entityAccess);
+        recommendationService = mock(CheckpointRecommendationService.class);
     }
 
     /** Builds MockMvc for a caller who is/isn't an admin (the simplest way to flip entitlement). */
@@ -68,7 +75,7 @@ class CheckpointControllerTest {
         when(entityAccess.currentUserIsAdmin()).thenReturn(entitledAdmin);
         EntitlementService entitlement = new EntitlementServiceImpl(
                 licenseService, entityAccess, new PreviewMaskingServiceImpl());
-        CheckpointController controller = new CheckpointController(service, entitlement);
+        CheckpointController controller = new CheckpointController(service, recommendationService, entitlement);
 
         MappingJackson2HttpMessageConverter jacksonConverter = new MappingJackson2HttpMessageConverter();
         jacksonConverter.setObjectMapper(mapper);
@@ -296,6 +303,84 @@ class CheckpointControllerTest {
                 .andExpect(jsonPath("$.entitled").value(true));
 
         verify(checkpointRepository).delete(existing);
+    }
+
+    @Test
+    void update_selectedAnchors_onAnchorSeedStage_replacesSelection() throws Exception {
+        Checkpoint existing = checkpoint(11L, null, "Pre-Announcement");
+        existing.setStage(CheckpointStage.ANCHOR_SEED);
+        when(checkpointRepository.findById(11L)).thenReturn(Optional.of(existing));
+        when(checkpointRepository.save(any(Checkpoint.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        String body = mapper.writeValueAsString(Map.of(
+                "selectedAnchors", List.of("CASTING_INFLUENCER", "VIRAL_BEHIND_THE_SCENES")));
+
+        mvcFor(true).perform(patch("/api/checkpoints/{checkpointId}", 11L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.selectedAnchors[0]").value("CASTING_INFLUENCER"))
+                .andExpect(jsonPath("$.data.selectedAnchors[1]").value("VIRAL_BEHIND_THE_SCENES"));
+
+        org.assertj.core.api.Assertions.assertThat(existing.getSelectedAnchors())
+                .containsExactly(AnchorType.CASTING_INFLUENCER, AnchorType.VIRAL_BEHIND_THE_SCENES);
+    }
+
+    @Test
+    void update_selectedAnchors_onNonAnchorSeedStage_returns400() throws Exception {
+        Checkpoint existing = checkpoint(12L, LocalDate.of(2026, 6, 15), "Teaser Release");
+        existing.setStage(CheckpointStage.TENSION_CURIOSITY);
+        when(checkpointRepository.findById(12L)).thenReturn(Optional.of(existing));
+
+        String body = mapper.writeValueAsString(Map.of(
+                "selectedAnchors", List.of("CASTING_INFLUENCER")));
+
+        mvcFor(true).perform(patch("/api/checkpoints/{checkpointId}", 12L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(checkpointRepository, never()).save(any());
+    }
+
+    @Test
+    void recommendations_entitled_returnsRealData() throws Exception {
+        CheckpointRecommendationsResponse response = CheckpointRecommendationsResponse.builder()
+                .entityId(ENTITY_ID)
+                .entityName(ENTITY_NAME)
+                .recommendations(List.of(CheckpointRecommendation.builder()
+                        .stage(CheckpointStage.ANCHOR_SEED)
+                        .ruleType("INSUFFICIENT_ANCHORS")
+                        .message("Only 1 anchor(s) selected")
+                        .selectedAnchorCount(1)
+                        .requiredAnchorCount(2)
+                        .build()))
+                .build();
+        when(recommendationService.getRecommendations(ENTITY_ID)).thenReturn(response);
+
+        mvcFor(true).perform(get("/api/checkpoints/entity/{entityId}/recommendations", ENTITY_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(true))
+                .andExpect(jsonPath("$.data.entityId").value(ENTITY_ID))
+                .andExpect(jsonPath("$.data.recommendations[0].ruleType").value("INSUFFICIENT_ANCHORS"));
+    }
+
+    @Test
+    void recommendations_unentitled_returnsMaskedPreview() throws Exception {
+        when(entityAccess.currentUserIsAdmin()).thenReturn(false);
+        when(licenseService.effectiveTier()).thenReturn(LicenseTier.BRONZE);
+        CheckpointRecommendationsResponse response = CheckpointRecommendationsResponse.builder()
+                .entityId(ENTITY_ID)
+                .entityName(ENTITY_NAME)
+                .recommendations(List.of())
+                .build();
+        when(recommendationService.getRecommendations(ENTITY_ID)).thenReturn(response);
+
+        mvcFor(false).perform(get("/api/checkpoints/entity/{entityId}/recommendations", ENTITY_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entitled").value(false))
+                .andExpect(jsonPath("$.requiredTier").value("SILVER"))
+                .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     // ------------------------------------------------------------------

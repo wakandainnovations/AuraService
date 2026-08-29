@@ -1163,12 +1163,15 @@ Not entitled:
 
 Checkpoints mark significant dates for a managed entity (e.g., trailer release, opening weekend, award nomination). They are referenced by the sentiment-over-time, checkpoint-impact, and checkpoint-trend dashboard APIs to overlay milestones on sentiment charts.
 
+Every **MOVIE** entity is automatically seeded with **9 default lifecycle-stage checkpoints** (`isDefault: true`) spanning the marketing funnel from pre-announcement through long-tail catalog value — see [7e. Get Checkpoint Stage Catalog](#7e-get-checkpoint-stage-catalog) for the full definition of each stage. Stages 1-5 (pre-release) start with `checkpointDate: null` until the date is known — set it with [7c. Update Checkpoint](#7c-update-checkpoint) like any other checkpoint. Stages 6-9 (post-release) have their `checkpointDate`/`windowEndDate` computed automatically from the entity's `releaseDate` and kept in sync whenever it changes. Users can still add their own free-form checkpoints (`isDefault: false`) alongside the defaults, exactly as before.
+
 > **Ownership:** Every checkpoint operation is scoped to the entity's owner. Creating or listing checkpoints for an entity, or updating/deleting a checkpoint, returns `404 Not Found` when the referenced entity does not exist **or** is owned by another user.
 
 > **Tier-gated (SILVER).** Checkpoints (`/api/checkpoints/**`) require at least the **SILVER** tier; a
 > BRONZE caller still gets `200 OK` with an `EntitledResponse` (`entitled=false` plus a masked
 > `preview` for reads; a plain locked envelope with the mutation skipped for writes). Admins are always
-> entitled. See [Premium Feature Tier Gating](#premium-feature-tier-gating).
+> entitled. See [Premium Feature Tier Gating](#premium-feature-tier-gating). The catalog endpoints
+> (7e/7f) are plain reference data and are **not** gated or wrapped in an `EntitledResponse`.
 
 The `checkpoints` table (like `graph_nodes`/`graph_edges`) is Hibernate-managed via `ddl-auto=update`
 rather than the manual init script above, so it isn't in the `CREATE TABLE` block. Its `checkpoint_type`
@@ -1177,6 +1180,12 @@ column classifies each checkpoint as one of `TEASER`, `TRAILER`, `MUSIC_LAUNCH`,
 variable instead of freeform text. The column is nullable at the DB level so it can be added to an
 already-populated table; a startup backfill (`CheckpointTypeBackfill`) then sets any legacy null
 `checkpoint_type` to `OTHER`. On a fresh database it is always populated.
+
+Alongside `checkpoint_type`, the table also carries: `stage` (one of the 9 `CheckpointStage` values, null
+for a user-added custom checkpoint), `is_default` (true for the 9 seeded rows), `window_end_date`
+(informational upper bound of a computed window, stages 6-9 only), and a `checkpoint_selected_anchors`
+child table (only meaningful on the stage-1 "Pre-Announcement" row — see 7f). A startup backfill
+(`CheckpointDefaultsBackfill`) seeds the 9 defaults for any MOVIE entity that predates this feature.
 
 ### 7a. Create Checkpoint
 
@@ -1217,11 +1226,18 @@ Content-Type: application/json
     "entityName": "The Quantum Paradox",
     "checkpointDate": "2026-03-15",
     "description": "Trailer Launch",
-    "checkpointType": "TRAILER"
+    "checkpointType": "TRAILER",
+    "stage": null,
+    "isDefault": false,
+    "windowEndDate": null,
+    "selectedAnchors": []
   },
   "preview": null
 }
 ```
+
+A user-created checkpoint (as above) always has `stage: null` and `isDefault: false` — those fields only
+describe the 9 auto-seeded lifecycle-stage rows (see 7b).
 
 A caller below **SILVER** instead gets `200 OK` with `entitled: false`, `data: null`, and **no `preview`** — the checkpoint is **not** created (mutations are blocked, not blurred).
 
@@ -1250,25 +1266,51 @@ Authorization: Bearer {jwt_token}
   "requiredTier": "SILVER",
   "data": [
     {
+      "id": 1,
+      "entityId": 1,
+      "entityName": "The Quantum Paradox",
+      "checkpointDate": null,
+      "description": "Pre-Announcement",
+      "checkpointType": "OTHER",
+      "stage": "ANCHOR_SEED",
+      "isDefault": true,
+      "windowEndDate": null,
+      "selectedAnchors": ["CASTING_INFLUENCER", "VIRAL_BEHIND_THE_SCENES"]
+    },
+    {
+      "id": 6,
+      "entityId": 1,
+      "entityName": "The Quantum Paradox",
+      "checkpointDate": "2026-03-16",
+      "description": "Theatrical Window",
+      "checkpointType": "OTHER",
+      "stage": "THEATRICAL_WINDOW",
+      "isDefault": true,
+      "windowEndDate": "2026-04-29",
+      "selectedAnchors": []
+    },
+    {
       "id": 10,
       "entityId": 1,
       "entityName": "The Quantum Paradox",
       "checkpointDate": "2026-03-15",
       "description": "Trailer Launch",
-      "checkpointType": "TRAILER"
-    },
-    {
-      "id": 11,
-      "entityId": 1,
-      "entityName": "The Quantum Paradox",
-      "checkpointDate": "2026-04-01",
-      "description": "Opening Weekend",
-      "checkpointType": "PROMO_EVENT"
+      "checkpointType": "TRAILER",
+      "stage": null,
+      "isDefault": false,
+      "windowEndDate": null,
+      "selectedAnchors": []
     }
   ],
   "preview": null
 }
 ```
+
+The 9 default lifecycle-stage rows (`isDefault: true`) are always present for a MOVIE entity, interleaved
+with any user-added custom checkpoints (`isDefault: false`) in date order (Postgres default: `NULLS
+LAST`, so a stage-1..5 row with no date yet sorts after every dated checkpoint). `windowEndDate` is only
+populated on the 4 release-derived stages (6-9); `selectedAnchors` is only meaningful on the
+`ANCHOR_SEED` (stage 1) row.
 
 A caller below **SILVER** instead gets `entitled: false`, `data: null`, and a masked `preview` — the list is truncated to a single teaser element with every value blurred (numbers bucketed, strings starred), e.g.:
 ```json
@@ -1277,7 +1319,7 @@ A caller below **SILVER** instead gets `entitled: false`, `data: null`, and a ma
   "requiredTier": "SILVER",
   "data": null,
   "preview": [
-    { "id": "a handful", "entityId": "a handful", "entityName": "★★★★★", "checkpointDate": "★★★★★", "description": "★★★★★", "checkpointType": "★★★★★" }
+    { "id": "a handful", "entityId": "a handful", "entityName": "★★★★★", "checkpointDate": "★★★★★", "description": "★★★★★", "checkpointType": "★★★★★", "stage": null, "isDefault": null, "windowEndDate": null, "selectedAnchors": [] }
   ]
 }
 ```
@@ -1311,9 +1353,10 @@ Content-Type: application/json
 ```
 
 **Field Rules:**
-- `checkpointDate` — optional (ISO-8601 date). When provided, must not collide with another checkpoint for the same entity (entity + date is unique).
+- `checkpointDate` — optional (ISO-8601 date). When provided, must not collide with another checkpoint for the same entity (entity + date is unique). This is how a stage-1..5 default checkpoint's date gets set once it's known.
 - `description` — optional; when provided, must be non-blank and at most 20 characters.
 - `checkpointType` — optional; one of `TEASER`, `TRAILER`, `MUSIC_LAUNCH`, `PROMO_EVENT`, `CAST_ANNOUNCEMENT`, `PRESS_MEET`, `OTHER`. Left unchanged when omitted.
+- `selectedAnchors` — optional; a list of `AnchorType` values (`CASTING_INFLUENCER`, `PHYSICAL_ENGINEERING_ASSET`, `ESTABLISHED_IP_DIRECTOR`, `VIRAL_BEHIND_THE_SCENES` — see [7f](#7f-get-anchor-type-catalog)). Only valid on the `ANCHOR_SEED` (stage 1, "Pre-Announcement") checkpoint; omitted leaves the existing selection unchanged, a non-null list (including `[]`) replaces it entirely. Returns `400 Bad Request` if sent for any other checkpoint.
 
 **Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope; the updated checkpoint is the `data` field.
 ```json
@@ -1326,7 +1369,11 @@ Content-Type: application/json
     "entityName": "The Quantum Paradox",
     "checkpointDate": "2026-03-20",
     "description": "Trailer v2",
-    "checkpointType": "TRAILER"
+    "checkpointType": "TRAILER",
+    "stage": null,
+    "isDefault": false,
+    "windowEndDate": null,
+    "selectedAnchors": []
   },
   "preview": null
 }
@@ -1337,7 +1384,7 @@ A caller below **SILVER** gets `entitled: false`, `data: null`, **no `preview`**
 **Status Code:** `200 OK`
 
 **Errors:**
-- `400 Bad Request` — checkpoint not found, validation failure (description too long/blank), or the new date already has a checkpoint for the entity.
+- `400 Bad Request` — checkpoint not found, validation failure (description too long/blank), the new date already has a checkpoint for the entity, or `selectedAnchors` was sent for a checkpoint that isn't the `ANCHOR_SEED` stage.
 
 ---
 
@@ -1361,6 +1408,155 @@ Authorization: Bearer {jwt_token}
 ```
 
 A caller below **SILVER** gets `entitled: false` (and `data`/`preview` both `null`) and the delete is **not** applied.
+
+**Status Code:** `200 OK`
+
+---
+
+### 7e. Get Checkpoint Stage Catalog
+
+**Endpoint:** `GET /api/checkpoints/catalog/stages`
+
+**Description:** Static reference data describing the 9 default marketing-lifecycle stages every MOVIE entity is seeded with. Not tier-gated and not wrapped in an `EntitledResponse` — it's plain educational copy, not user data (the same rationale as `GET /api/license/features`).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "stage": "ANCHOR_SEED",
+    "stageNumber": 1,
+    "displayName": "Pre-Announcement",
+    "objective": "Install tribal ownership before mass awareness",
+    "checkpointQuestion": "Does at least one tribe have a concrete reason to claim this film as theirs?",
+    "windowDescription": "Pre-announcement to first reveal",
+    "windowComputedFromRelease": false
+  },
+  {
+    "stage": "THEATRICAL_WINDOW",
+    "stageNumber": 6,
+    "displayName": "Theatrical Window",
+    "objective": "Maximize FOMO, zeitgeist, and urgency",
+    "checkpointQuestion": "Does messaging still say \"now, before it's gone\"?",
+    "windowDescription": "Day 1 to day 17-45",
+    "windowComputedFromRelease": true
+  }
+]
+```
+
+`windowComputedFromRelease: true` marks the 4 post-release stages (6-9) whose `checkpointDate`/`windowEndDate` are computed automatically from the entity's `releaseDate`; `false` marks the 5 pre-release stages (1-5) that need a date set manually via [7c](#7c-update-checkpoint).
+
+**Status Code:** `200 OK`
+
+---
+
+### 7f. Get Anchor Type Catalog
+
+**Endpoint:** `GET /api/checkpoints/catalog/anchor-types`
+
+**Description:** Static reference data for the 4 "anchor typology" options relevant to the `ANCHOR_SEED` (stage 1, "Pre-Announcement") checkpoint. A movie needs 2-3 of these selected (via [7c](#7c-update-checkpoint)'s `selectedAnchors`) to gain traction before wide awareness. Not tier-gated and not wrapped in an `EntitledResponse`.
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Response:**
+```json
+[
+  {
+    "type": "CASTING_INFLUENCER",
+    "name": "Casting / Influencer",
+    "function": "Imports a pre-existing, highly engaged digital audience",
+    "barrierAddressed": "Uncertainty - gives the audience a known, trusted entity",
+    "example": "Parithabangal Gopi cast in Anbe Diana"
+  },
+  {
+    "type": "PHYSICAL_ENGINEERING_ASSET",
+    "name": "Physical / Engineering Asset",
+    "function": "Generates earned media in non-entertainment sectors (auto, tech)",
+    "barrierAddressed": "Reactance - hides the pitch inside a genuine innovation, not an ad",
+    "example": "The \"Bujji\" vehicle in Kalki 2898 AD"
+  },
+  {
+    "type": "ESTABLISHED_IP_DIRECTOR",
+    "name": "Established IP / Director",
+    "function": "Leverages historical success and existing world-building",
+    "barrierAddressed": "Distance - audience already understands the rules of the world, no explanation needed",
+    "example": "Franchise sequels; auteur-driven tentpoles"
+  },
+  {
+    "type": "VIRAL_BEHIND_THE_SCENES",
+    "name": "Viral Behind-the-Scenes",
+    "function": "Humanizes the production, creates parasocial investment",
+    "barrierAddressed": "Corroborating Evidence - shows the makers' own passion, which reads as more credible than marketing copy",
+    "example": "Grassroots viral clip strategy (e.g. Marty Supreme BTS video)"
+  }
+]
+```
+
+**Status Code:** `200 OK`
+
+---
+
+### 7g. Get Checkpoint Recommendations
+
+**Endpoint:** `GET /api/checkpoints/entity/{entityId}/recommendations`
+
+**Description:** Rule-based recommendations against the entity's default lifecycle checkpoints — never LLM-generated, every number is a real query result or a stated, fixed threshold. Two rules:
+- `INSUFFICIENT_ANCHORS` — the `ANCHOR_SEED` checkpoint has fewer than 2 anchors selected.
+- `BELOW_PEER_TRACTION` — a default checkpoint's mention volume in a ±7-day window around its date is less than half the average of the entity's configured competitors' volume in the same window (skipped when the entity has no competitors, or when the peer average itself is below a 5-mention noise floor).
+
+**Headers:**
+```
+Authorization: Bearer {jwt_token}
+```
+
+**Path Parameters:**
+- `entityId` — Entity ID (e.g., 1)
+
+**Response:** Wrapped in an [`EntitledResponse`](#premium-feature-tier-gating) envelope.
+```json
+{
+  "entitled": true,
+  "requiredTier": "SILVER",
+  "data": {
+    "entityId": 1,
+    "entityName": "The Quantum Paradox",
+    "recommendations": [
+      {
+        "stage": "ANCHOR_SEED",
+        "checkpointId": 1,
+        "ruleType": "INSUFFICIENT_ANCHORS",
+        "message": "Only 1 anchor(s) selected for Pre-Announcement - select at least 2-3 (of Casting/Influencer, Physical/Engineering Asset, Established IP/Director, Viral Behind-the-Scenes) to build tribal ownership before wide awareness.",
+        "selectedAnchorCount": 1,
+        "requiredAnchorCount": 2,
+        "selfMentionCount": null,
+        "peerAverageMentionCount": null,
+        "peerEntityNames": null
+      },
+      {
+        "stage": "TENSION_CURIOSITY",
+        "checkpointId": 2,
+        "ruleType": "BELOW_PEER_TRACTION",
+        "message": "Compared to Rival Film, there was not enough buzz for this Teaser Release - work on Trailer Release to build traction.",
+        "selectedAnchorCount": null,
+        "requiredAnchorCount": null,
+        "selfMentionCount": 4,
+        "peerAverageMentionCount": 22.5,
+        "peerEntityNames": ["Rival Film"]
+      }
+    ]
+  },
+  "preview": null
+}
+```
+
+A caller below **SILVER** instead gets `entitled: false`, `data: null`, and a masked `preview`.
 
 **Status Code:** `200 OK`
 

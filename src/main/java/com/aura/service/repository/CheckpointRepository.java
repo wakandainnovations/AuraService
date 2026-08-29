@@ -21,4 +21,8 @@ public interface CheckpointRepository extends JpaRepository<Checkpoint, Long> {
     List<Checkpoint> findByCheckpointTypeIsNull();
 
     void deleteByManagedEntityId(Long entityId);
+
+    boolean existsByManagedEntityIdAndIsDefaultTrue(Long entityId);
+
+    List<Checkpoint> findByManagedEntityIdAndIsDefaultTrue(Long entityId);
 }

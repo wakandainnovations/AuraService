@@ -31,6 +31,10 @@ import java.time.ZoneOffset;
  *       actions) — so no WATCHED/POSTED_ABOUT-style user edge is derived here.</li>
  *   <li>No Song/Trailer edges. Those entity types don't exist in AuraService's data model
  *       ({@link GraphNodeFactory} only materializes Movie/Actor/Checkpoint).</li>
+ *   <li>No sync for a null-dated checkpoint. A default lifecycle-stage checkpoint (stages 1-5, see
+ *       {@link CheckpointStageCatalog}) can sit with {@code checkpointDate=null} until the user
+ *       supplies one; {@link #syncCheckpoint} skips these rather than deriving an edge with no real
+ *       timestamp.</li>
  * </ul>
  */
 @Slf4j
@@ -55,6 +59,11 @@ public class CheckpointGraphSyncServiceImpl implements CheckpointGraphSyncServic
 
     @Override
     public void syncCheckpoint(Checkpoint checkpoint) {
+        if (checkpoint.getCheckpointDate() == null) {
+            log.debug("Checkpoint {} has no date yet; skipping graph sync.", checkpoint.getId());
+            return;
+        }
+
         ManagedEntity entity = checkpoint.getManagedEntity();
 
         GraphNode entityNode;

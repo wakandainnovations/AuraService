@@ -5,6 +5,7 @@ import com.aura.service.dto.CreateCheckpointRequest;
 import com.aura.service.dto.UpdateCheckpointRequest;
 import com.aura.service.entity.Checkpoint;
 import com.aura.service.entity.ManagedEntity;
+import com.aura.service.enums.CheckpointStage;
 import com.aura.service.enums.CheckpointType;
 import com.aura.service.repository.CheckpointRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -77,6 +79,13 @@ public class CheckpointService {
             checkpoint.setCheckpointType(request.getCheckpointType());
         }
 
+        if (request.getSelectedAnchors() != null) {
+            if (checkpoint.getStage() != CheckpointStage.ANCHOR_SEED) {
+                throw new RuntimeException("selectedAnchors only applies to the Pre-Announcement stage checkpoint");
+            }
+            checkpoint.setSelectedAnchors(new ArrayList<>(request.getSelectedAnchors()));
+        }
+
         Checkpoint saved = checkpointRepository.save(checkpoint);
         return toResponse(saved);
     }
@@ -98,6 +107,10 @@ public class CheckpointService {
         r.setCheckpointDate(c.getCheckpointDate());
         r.setDescription(c.getDescription());
         r.setCheckpointType(c.getCheckpointType());
+        r.setStage(c.getStage());
+        r.setDefault(c.isDefault());
+        r.setWindowEndDate(c.getWindowEndDate());
+        r.setSelectedAnchors(c.getSelectedAnchors());
         return r;
     }
 }
