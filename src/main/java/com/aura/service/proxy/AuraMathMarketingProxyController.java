@@ -93,6 +93,21 @@ public class AuraMathMarketingProxyController {
         );
     }
 
+    @Operation(summary = "List posts classified into a genre, optionally filtered by platform (cacheable, 60s)")
+    @GetMapping(value = "/genre/{genre}/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> genrePosts(
+            @PathVariable("genre") String genre,
+            @RequestParam(value = "platform", required = false) String platform,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "offset", required = false) Integer offset
+    ) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/genre/{genre}/posts",
+                "/api/marketing/genre/" + encodeSegment(genre) + "/posts" + buildPostsQuery(platform, limit, offset),
+                defaultTtlSeconds()
+        );
+    }
+
     // ------------------------------------------------------------------
     // Political parties
     // ------------------------------------------------------------------
@@ -133,6 +148,21 @@ public class AuraMathMarketingProxyController {
         return proxy.forwardMarketingGet(
                 "/v1/marketing/party/{party}/channel-strategy",
                 "/api/marketing/party/" + encodeSegment(party) + "/channel-strategy",
+                defaultTtlSeconds()
+        );
+    }
+
+    @Operation(summary = "List posts mentioning a party, optionally filtered by platform (cacheable, 60s)")
+    @GetMapping(value = "/party/{party}/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> partyPosts(
+            @PathVariable("party") String party,
+            @RequestParam(value = "platform", required = false) String platform,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "offset", required = false) Integer offset
+    ) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/party/{party}/posts",
+                "/api/marketing/party/" + encodeSegment(party) + "/posts" + buildPostsQuery(platform, limit, offset),
                 defaultTtlSeconds()
         );
     }
@@ -181,6 +211,21 @@ public class AuraMathMarketingProxyController {
         );
     }
 
+    @Operation(summary = "List posts mentioning a celebrity, optionally filtered by platform (cacheable, 60s)")
+    @GetMapping(value = "/celebrity/{celebrity}/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> celebrityPosts(
+            @PathVariable("celebrity") String celebrity,
+            @RequestParam(value = "platform", required = false) String platform,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "offset", required = false) Integer offset
+    ) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/celebrity/{celebrity}/posts",
+                "/api/marketing/celebrity/" + encodeSegment(celebrity) + "/posts" + buildPostsQuery(platform, limit, offset),
+                defaultTtlSeconds()
+        );
+    }
+
     // ------------------------------------------------------------------
     // Language-affinity audiences
     // ------------------------------------------------------------------
@@ -202,6 +247,21 @@ public class AuraMathMarketingProxyController {
         return proxy.forwardMarketingGet(
                 "/v1/marketing/language/{language}/movie/{movieName}/users",
                 "/api/marketing/language/" + encodeSegment(language) + "/movie/" + encodeSegment(movieName) + "/users",
+                defaultTtlSeconds()
+        );
+    }
+
+    @Operation(summary = "List posts about movies in a language, optionally filtered by platform (cacheable, 60s)")
+    @GetMapping(value = "/language/{language}/posts", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> languagePosts(
+            @PathVariable("language") String language,
+            @RequestParam(value = "platform", required = false) String platform,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "offset", required = false) Integer offset
+    ) {
+        return proxy.forwardMarketingGet(
+                "/v1/marketing/language/{language}/posts",
+                "/api/marketing/language/" + encodeSegment(language) + "/posts" + buildPostsQuery(platform, limit, offset),
                 defaultTtlSeconds()
         );
     }
@@ -298,18 +358,22 @@ public class AuraMathMarketingProxyController {
         routes.add(route("GET", "/v1/marketing/genre/{genre}/potential-viewers", "/api/marketing/genre/{genre}/potential-viewers"));
         routes.add(route("GET", "/v1/marketing/genre/{genre}/super-spreaders", "/api/marketing/genre/{genre}/super-spreaders"));
         routes.add(route("GET", "/v1/marketing/genre/{genre}/channel-strategy", "/api/marketing/genre/{genre}/channel-strategy"));
+        routes.add(route("GET", "/v1/marketing/genre/{genre}/posts", "/api/marketing/genre/{genre}/posts"));
         routes.add(route("GET", "/v1/marketing/party", "/api/marketing/party"));
         routes.add(route("GET", "/v1/marketing/party/{party}/potential-voters", "/api/marketing/party/{party}/potential-voters"));
         routes.add(route("GET", "/v1/marketing/party/{party}/super-spreaders", "/api/marketing/party/{party}/super-spreaders"));
         routes.add(route("GET", "/v1/marketing/party/{party}/channel-strategy", "/api/marketing/party/{party}/channel-strategy"));
+        routes.add(route("GET", "/v1/marketing/party/{party}/posts", "/api/marketing/party/{party}/posts"));
         routes.add(route("GET", "/v1/marketing/celebrity", "/api/marketing/celebrity"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/potential-fans", "/api/marketing/celebrity/{celebrity}/potential-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/super-fans", "/api/marketing/celebrity/{celebrity}/super-fans"));
         routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/channel-strategy", "/api/marketing/celebrity/{celebrity}/channel-strategy"));
+        routes.add(route("GET", "/v1/marketing/celebrity/{celebrity}/posts", "/api/marketing/celebrity/{celebrity}/posts"));
         routes.add(route("GET", "/v1/marketing/entity-report/{entityId}", "/api/marketing/entity-report/{entityId}/pdf"));
         routes.add(route("GET", "/v1/marketing/entity/{entityId}/report", "/api/marketing/entity/{entityId}/report"));
         routes.add(route("GET", "/v1/marketing/language/{language}/users", "/api/marketing/language/{language}/users"));
         routes.add(route("GET", "/v1/marketing/language/{language}/movie/{movieName}/users", "/api/marketing/language/{language}/movie/{movieName}/users"));
+        routes.add(route("GET", "/v1/marketing/language/{language}/posts", "/api/marketing/language/{language}/posts"));
         routes.add(route("GET", "/v1/marketing/movie-buffs/{keyword}", "/api/marketing/movie-buffs/{keyword}"));
         routes.add(route("POST", "/v1/marketing/narrative-novelty/score", "/api/marketing/narrative-novelty/score"));
         routes.add(route("GET", "/v1/marketing/narrative-novelty/lookup", "/api/marketing/narrative-novelty/lookup"));
@@ -364,5 +428,24 @@ public class AuraMathMarketingProxyController {
     /** Query param values (unlike path segments) go through {@link URLEncoder} as-is: '+' for spaces is valid here. */
     private static String encodeQueryValue(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Builds the {@code ?platform=&limit=&offset=} query string for the {@code /posts} endpoints,
+     * omitting any parameter the caller left unset. Validation (platform enum, limit 1-200) is left
+     * to upstream AuraMath, which already rejects bad values with a 400 that is forwarded verbatim.
+     */
+    private static String buildPostsQuery(String platform, Integer limit, Integer offset) {
+        StringBuilder sb = new StringBuilder();
+        if (platform != null) {
+            sb.append(sb.length() == 0 ? '?' : '&').append("platform=").append(encodeQueryValue(platform));
+        }
+        if (limit != null) {
+            sb.append(sb.length() == 0 ? '?' : '&').append("limit=").append(limit);
+        }
+        if (offset != null) {
+            sb.append(sb.length() == 0 ? '?' : '&').append("offset=").append(offset);
+        }
+        return sb.toString();
     }
 }
