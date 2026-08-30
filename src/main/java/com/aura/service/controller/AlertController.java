@@ -5,6 +5,7 @@ import com.aura.service.dto.CreateAlertRequest;
 import com.aura.service.dto.DismissAlertRequest;
 import com.aura.service.entity.SentimentAlert;
 import com.aura.service.service.AlertService;
+import com.aura.service.service.EntityAccessService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 public class AlertController {
 
     private final AlertService alertService;
+    private final EntityAccessService entityAccessService;
 
     @PostMapping
     public ResponseEntity<AlertResponse> create(@Valid @RequestBody CreateAlertRequest request) {
@@ -33,9 +35,13 @@ public class AlertController {
             @RequestParam(value = "entityId", required = false) Long entityId,
             @RequestParam(value = "status", required = false) SentimentAlert.Status status,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "20") int size
+            @RequestParam(value = "size", defaultValue = "20") int size,
+            @RequestParam(value = "ownerId", required = false) Long ownerId
     ) {
-        return ResponseEntity.ok(alertService.list(entityId, status, page, size));
+        // Non-admin: always scoped to their own movies (a passed ownerId is rejected, 403).
+        // Admin + ownerId: scoped to that user's movies. Admin + no ownerId: every movie's alerts.
+        Long resolvedOwnerId = entityAccessService.resolveOwnerScope(ownerId);
+        return ResponseEntity.ok(alertService.list(entityId, status, resolvedOwnerId, page, size));
     }
 
     @PostMapping("/{id}/ack")

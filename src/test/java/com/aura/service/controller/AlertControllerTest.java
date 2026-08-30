@@ -2,9 +2,11 @@ package com.aura.service.controller;
 
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.SentimentAlert;
+import com.aura.service.exception.GlobalExceptionHandler;
 import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.SentimentAlertRepository;
 import com.aura.service.service.AlertService;
+import com.aura.service.service.EntityAccessService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,9 +47,11 @@ class AlertControllerTest {
     private static final Long ENTITY_ID = 7L;
     private static final String ENTITY_NAME = "Galaxy Quest";
     private static final String USERNAME = "ops_user";
+    private static final Long USER_ID = 55L;
 
     private SentimentAlertRepository alertRepository;
     private ManagedEntityRepository entityRepository;
+    private EntityAccessService entityAccessService;
     private Clock clock;
     private MockMvc mvc;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -56,13 +60,15 @@ class AlertControllerTest {
     void setUp() {
         alertRepository = mock(SentimentAlertRepository.class);
         entityRepository = mock(ManagedEntityRepository.class);
+        entityAccessService = mock(EntityAccessService.class);
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
         AlertService service = new AlertService(alertRepository, entityRepository, clock);
-        AlertController controller = new AlertController(service);
+        AlertController controller = new AlertController(service, entityAccessService);
 
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
+                .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
         UserDetails user = User.withUsername(USERNAME).password("x").authorities("USER").build();
@@ -108,11 +114,12 @@ class AlertControllerTest {
     @Test
     void list_filtersByEntityIdAndStatusSortedByTriggeredAtDesc() throws Exception {
         stubEntityLookup();
+        when(entityAccessService.resolveOwnerScope(null)).thenReturn(USER_ID);
         SentimentAlert newer = spike(1L, SentimentAlert.Status.OPEN, NOW);
         SentimentAlert older = spike(2L, SentimentAlert.Status.OPEN, NOW.minusSeconds(300));
         Page<SentimentAlert> page = new PageImpl<>(List.of(newer, older),
                 PageRequest.of(0, 20, Sort.by("triggeredAt").descending()), 2);
-        when(alertRepository.findFiltered(eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), any(Pageable.class)))
+        when(alertRepository.findFiltered(eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), eq(USER_ID), any(Pageable.class)))
                 .thenReturn(page);
 
         mvc.perform(get("/api/alerts")
@@ -127,7 +134,7 @@ class AlertControllerTest {
 
         org.mockito.ArgumentCaptor<Pageable> pageableCaptor =
                 org.mockito.ArgumentCaptor.forClass(Pageable.class);
-        verify(alertRepository).findFiltered(eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), pageableCaptor.capture());
+        verify(alertRepository).findFiltered(eq(ENTITY_ID), eq(SentimentAlert.Status.OPEN), eq(USER_ID), pageableCaptor.capture());
         Sort sort = pageableCaptor.getValue().getSort();
         assertThat(sort.getOrderFor("triggeredAt")).isNotNull();
         assertThat(sort.getOrderFor("triggeredAt").isDescending()).isTrue();
@@ -135,20 +142,22 @@ class AlertControllerTest {
 
     @Test
     void list_passesNullFiltersWhenAbsent() throws Exception {
-        when(alertRepository.findFiltered(eq(null), eq(null), any(Pageable.class)))
+        when(entityAccessService.resolveOwnerScope(null)).thenReturn(USER_ID);
+        when(alertRepository.findFiltered(eq(null), eq(null), eq(USER_ID), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
         mvc.perform(get("/api/alerts"))
                 .andExpect(status().isOk());
 
-        verify(alertRepository).findFiltered(eq(null), eq(null), any(Pageable.class));
+        verify(alertRepository).findFiltered(eq(null), eq(null), eq(USER_ID), any(Pageable.class));
     }
 
     @Test
     void list_influencerNegativeReasonIncludesAuthorAndEntity() throws Exception {
         stubEntityLookup();
+        when(entityAccessService.resolveOwnerScope(null)).thenReturn(USER_ID);
         SentimentAlert alert = influencerNegative(10L, SentimentAlert.Status.OPEN, "alice");
-        when(alertRepository.findFiltered(any(), any(), any(Pageable.class)))
+        when(alertRepository.findFiltered(any(), any(), eq(USER_ID), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(alert), PageRequest.of(0, 20), 1));
 
         mvc.perform(get("/api/alerts"))
@@ -158,6 +167,31 @@ class AlertControllerTest {
                 .andExpect(jsonPath("$.content[0].permalink").value("https://x.com/alice/99"))
                 .andExpect(jsonPath("$.content[0].reason").value(
                         "Top-50 spreader alice posted a negative mention about " + ENTITY_NAME));
+    }
+
+    @Test
+    void list_adminWithNoOwnerIdSeesAllMovies() throws Exception {
+        stubEntityLookup();
+        when(entityAccessService.resolveOwnerScope(null)).thenReturn(null);
+        SentimentAlert alert = spike(1L, SentimentAlert.Status.OPEN, NOW);
+        when(alertRepository.findFiltered(eq(null), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(alert), PageRequest.of(0, 20), 1));
+
+        mvc.perform(get("/api/alerts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(1));
+
+        verify(alertRepository).findFiltered(eq(null), eq(null), eq(null), any(Pageable.class));
+    }
+
+    @Test
+    void list_nonAdminOwnerIdRejectedWith403() throws Exception {
+        when(entityAccessService.resolveOwnerScope(99L))
+                .thenThrow(new org.springframework.security.access.AccessDeniedException(
+                        "Only administrators may scope by ownerId"));
+
+        mvc.perform(get("/api/alerts").param("ownerId", "99"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

@@ -46,12 +46,20 @@ public interface SentimentAlertRepository extends JpaRepository<SentimentAlert, 
     @Query("SELECT MAX(a.sourceMentionId) FROM SentimentAlert a WHERE a.kind = :kind")
     Long findMaxSourceMentionIdByKind(@Param("kind") SentimentAlert.Kind kind);
 
+    /**
+     * {@code ownerId} scopes the feed to alerts on movies that owner owns (null, admin-only, means
+     * "no owner filter" — every movie's alerts). Joined via a subquery since {@code managedEntityId}
+     * is a bare id, not a mapped relation.
+     */
     @Query("SELECT a FROM SentimentAlert a WHERE " +
             "(:entityId IS NULL OR a.managedEntityId = :entityId) " +
-            "AND (:status IS NULL OR a.status = :status)")
+            "AND (:status IS NULL OR a.status = :status) " +
+            "AND (:ownerId IS NULL OR a.managedEntityId IN " +
+            "     (SELECT e.id FROM ManagedEntity e WHERE e.owner.id = :ownerId))")
     Page<SentimentAlert> findFiltered(
             @Param("entityId") Long entityId,
             @Param("status") SentimentAlert.Status status,
+            @Param("ownerId") Long ownerId,
             Pageable pageable
     );
 }

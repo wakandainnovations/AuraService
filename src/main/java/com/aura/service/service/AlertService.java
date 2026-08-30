@@ -29,9 +29,9 @@ public class AlertService {
     private final ManagedEntityRepository entityRepository;
     private final Clock clock;
 
-    public Page<AlertResponse> list(Long entityId, SentimentAlert.Status status, int page, int size) {
+    public Page<AlertResponse> list(Long entityId, SentimentAlert.Status status, Long ownerId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("triggeredAt").descending());
-        Page<SentimentAlert> alerts = alertRepository.findFiltered(entityId, status, pageable);
+        Page<SentimentAlert> alerts = alertRepository.findFiltered(entityId, status, ownerId, pageable);
 
         List<Long> entityIds = alerts.getContent().stream()
                 .map(SentimentAlert::getManagedEntityId)
