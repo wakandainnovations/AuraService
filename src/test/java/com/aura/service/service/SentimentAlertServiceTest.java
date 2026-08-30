@@ -41,6 +41,7 @@ class SentimentAlertServiceTest {
     private SentimentAlertRepository alertRepository;
     private AlertRuleRepository alertRuleRepository;
     private StubSpreaderLookup spreaderLookup;
+    private MovieBuffLookupService movieBuffLookup;
     private AlertDispatcher alertDispatcher;
     private Clock clock;
     private SentimentAlertService service;
@@ -52,11 +53,13 @@ class SentimentAlertServiceTest {
         alertRepository = mock(SentimentAlertRepository.class);
         alertRuleRepository = mock(AlertRuleRepository.class);
         spreaderLookup = new StubSpreaderLookup();
+        movieBuffLookup = mock(MovieBuffLookupService.class);
+        when(movieBuffLookup.getMovieBuffs(any())).thenReturn(List.of());
         alertDispatcher = new NoopDispatcher();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new SentimentAlertService(
                 entityRepository, mentionRepository, alertRepository, alertRuleRepository,
-                spreaderLookup, alertDispatcher, clock);
+                spreaderLookup, movieBuffLookup, alertDispatcher, clock);
 
         ManagedEntity entity = new ManagedEntity();
         entity.setId(ENTITY_ID);
@@ -385,6 +388,25 @@ class SentimentAlertServiceTest {
         verify(alertRepository).save(captor.capture());
         assertThat(captor.getValue().getOwnerUserId()).isEqualTo(9L);
         assertThat(captor.getValue().getSourceMentionId()).isEqualTo(101L);
+    }
+
+    @Test
+    void emitsInfluencerNegativeAlertWhenAuthorIsMovieBuffButNotTopSpreader() {
+        stubInitialWatermark(100L);
+        ManagedEntity entity = entityWithKeywords(ENTITY_ID, "comedy");
+        Mention m = mention(101L, entity, "dana", "https://x.com/dana/1", Sentiment.NEGATIVE);
+
+        when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
+                .thenReturn(List.of(m));
+        spreaderLookup.put("comedy", Set.of("alice", "bob"));
+        when(movieBuffLookup.getMovieBuffs("comedy"))
+                .thenReturn(List.of(new MovieBuffLookupService.MovieBuff("dana", "HIGH", "twitter", null)));
+        when(alertRepository.existsByKindAndSourceMentionIdForOwner(
+                SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, null)).thenReturn(false);
+
+        service.scanForInfluencerNegatives();
+
+        verify(alertRepository).save(any(SentimentAlert.class));
     }
 
     @Test

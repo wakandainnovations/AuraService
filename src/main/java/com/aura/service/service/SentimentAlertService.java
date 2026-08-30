@@ -41,6 +41,7 @@ public class SentimentAlertService {
     private final SentimentAlertRepository alertRepository;
     private final AlertRuleRepository alertRuleRepository;
     private final TopSpreaderLookupService spreaderLookup;
+    private final MovieBuffLookupService movieBuffLookup;
     private final AlertDispatcher alertDispatcher;
     private final Clock clock;
 
@@ -181,6 +182,12 @@ public class SentimentAlertService {
             }
             Set<String> spreaders = spreaderLookup.getSpreaders(keyword);
             if (spreaders.contains(author)) {
+                matched = true;
+                break;
+            }
+            boolean isMovieBuff = movieBuffLookup.getMovieBuffs(keyword).stream()
+                    .anyMatch(buff -> author.equals(buff.author()));
+            if (isMovieBuff) {
                 matched = true;
                 break;
             }
