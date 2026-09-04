@@ -1,5 +1,6 @@
 package com.aura.service.service;
 
+import com.aura.service.dto.ReviewAspectBackfillResponse;
 import com.aura.service.dto.ReviewAspectBreakdownResponse;
 import com.aura.service.dto.ReviewAspectStat;
 import com.aura.service.entity.ManagedEntity;
@@ -12,9 +13,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +31,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Backs the "Aspect Sentiment" breakdown panel: for each fixed review aspect (Music/Songs, Direction,
@@ -60,6 +66,7 @@ public class ReviewAspectBreakdownService {
     private static final int MAX_MENTIONS_PER_LLM_CALL = 40;
     private static final int MAX_PENDING_PER_ENTITY_REFRESH = 200;
     private static final int MAX_PENDING_PER_SCHEDULED_SWEEP = 500;
+    private static final int BACKFILL_PAGE_SIZE = 200;
     private static final String MOVIE_NAME_PLACEHOLDER = "[Movie Name]";
     private static final String POSTS_JSON_PLACEHOLDER = "[Posts JSON]";
     private static final String FALLBACK_MOVIE_NAME = "the movie";
@@ -69,8 +76,19 @@ public class ReviewAspectBreakdownService {
     private final LLMService llmService;
     private final ObjectMapper objectMapper;
 
+    // entityIds with a backfill already running in the background — prevents a repeated admin trigger
+    // (double-click, retried request) from kicking off a second overlapping drain of the same backlog.
+    private final Set<Long> inFlightBackfills = ConcurrentHashMap.newKeySet();
+
     @Value("${llm.prompt.generate.review.aspect.classification}")
     private String classificationPrompt;
+
+    // Self-injected proxy: backfillEntityAsync must be invoked through Spring's proxy (not a direct
+    // this.backfillEntityAsync(...) call) for its @Async advice to actually apply - same convention as
+    // TopSpreaderInsightsService's `self` field. @Lazy avoids the circular-bean chicken/egg problem.
+    @Autowired
+    @Lazy
+    private ReviewAspectBreakdownService self;
 
     public ReviewAspectBreakdownService(
             MentionRepository mentionRepository,
@@ -95,6 +113,73 @@ public class ReviewAspectBreakdownService {
         }
 
         return buildBreakdown(entity);
+    }
+
+    /**
+     * Fire-and-forget trigger for a single entity's unbounded backfill — unlike {@link #getBreakdown}
+     * with {@code refresh=true} (capped at {@link #MAX_PENDING_PER_ENTITY_REFRESH} per call, and run
+     * synchronously on the caller's request thread), this starts {@link #backfillEntityAsync} on a
+     * background thread and returns immediately, so a movie with a backlog large enough to need
+     * hundreds of LLM calls doesn't hold an admin's HTTP request open for the whole run. Admin-only at
+     * the controller layer, since it can still issue a large number of LLM requests, just not on the
+     * request thread. A repeated trigger for an entity already backfilling is a no-op (see
+     * {@link #inFlightBackfills}) rather than starting a second overlapping drain of the same backlog.
+     */
+    public ReviewAspectBackfillResponse triggerBackfill(Long entityId) {
+        ManagedEntity entity = managedEntityRepository.findById(entityId)
+                .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+        if (inFlightBackfills.add(entityId)) {
+            self.backfillEntityAsync(entityId);
+            return new ReviewAspectBackfillResponse(entity.getId(), entity.getName(), "started");
+        }
+        return new ReviewAspectBackfillResponse(entity.getId(), entity.getName(), "already_in_progress");
+    }
+
+    /**
+     * The actual unbounded drain, run on a background thread by {@link #triggerBackfill}. Each page is
+     * fetched fresh (not a stable cursor) since classified mentions leave the
+     * {@code reviewAspectCategory IS NULL} backlog as they're saved, so the same page is never
+     * re-fetched. Deliberately not wrapped in a single transaction — {@link #classifyMentions} persists
+     * per LLM-call batch via {@code saveAll}, so a mid-run failure keeps whatever progress was already
+     * made instead of losing it to a rollback of the whole backfill. Never lets an exception escape
+     * (there's no caller left waiting for one) — logged instead, so a transient LLM/DB failure doesn't
+     * silently kill the run without a trace; {@code inFlightBackfills} is always cleared in
+     * {@code finally} so a failed run can be retried by triggering again.
+     *
+     * <p>A post with no content is filtered out of the LLM batch by {@link #classifyMentions} like any
+     * other call site, but unlike the bounded paths (where that's harmless — the post just isn't
+     * classified yet), here it would otherwise keep reappearing in every page forever and spin the loop
+     * without end. So blank-content posts are classified as {@link ReviewAspectCategory#OTHER} directly,
+     * guaranteeing every post in a fetched page leaves the backlog before the next page is fetched.
+     */
+    @Async
+    public void backfillEntityAsync(Long entityId) {
+        try {
+            ManagedEntity entity = managedEntityRepository.findById(entityId)
+                    .orElseThrow(() -> new RuntimeException("Entity not found with id: " + entityId));
+
+            Pageable page = PageRequest.of(0, BACKFILL_PAGE_SIZE);
+            int totalClassified = 0;
+            List<Mention> pending;
+            while (!(pending = mentionRepository.findUnclassifiedReviewAspectMentions(entityId, page)).isEmpty()) {
+                List<Mention> blank = pending.stream().filter(m -> !StringUtils.hasText(m.getContent())).toList();
+                if (!blank.isEmpty()) {
+                    blank.forEach(m -> m.setReviewAspectCategory(ReviewAspectCategory.OTHER));
+                    mentionRepository.saveAll(blank);
+                }
+                classifyMentions(entity.getName(), pending);
+                totalClassified += pending.size();
+                log.info("Backfilled {} review-aspect mentions for entity {} ({} total so far)",
+                        pending.size(), entityId, totalClassified);
+            }
+            log.info("Finished review-aspect backfill for entity {}: {} mentions classified in total",
+                    entityId, totalClassified);
+        } catch (Exception e) {
+            log.error("Review-aspect backfill failed for entity {}", entityId, e);
+        } finally {
+            inFlightBackfills.remove(entityId);
+        }
     }
 
     /**
