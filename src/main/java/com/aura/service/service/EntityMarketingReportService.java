@@ -26,9 +26,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -71,6 +73,12 @@ public class EntityMarketingReportService {
     private static final TimePeriod DEFAULT_PERIOD = TimePeriod.DAY30;
     private static final int DEFAULT_WINDOW_DAYS = 7;
 
+    // Once a movie is this many days past release, its marketing report has settled - the scheduled
+    // refresh below stops regenerating it (see refreshOneEntityForBatch), leaving the last-generated
+    // cache row (however old) as the permanent answer. getReport's own refresh=true path is untouched,
+    // so a caller can still force a live regeneration for an old release if they explicitly ask for one.
+    static final long STALE_RELEASE_SKIP_DAYS = 30;
+
     private final EntityService entityService;
     private final DashboardService dashboardService;
     private final AuraMathProxyService auraMathProxy;
@@ -83,6 +91,7 @@ public class EntityMarketingReportService {
     private final AudiencePulseAspectsService audiencePulseAspectsService;
     private final EntityMarketingReportCacheRepository cacheRepository;
     private final ManagedEntityRepository managedEntityRepository;
+    private final Clock clock;
 
     // Self-injected proxy: refreshOneEntityForBatch below must be invoked through Spring's proxy
     // (not a direct this.refreshOneEntityForBatch(...) self-call) for its @Transactional advice to
@@ -106,7 +115,8 @@ public class EntityMarketingReportService {
                                         RecommendedActionsService recommendedActionsService,
                                         AudiencePulseAspectsService audiencePulseAspectsService,
                                         EntityMarketingReportCacheRepository cacheRepository,
-                                        ManagedEntityRepository managedEntityRepository) {
+                                        ManagedEntityRepository managedEntityRepository,
+                                        Clock clock) {
         this.entityService = entityService;
         this.dashboardService = dashboardService;
         this.auraMathProxy = auraMathProxy;
@@ -119,6 +129,7 @@ public class EntityMarketingReportService {
         this.audiencePulseAspectsService = audiencePulseAspectsService;
         this.cacheRepository = cacheRepository;
         this.managedEntityRepository = managedEntityRepository;
+        this.clock = clock;
     }
 
     /**
@@ -181,15 +192,29 @@ public class EntityMarketingReportService {
      * {@code ManagedEntity.keywords}, read deep inside {@link #assembleForBatch} - are bound to this
      * method's own session; a detached entity's lazy collections can't be initialized just by calling
      * it from within a new transaction. Not read-only: {@link #persist} at the end saves the cache row.
+     * Skips the assembly entirely (see {@link #isStaleRelease}) for a movie released more than
+     * {@link #STALE_RELEASE_SKIP_DAYS} days ago - its report has settled, and re-running a dozen-plus
+     * downstream calls (one an LLM call) daily for it in perpetuity isn't worth the cost.
      */
     @Transactional
     void refreshOneEntityForBatch(Long entityId) {
         ManagedEntity entity = managedEntityRepository.findById(entityId).orElse(null);
-        if (entity == null) {
+        if (entity == null || isStaleRelease(entity)) {
             return;
         }
         EntityMarketingReportResponse report = assembleForBatch(entity, DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS);
         persist(entity.getId(), DEFAULT_PERIOD, DEFAULT_WINDOW_DAYS, report);
+    }
+
+    // No releaseDate on file means no evidence the movie has released - not held back, same reasoning
+    // as RecommendedActionCandidateServiceImpl#isNotYetReleased.
+    private boolean isStaleRelease(ManagedEntity entity) {
+        LocalDate releaseDate = entity.getReleaseDate();
+        if (releaseDate == null) {
+            return false;
+        }
+        long daysSinceRelease = ChronoUnit.DAYS.between(releaseDate, LocalDate.now(clock));
+        return daysSinceRelease > STALE_RELEASE_SKIP_DAYS;
     }
 
     private void persist(Long id, TimePeriod period, int windowDays, EntityMarketingReportResponse report) {

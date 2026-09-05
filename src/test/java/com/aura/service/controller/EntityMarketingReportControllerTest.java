@@ -148,7 +148,7 @@ class EntityMarketingReportControllerTest {
         boolean lastRefresh;
 
         StubReportService() {
-            super(null, null, null, null, null, null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null, null, null, null, java.time.Clock.systemUTC());
         }
 
         @Override

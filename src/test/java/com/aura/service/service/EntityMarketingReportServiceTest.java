@@ -30,7 +30,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +68,10 @@ class EntityMarketingReportServiceTest {
     private EntityMarketingReportCacheRepository cacheRepository;
     private ManagedEntityRepository managedEntityRepository;
     private EntityMarketingReportService service;
+    // "Now" for every test below - 2026-09-05, so a releaseDate 30 days before/after it can express
+    // the STALE_RELEASE_SKIP_DAYS boundary precisely (see refreshOneEntityForBatch's skip tests).
+    private static final Clock FIXED_CLOCK =
+            Clock.fixed(Instant.parse("2026-09-05T00:00:00Z"), ZoneOffset.UTC);
 
     @BeforeEach
     void setUp() {
@@ -83,7 +90,7 @@ class EntityMarketingReportServiceTest {
                 new StubMomentumCausalReportService(), new StubCommandCenterSummaryService(),
                 new StubTopSpreaderContentService(), new StubTopSpreaderInsightsService(),
                 new StubRecommendedActionsService(), new StubAudiencePulseAspectsService(),
-                cacheRepository, managedEntityRepository);
+                cacheRepository, managedEntityRepository, FIXED_CLOCK);
         // No Spring context in this test, so self-invocation through the proxy (see the `self` field's
         // doc comment on the service) isn't exercised here - wiring it to the instance itself keeps
         // refreshOneEntityForBatch() reachable without needing a real @Transactional interceptor, which
@@ -260,6 +267,39 @@ class EntityMarketingReportServiceTest {
         movie.setId(99L);
         movie.setName("Some Movie");
         movie.setType("MOVIE");
+        when(managedEntityRepository.findAll()).thenReturn(List.of(movie));
+        when(managedEntityRepository.findById(99L)).thenReturn(Optional.of(movie));
+        auraMathProxy.response = ResponseEntity.ok().body("{}");
+
+        service.refreshAllReports();
+
+        verify(cacheRepository).save(any(EntityMarketingReportCache.class));
+    }
+
+    @Test
+    void refreshAllReports_skipsAMovieReleasedMoreThan30DaysAgo() {
+        ManagedEntity movie = new ManagedEntity();
+        movie.setId(99L);
+        movie.setName("Old Release");
+        movie.setType("MOVIE");
+        // FIXED_CLOCK is 2026-09-05; 31 days before that is 2026-08-05 - one day past the boundary.
+        movie.setReleaseDate(LocalDate.of(2026, 8, 5));
+        when(managedEntityRepository.findAll()).thenReturn(List.of(movie));
+        when(managedEntityRepository.findById(99L)).thenReturn(Optional.of(movie));
+
+        service.refreshAllReports();
+
+        verify(cacheRepository, never()).save(any(EntityMarketingReportCache.class));
+    }
+
+    @Test
+    void refreshAllReports_stillRefreshesAMovieExactlyAtThe30DayBoundary() {
+        ManagedEntity movie = new ManagedEntity();
+        movie.setId(99L);
+        movie.setName("Boundary Release");
+        movie.setType("MOVIE");
+        // FIXED_CLOCK is 2026-09-05; exactly 30 days before that is 2026-08-06 - not yet "more than 30".
+        movie.setReleaseDate(LocalDate.of(2026, 8, 6));
         when(managedEntityRepository.findAll()).thenReturn(List.of(movie));
         when(managedEntityRepository.findById(99L)).thenReturn(Optional.of(movie));
         auraMathProxy.response = ResponseEntity.ok().body("{}");
