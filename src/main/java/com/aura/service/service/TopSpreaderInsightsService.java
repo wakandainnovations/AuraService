@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,6 +74,13 @@ public class TopSpreaderInsightsService {
     private static final int SAMPLE_CONTENT_LIMIT = 3;
     private static final int SAMPLE_CONTENT_MAX_CHARS = 240;
     private static final String SPREADER_DATA_PLACEHOLDER = "[Spreader Insights Data]";
+
+    // Pool AuraMath's full top-50-spreaders ranking (not just the UI's default top-10) so the three
+    // top-10-by-metric rankings below are drawn from a real candidate pool wider than 10, and pull a few
+    // posts per spreader so avgEngagementRate is real content-backed data, not one post's noise.
+    private static final int ALERT_SPREADER_POOL_SIZE = 50;
+    private static final int ALERT_POSTS_PER_SPREADER = 5;
+    private static final int ALERT_TOP_N = 10;
     private static final TypeReference<List<TopSpreaderInsightAction>> ACTION_LIST_TYPE = new TypeReference<>() {
     };
 
@@ -273,6 +281,54 @@ public class TopSpreaderInsightsService {
             candidates.add(toCandidate(withContent.get(i), impact));
         }
         return candidates;
+    }
+
+    /**
+     * The union of an entity's top 10 spreaders by total views, by average engagement rate, and by
+     * impact tier (see {@link #buildCandidates}) - used by {@code SentimentAlertService} to gate
+     * INFLUENCER_NEGATIVE alerts to spreaders who are genuinely influential for this movie, rather than
+     * any author AuraMath has ever surfaced for one of the entity's keywords. Deterministic and
+     * LLM-free: this reuses the same server-computed numbers {@link #generate} sends the LLM, without
+     * ever calling it. Every language the entity is tracked in is pooled (same dedupe
+     * {@link TopSpreaderContentService} applies for a blank language), since an alert should not depend
+     * on which language happened to be selected in some other UI panel.
+     */
+    public Set<String> getTop10SpreaderIds(Long entityId) {
+        TopSpreaderContentResponse content = topSpreaderContentService.getTopSpreaderContent(
+                entityId, null, ALERT_SPREADER_POOL_SIZE, ALERT_POSTS_PER_SPREADER);
+        return top10SpreaderIds(buildCandidates(content));
+    }
+
+    /**
+     * Package-private so {@code TopSpreaderInsightsServiceTest} can exercise the ranking directly against
+     * hand-built candidates, the same way {@link #buildCandidates} is tested - see
+     * mockito-no-concrete-class-mocks project note.
+     *
+     * <p>Impact tier is assigned in totalViews-desc order (see {@link #buildCandidates}), so its own
+     * top-{@link #ALERT_TOP_N} is always a subset of the totalViews top-{@link #ALERT_TOP_N} today - kept
+     * as an explicit third check anyway so this union stays correct if that tie is ever broken
+     * differently.
+     */
+    Set<String> top10SpreaderIds(List<SpreaderCandidate> candidates) {
+        if (candidates.isEmpty()) {
+            return Set.of();
+        }
+
+        Set<String> top = new LinkedHashSet<>();
+        candidates.stream()
+                .sorted(Comparator.comparingLong(SpreaderCandidate::totalViews).reversed())
+                .limit(ALERT_TOP_N)
+                .forEach(c -> top.add(c.spreaderId()));
+        candidates.stream()
+                .filter(c -> c.avgEngagementRate() != null)
+                .sorted(Comparator.comparingDouble(SpreaderCandidate::avgEngagementRate).reversed())
+                .limit(ALERT_TOP_N)
+                .forEach(c -> top.add(c.spreaderId()));
+        candidates.stream()
+                .filter(c -> c.impact() == RecommendedActionCategory.HIGH_IMPACT)
+                .limit(ALERT_TOP_N)
+                .forEach(c -> top.add(c.spreaderId()));
+        return top;
     }
 
     private SpreaderCandidate toCandidate(TopSpreaderContent spreader, RecommendedActionCategory impact) {

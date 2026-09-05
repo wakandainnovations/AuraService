@@ -40,7 +40,7 @@ class SentimentAlertServiceTest {
     private MentionRepository mentionRepository;
     private SentimentAlertRepository alertRepository;
     private AlertRuleRepository alertRuleRepository;
-    private StubSpreaderLookup spreaderLookup;
+    private StubTopSpreaderInsights topSpreaderInsights;
     private MovieBuffLookupService movieBuffLookup;
     private AlertDispatcher alertDispatcher;
     private Clock clock;
@@ -52,14 +52,14 @@ class SentimentAlertServiceTest {
         mentionRepository = mock(MentionRepository.class);
         alertRepository = mock(SentimentAlertRepository.class);
         alertRuleRepository = mock(AlertRuleRepository.class);
-        spreaderLookup = new StubSpreaderLookup();
+        topSpreaderInsights = new StubTopSpreaderInsights();
         movieBuffLookup = mock(MovieBuffLookupService.class);
         when(movieBuffLookup.getMovieBuffs(any())).thenReturn(List.of());
         alertDispatcher = new NoopDispatcher();
         clock = Clock.fixed(NOW, ZoneOffset.UTC);
         service = new SentimentAlertService(
                 entityRepository, mentionRepository, alertRepository, alertRuleRepository,
-                spreaderLookup, movieBuffLookup, alertDispatcher, clock);
+                topSpreaderInsights, movieBuffLookup, alertDispatcher, clock);
 
         ManagedEntity entity = new ManagedEntity();
         entity.setId(ENTITY_ID);
@@ -83,35 +83,35 @@ class SentimentAlertServiceTest {
      * Hand-written test double instead of a Mockito mock — the JDK in use breaks Mockito's
      * inline mock maker for non-final concrete classes.
      */
-    static class StubSpreaderLookup extends TopSpreaderLookupService {
-        private final java.util.Map<String, Set<String>> byKeyword = new java.util.HashMap<>();
-        private final java.util.Map<String, RuntimeException> errorsByKeyword = new java.util.HashMap<>();
-        private final java.util.List<String> calls = new java.util.ArrayList<>();
+    static class StubTopSpreaderInsights extends TopSpreaderInsightsService {
+        private final java.util.Map<Long, Set<String>> byEntity = new java.util.HashMap<>();
+        private final java.util.Map<Long, RuntimeException> errorsByEntity = new java.util.HashMap<>();
+        private final java.util.List<Long> calls = new java.util.ArrayList<>();
 
-        StubSpreaderLookup() {
-            super(null, null);
+        StubTopSpreaderInsights() {
+            super(null, null, null, null, null, null);
         }
 
-        void put(String keyword, Set<String> spreaders) {
-            byKeyword.put(keyword, spreaders);
+        void put(Long entityId, Set<String> spreaders) {
+            byEntity.put(entityId, spreaders);
         }
 
-        void throwOnceFor(String keyword, RuntimeException ex) {
-            errorsByKeyword.put(keyword, ex);
+        void throwOnceFor(Long entityId, RuntimeException ex) {
+            errorsByEntity.put(entityId, ex);
         }
 
-        java.util.List<String> calls() {
+        java.util.List<Long> calls() {
             return calls;
         }
 
         @Override
-        public Set<String> getSpreaders(String keyword) {
-            calls.add(keyword);
-            RuntimeException ex = errorsByKeyword.remove(keyword);
+        public Set<String> getTop10SpreaderIds(Long entityId) {
+            calls.add(entityId);
+            RuntimeException ex = errorsByEntity.remove(entityId);
             if (ex != null) {
                 throw ex;
             }
-            return byKeyword.getOrDefault(keyword, Set.of());
+            return byEntity.getOrDefault(entityId, Set.of());
         }
     }
 
@@ -341,7 +341,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice", "bob"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice", "bob"));
         when(alertRepository.existsByKindAndSourceMentionIdForOwner(
                 SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, null)).thenReturn(false);
 
@@ -369,7 +369,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice"));
         AlertRule rule = AlertRule.builder()
                 .userId(9L)
                 .entityId(ENTITY_ID)
@@ -398,7 +398,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice", "bob"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice", "bob"));
         when(movieBuffLookup.getMovieBuffs("comedy"))
                 .thenReturn(List.of(new MovieBuffLookupService.MovieBuff("dana", "HIGH", "twitter", null)));
         when(alertRepository.existsByKindAndSourceMentionIdForOwner(
@@ -410,15 +410,14 @@ class SentimentAlertServiceTest {
     }
 
     @Test
-    void skipsMentionWhenAuthorNotInAnyKeywordSpreaderList() {
+    void skipsMentionWhenAuthorNotTopSpreaderOrMovieBuffOnAnyKeyword() {
         stubInitialWatermark(100L);
         ManagedEntity entity = entityWithKeywords(ENTITY_ID, "comedy", "drama");
         Mention m = mention(101L, entity, "carol", "https://x.com/carol/1", Sentiment.NEGATIVE);
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice"));
-        spreaderLookup.put("drama", Set.of("bob"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice", "bob"));
 
         service.scanForInfluencerNegatives();
 
@@ -426,15 +425,17 @@ class SentimentAlertServiceTest {
     }
 
     @Test
-    void emitsAlertWhenAuthorMatchesAnyEntityKeyword() {
+    void emitsAlertWhenAuthorIsMovieBuffOnSecondKeyword() {
         stubInitialWatermark(100L);
         ManagedEntity entity = entityWithKeywords(ENTITY_ID, "comedy", "drama");
         Mention m = mention(101L, entity, "bob", "https://x.com/bob/1", Sentiment.NEGATIVE);
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice"));
-        spreaderLookup.put("drama", Set.of("bob"));
+        // bob is not a top-10 spreader for the movie, but is a movie buff on the entity's second keyword.
+        topSpreaderInsights.put(ENTITY_ID, Set.of());
+        when(movieBuffLookup.getMovieBuffs("drama"))
+                .thenReturn(List.of(new MovieBuffLookupService.MovieBuff("bob", "HIGH", "twitter", null)));
 
         service.scanForInfluencerNegatives();
 
@@ -452,7 +453,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m1, m2, m3));
-        spreaderLookup.put("comedy", Set.of("alice", "bob"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice", "bob"));
 
         service.scanForInfluencerNegatives();
 
@@ -473,7 +474,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice"));
         when(alertRepository.existsByKindAndSourceMentionIdForOwner(
                 SentimentAlert.Kind.INFLUENCER_NEGATIVE, 101L, null)).thenReturn(true);
 
@@ -492,7 +493,7 @@ class SentimentAlertServiceTest {
         service.scanForInfluencerNegatives();
 
         verify(mentionRepository).findByIdGreaterThanAndSentimentOrderByIdAsc(500L, Sentiment.NEGATIVE);
-        assertThat(spreaderLookup.calls()).isEmpty();
+        assertThat(topSpreaderInsights.calls()).isEmpty();
     }
 
     @Test
@@ -508,7 +509,7 @@ class SentimentAlertServiceTest {
         service.scanForInfluencerNegatives();
 
         verify(alertRepository, never()).save(any());
-        assertThat(spreaderLookup.calls()).isEmpty();
+        assertThat(topSpreaderInsights.calls()).isEmpty();
     }
 
     @Test
@@ -520,8 +521,8 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(bad, good));
-        spreaderLookup.throwOnceFor("comedy", new RuntimeException("upstream boom"));
-        spreaderLookup.put("comedy", Set.of("bob"));
+        topSpreaderInsights.throwOnceFor(ENTITY_ID, new RuntimeException("upstream boom"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("bob"));
 
         service.scanForInfluencerNegatives();
 
@@ -555,7 +556,7 @@ class SentimentAlertServiceTest {
 
         when(mentionRepository.findByIdGreaterThanAndSentimentOrderByIdAsc(100L, Sentiment.NEGATIVE))
                 .thenReturn(List.of(m));
-        spreaderLookup.put("comedy", Set.of("alice"));
+        topSpreaderInsights.put(ENTITY_ID, Set.of("alice"));
         when(alertRepository.save(any(SentimentAlert.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.scanForInfluencerNegatives();

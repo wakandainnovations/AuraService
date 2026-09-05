@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -100,6 +101,11 @@ class TopSpreaderInsightsServiceTest {
 
     private static TopSpreaderContent spreaderWithNoContent(String id, long totalViews) {
         return new TopSpreaderContent(id, "https://example.com/" + id, totalViews, List.of());
+    }
+
+    private static TopSpreaderContent spreaderWithEngagement(String id, long totalViews, double engagementRate) {
+        return new TopSpreaderContent(id, "https://example.com/" + id, totalViews,
+                List.of(post("some post content", engagementRate, Sentiment.POSITIVE)));
     }
 
     // ==================== Thirds bucketing at various group sizes ====================
@@ -211,6 +217,33 @@ class TopSpreaderInsightsServiceTest {
         var response = new TopSpreaderContentResponse(1L, "Tamil", List.of());
 
         assertThat(service.buildCandidates(response)).isEmpty();
+    }
+
+    // ==================== Alert-gating: top10SpreaderIds ====================
+
+    @Test
+    void top10SpreaderIds_emptyWhenNoCandidates() {
+        assertThat(service.top10SpreaderIds(List.of())).isEmpty();
+    }
+
+    @Test
+    void top10SpreaderIds_unionsTopByViewsWithTopByEngagementRate() {
+        // 11 spreaders ranked purely by views (v1 highest ... v11 lowest, all with the default 0.1
+        // engagement rate from the `post` helper), plus one long-tail author who barely reaches this
+        // movie's mentions but has a much higher engagement rate than anyone in the views top 10.
+        List<TopSpreaderContent> spreaders = new java.util.ArrayList<>();
+        for (int i = 1; i <= 11; i++) {
+            spreaders.add(spreader("v" + i, 1200 - (i * 100)));
+        }
+        spreaders.add(spreaderWithEngagement("engaged", 50, 0.9));
+        var response = new TopSpreaderContentResponse(ENTITY_ID, "Tamil", spreaders);
+
+        Set<String> top = service.top10SpreaderIds(service.buildCandidates(response));
+
+        // views-top10 (v1..v10) unioned with engagement-top10 (engaged + the highest-ranked ties) -
+        // v11 is outranked on both views and engagement, so it's the one author left out entirely.
+        assertThat(top).contains("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "engaged")
+                .doesNotContain("v11");
     }
 
     // ==================== 24h persisted cache orchestration ====================

@@ -23,7 +23,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Slf4j
 @Service
@@ -40,7 +39,7 @@ public class SentimentAlertService {
     private final MentionRepository mentionRepository;
     private final SentimentAlertRepository alertRepository;
     private final AlertRuleRepository alertRuleRepository;
-    private final TopSpreaderLookupService spreaderLookup;
+    private final TopSpreaderInsightsService topSpreaderInsightsService;
     private final MovieBuffLookupService movieBuffLookup;
     private final AlertDispatcher alertDispatcher;
     private final Clock clock;
@@ -174,22 +173,22 @@ public class SentimentAlertService {
             return;
         }
 
-        boolean matched = false;
-        for (EntityKeyword ek : keywords) {
-            String keyword = ek.getKeyword();
-            if (keyword == null || keyword.isBlank()) {
-                continue;
-            }
-            Set<String> spreaders = spreaderLookup.getSpreaders(keyword);
-            if (spreaders.contains(author)) {
-                matched = true;
-                break;
-            }
-            boolean isMovieBuff = movieBuffLookup.getMovieBuffs(keyword).stream()
-                    .anyMatch(buff -> author.equals(buff.author()));
-            if (isMovieBuff) {
-                matched = true;
-                break;
+        // "Top spreader" is scoped to the movie, not any one keyword: the author must be in the union of
+        // the entity's top 10 spreaders by total views, by average engagement rate, or by impact tier -
+        // see TopSpreaderInsightsService#getTop10SpreaderIds. Movie buffs remain a per-keyword match.
+        boolean matched = topSpreaderInsightsService.getTop10SpreaderIds(entity.getId()).contains(author);
+        if (!matched) {
+            for (EntityKeyword ek : keywords) {
+                String keyword = ek.getKeyword();
+                if (keyword == null || keyword.isBlank()) {
+                    continue;
+                }
+                boolean isMovieBuff = movieBuffLookup.getMovieBuffs(keyword).stream()
+                        .anyMatch(buff -> author.equals(buff.author()));
+                if (isMovieBuff) {
+                    matched = true;
+                    break;
+                }
             }
         }
         if (!matched) {
