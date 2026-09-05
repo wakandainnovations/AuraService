@@ -60,7 +60,8 @@ class DashboardControllerWhatsNewTest {
     void setUp() {
         whatsNewService = new StubWhatsNew();
         DashboardController controller = new DashboardController(
-                null, null, null, whatsNewService, mock(EntityAccessService.class), null, null, null, null, null, null);
+                null, null, null, whatsNewService, mock(EntityAccessService.class), null, null, null, null, null, null,
+                null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

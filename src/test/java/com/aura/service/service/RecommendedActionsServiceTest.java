@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.dto.RecommendedActionItem;
 import com.aura.service.dto.RecommendedActionsResponse;
+import com.aura.service.dto.SituationRecommendationResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.RecommendedActionsCache;
 import com.aura.service.enums.RecommendedActionCategory;
@@ -30,6 +31,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -58,6 +60,7 @@ class RecommendedActionsServiceTest {
     private LLMService llmService;
     private TaskScheduler taskScheduler;
     private Clock clock;
+    private SituationRecommendationService situationRecommendationService;
     private RecommendedActionsService service;
 
     @BeforeEach
@@ -67,10 +70,12 @@ class RecommendedActionsServiceTest {
         candidateService = mock(RecommendedActionCandidateService.class);
         llmService = mock(LLMService.class);
         taskScheduler = mock(TaskScheduler.class);
+        situationRecommendationService = mock(SituationRecommendationService.class);
         clock = Clock.fixed(Instant.parse("2026-08-10T10:00:00Z"), ZoneOffset.UTC);
 
         service = new RecommendedActionsService(
-                entityRepository, cacheRepository, candidateService, llmService, clock, taskScheduler);
+                entityRepository, cacheRepository, candidateService, llmService, clock, taskScheduler,
+                situationRecommendationService);
         ReflectionTestUtils.setField(service, "llmPrompt", PROMPT_TEMPLATE);
         // No Spring context in this test, so self-invocation through the proxy (see the `self` field's
         // doc comment on the service) isn't exercised here - wiring it to the instance itself keeps
@@ -915,5 +920,57 @@ class RecommendedActionsServiceTest {
         ArgumentCaptor<Instant> finalInstantCaptor = ArgumentCaptor.forClass(Instant.class);
         verify(taskScheduler, times(5)).schedule(any(), finalInstantCaptor.capture());
         assertThat(finalInstantCaptor.getAllValues().get(4)).isEqualTo(Instant.parse("2026-08-11T10:00:00Z"));
+    }
+
+    // ==================== situationRecommendation folded into getRecommendedActions ====================
+
+    @Test
+    void getRecommendedActions_foldsInSituationRecommendation() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of());
+
+        SituationRecommendationResponse situation = new SituationRecommendationResponse();
+        situation.setRecommendedAction("Address the negativity burst.");
+        when(situationRecommendationService.getSituationRecommendation(ENTITY_ID, false)).thenReturn(situation);
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
+
+        assertThat(response.getSituationRecommendation()).isSameAs(situation);
+        verify(situationRecommendationService).getSituationRecommendation(ENTITY_ID, false);
+    }
+
+    @Test
+    void getRecommendedActions_situationRecommendationFailure_leavesFieldNull_doesNotBreakActionList() {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.empty());
+        RecommendedActionCandidate c1 = candidate("known-id", "Factor A", 80, -10, 10, "label", "fact");
+        when(candidateService.buildCandidateActions(ENTITY_ID)).thenReturn(List.of(c1));
+        when(llmService.generateReply(any())).thenReturn(
+                "[{\"candidateId\": \"known-id\", \"reason\": \"Grounded reason.\"}]");
+        when(situationRecommendationService.getSituationRecommendation(ENTITY_ID, false))
+                .thenThrow(new RuntimeException("situation LLM down"));
+
+        RecommendedActionsResponse response = service.getRecommendedActions(ENTITY_ID, false);
+
+        assertThat(response.getSituationRecommendation()).isNull();
+        assertThat(response.getActions()).hasSize(1);
+    }
+
+    @Test
+    void getAllRecommendedActions_neverCallsSituationRecommendationService() throws Exception {
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity(null)));
+        List<RecommendedActionItem> cachedActions = List.of(new RecommendedActionItem(
+                "test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 85,
+                "Factor A", -10, 10, "label", List.of(), List.of(), RecommendedActionStatus.ACTIVE));
+        RecommendedActionsCache row = new RecommendedActionsCache(
+                1L, ENTITY_ID, "Test Movie", MAPPER.writeValueAsString(cachedActions), 0,
+                Instant.parse("2026-08-01T00:00:00Z"));
+        when(cacheRepository.findByEntityId(ENTITY_ID)).thenReturn(Optional.of(row));
+
+        RecommendedActionsResponse response = service.getAllRecommendedActions(ENTITY_ID, null);
+
+        assertThat(response.getSituationRecommendation()).isNull();
+        verify(situationRecommendationService, never()).getSituationRecommendation(any(), anyBoolean());
     }
 }

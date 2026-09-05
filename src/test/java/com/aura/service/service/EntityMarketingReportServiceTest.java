@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -83,6 +84,11 @@ class EntityMarketingReportServiceTest {
                 new StubTopSpreaderContentService(), new StubTopSpreaderInsightsService(),
                 new StubRecommendedActionsService(), new StubAudiencePulseAspectsService(),
                 cacheRepository, managedEntityRepository);
+        // No Spring context in this test, so self-invocation through the proxy (see the `self` field's
+        // doc comment on the service) isn't exercised here - wiring it to the instance itself keeps
+        // refreshOneEntityForBatch() reachable without needing a real @Transactional interceptor, which
+        // is framework behavior, not this class's logic.
+        ReflectionTestUtils.setField(service, "self", service);
 
         EntityDetailResponse entity = new EntityDetailResponse();
         entity.setId(ENTITY_ID);
@@ -255,6 +261,7 @@ class EntityMarketingReportServiceTest {
         movie.setName("Some Movie");
         movie.setType("MOVIE");
         when(managedEntityRepository.findAll()).thenReturn(List.of(movie));
+        when(managedEntityRepository.findById(99L)).thenReturn(Optional.of(movie));
         auraMathProxy.response = ResponseEntity.ok().body("{}");
 
         service.refreshAllReports();
@@ -451,7 +458,7 @@ class EntityMarketingReportServiceTest {
 
     static class StubRecommendedActionsService extends RecommendedActionsService {
         StubRecommendedActionsService() {
-            super(null, null, null, null, java.time.Clock.systemUTC(), null);
+            super(null, null, null, null, java.time.Clock.systemUTC(), null, null);
         }
 
         @Override

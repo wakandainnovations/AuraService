@@ -50,7 +50,8 @@ class DashboardControllerLastSeenTest {
         UserEntityViewService viewService =
                 new UserEntityViewService(viewRepository, userRepository, clock);
         DashboardController controller = new DashboardController(
-                null, viewService, null, null, mock(EntityAccessService.class), null, null, null, null, null, null);
+                null, viewService, null, null, mock(EntityAccessService.class), null, null, null, null, null, null,
+                null);
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

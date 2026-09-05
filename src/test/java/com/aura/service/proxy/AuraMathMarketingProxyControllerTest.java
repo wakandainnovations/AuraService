@@ -304,16 +304,20 @@ class AuraMathMarketingProxyControllerTest {
     void catalog_listsAllRoutes_withoutCallingUpstream() throws Exception {
         mvc.perform(get("/v1/marketing/_catalog"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRoutes").value(19))
+                .andExpect(jsonPath("$.totalRoutes").value(23))
                 .andExpect(jsonPath("$.routes[0].wrapperPath").value("/v1/marketing/genre"))
                 .andExpect(jsonPath("$.routes[0].upstreamPath").value("/api/marketing/genre"))
-                .andExpect(jsonPath("$.routes[12].wrapperPath").value("/v1/marketing/entity-report/{entityId}"))
-                .andExpect(jsonPath("$.routes[13].wrapperPath").value("/v1/marketing/entity/{entityId}/report"))
-                .andExpect(jsonPath("$.routes[14].wrapperPath").value("/v1/marketing/language/{language}/users"))
-                .andExpect(jsonPath("$.routes[15].wrapperPath").value("/v1/marketing/language/{language}/movie/{movieName}/users"))
-                .andExpect(jsonPath("$.routes[16].wrapperPath").value("/v1/marketing/movie-buffs/{keyword}"))
-                .andExpect(jsonPath("$.routes[17].wrapperPath").value("/v1/marketing/narrative-novelty/score"))
-                .andExpect(jsonPath("$.routes[18].wrapperPath").value("/v1/marketing/narrative-novelty/lookup"));
+                .andExpect(jsonPath("$.routes[4].wrapperPath").value("/v1/marketing/genre/{genre}/posts"))
+                .andExpect(jsonPath("$.routes[9].wrapperPath").value("/v1/marketing/party/{party}/posts"))
+                .andExpect(jsonPath("$.routes[14].wrapperPath").value("/v1/marketing/celebrity/{celebrity}/posts"))
+                .andExpect(jsonPath("$.routes[15].wrapperPath").value("/v1/marketing/entity-report/{entityId}"))
+                .andExpect(jsonPath("$.routes[16].wrapperPath").value("/v1/marketing/entity/{entityId}/report"))
+                .andExpect(jsonPath("$.routes[17].wrapperPath").value("/v1/marketing/language/{language}/users"))
+                .andExpect(jsonPath("$.routes[18].wrapperPath").value("/v1/marketing/language/{language}/movie/{movieName}/users"))
+                .andExpect(jsonPath("$.routes[19].wrapperPath").value("/v1/marketing/language/{language}/posts"))
+                .andExpect(jsonPath("$.routes[20].wrapperPath").value("/v1/marketing/movie-buffs/{keyword}"))
+                .andExpect(jsonPath("$.routes[21].wrapperPath").value("/v1/marketing/narrative-novelty/score"))
+                .andExpect(jsonPath("$.routes[22].wrapperPath").value("/v1/marketing/narrative-novelty/lookup"));
 
         assertThat(upstream.getRequestCount()).isZero();
     }

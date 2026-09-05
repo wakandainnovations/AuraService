@@ -5,9 +5,11 @@ import com.aura.service.enums.Platform;
 import com.aura.service.enums.RecommendedActionStatus;
 import com.aura.service.enums.ReviewAspectCategory;
 import com.aura.service.enums.TimePeriod;
+import com.aura.service.licensing.Feature;
 import com.aura.service.service.AudiencePulseAspectsService;
 import com.aura.service.service.CommandCenterSummaryService;
 import com.aura.service.service.DashboardService;
+import com.aura.service.service.EntitlementService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.RecommendedActionsService;
 import com.aura.service.service.ReviewAspectBreakdownService;
@@ -19,6 +21,7 @@ import com.aura.service.service.WhatsNewService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -50,6 +53,7 @@ public class DashboardController {
     private final TopSpreaderContentService topSpreaderContentService;
     private final TopSpreaderInsightsService topSpreaderInsightsService;
     private final ReviewAspectBreakdownService reviewAspectBreakdownService;
+    private final EntitlementService entitlementService;
 
     /** Reject (404) any entity the caller doesn't own before any dashboard data is read. */
     private void assertOwned(Long entityId) {
@@ -285,6 +289,20 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * Triggers an unbounded catch-up of this entity's entire not-yet-classified review-aspect backlog
+     * in the background and returns immediately (202) — unlike {@code review-aspect-breakdown}'s own
+     * {@code refresh=true}, which is capped per call and runs on the request thread. Open to any owner
+     * of the entity, same as every other endpoint here; see {@link ReviewAspectBreakdownService#triggerBackfill}
+     * for how a repeated trigger against an already-running backfill is deduped.
+     */
+    @PostMapping("/{entityId}/review-aspect-backfill")
+    public ResponseEntity<ReviewAspectBackfillResponse> triggerReviewAspectBackfill(@PathVariable Long entityId) {
+        assertOwned(entityId);
+        ReviewAspectBackfillResponse response = reviewAspectBreakdownService.triggerBackfill(entityId);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
     @GetMapping("/{entityId}/top-spreaders/content")
     public ResponseEntity<TopSpreaderContentResponse> getTopSpreaderContent(
             @PathVariable Long entityId,
@@ -337,13 +355,23 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * Gated behind {@link Feature#CRISIS} because the response now carries {@link
+     * RecommendedActionsResponse#getSituationRecommendation()} - the same GOLD-tier "Social Buzz
+     * Situation" analysis {@code /api/crisis/situation-recommendation/{entityId}} exposes on its own,
+     * folded in here so the marketing team gets both the tactical action list and the reactive
+     * burst/precedent read in one call. A non-entitled caller gets the whole response - including the
+     * previously-ungated action list - back as a masked preview (see {@link EntitlementService#evaluate}),
+     * not just the situation portion; {@link com.aura.service.service.PreviewMaskingService} has no
+     * per-field granularity.
+     */
     @GetMapping("/{entityId}/recommended-actions")
-    public ResponseEntity<RecommendedActionsResponse> getRecommendedActions(
+    public EntitledResponse<RecommendedActionsResponse> getRecommendedActions(
             @PathVariable Long entityId,
             @RequestParam(defaultValue = "false") boolean refresh) {
         assertOwned(entityId);
-        RecommendedActionsResponse response = recommendedActionsService.getRecommendedActions(entityId, refresh);
-        return ResponseEntity.ok(response);
+        return entitlementService.evaluate(Feature.CRISIS,
+                () -> recommendedActionsService.getRecommendedActions(entityId, refresh));
     }
 
     /**

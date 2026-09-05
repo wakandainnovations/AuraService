@@ -4,7 +4,10 @@ import com.aura.service.dto.RecommendedActionItem;
 import com.aura.service.dto.RecommendedActionsResponse;
 import com.aura.service.enums.RecommendedActionCategory;
 import com.aura.service.enums.RecommendedActionStatus;
+import com.aura.service.service.EntitlementServiceImpl;
 import com.aura.service.service.EntityAccessService;
+import com.aura.service.service.LicenseService;
+import com.aura.service.service.PreviewMaskingServiceImpl;
 import com.aura.service.service.RecommendedActionsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -20,6 +23,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -38,7 +42,7 @@ class DashboardControllerRecommendedActionsTest {
         RecommendedActionsResponse response;
 
         StubRecommendedActionsService() {
-            super(null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null);
         }
 
         @Override
@@ -55,8 +59,15 @@ class DashboardControllerRecommendedActionsTest {
     @BeforeEach
     void setUp() {
         service = new StubRecommendedActionsService();
+        EntityAccessService entityAccess = mock(EntityAccessService.class);
+        // This endpoint is now gated behind Feature.CRISIS (GOLD) - see DashboardController#getRecommendedActions's
+        // own doc. The admin bypass keeps this test's focus on the controller's own plumbing (path
+        // variable/refresh-param passthrough, response shape) rather than entitlement/tier logic, which
+        // EntitlementServiceTest already covers.
+        when(entityAccess.currentUserIsAdmin()).thenReturn(true);
         DashboardController controller = new DashboardController(
-                null, null, null, null, mock(EntityAccessService.class), null, null, service, null, null, null);
+                null, null, null, null, entityAccess, null, null, service, null, null, null,
+                new EntitlementServiceImpl(mock(LicenseService.class), entityAccess, new PreviewMaskingServiceImpl()));
 
         ObjectMapper mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
@@ -74,15 +85,16 @@ class DashboardControllerRecommendedActionsTest {
                 ENTITY_ID, "Test Movie", 5,
                 List.of(new RecommendedActionItem("test-candidate-1", RecommendedActionCategory.HIGH_IMPACT, "Title", "Reason", 90, "Factor", -10, 10,
                         "Release week", List.of(), List.of(), RecommendedActionStatus.ACTIVE)),
-                Instant.parse("2026-08-09T10:00:00Z"));
+                Instant.parse("2026-08-09T10:00:00Z"), null);
 
         mvc.perform(get("/api/dashboard/{entityId}/recommended-actions", ENTITY_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.entityId").value(ENTITY_ID))
-                .andExpect(jsonPath("$.entityName").value("Test Movie"))
-                .andExpect(jsonPath("$.daysToRelease").value(5))
-                .andExpect(jsonPath("$.actions[0].title").value("Title"))
-                .andExpect(jsonPath("$.actions[0].category").value("HIGH_IMPACT"));
+                .andExpect(jsonPath("$.entitled").value(true))
+                .andExpect(jsonPath("$.data.entityId").value(ENTITY_ID))
+                .andExpect(jsonPath("$.data.entityName").value("Test Movie"))
+                .andExpect(jsonPath("$.data.daysToRelease").value(5))
+                .andExpect(jsonPath("$.data.actions[0].title").value("Title"))
+                .andExpect(jsonPath("$.data.actions[0].category").value("HIGH_IMPACT"));
 
         assertThat(service.lastEntityId).isEqualTo(ENTITY_ID);
         assertThat(service.lastRefresh).isFalse();
@@ -90,7 +102,7 @@ class DashboardControllerRecommendedActionsTest {
 
     @Test
     void getRecommendedActions_passesRefreshParam() throws Exception {
-        service.response = new RecommendedActionsResponse(ENTITY_ID, "Test Movie", null, List.of(), Instant.now());
+        service.response = new RecommendedActionsResponse(ENTITY_ID, "Test Movie", null, List.of(), Instant.now(), null);
 
         mvc.perform(get("/api/dashboard/{entityId}/recommended-actions", ENTITY_ID)
                         .param("refresh", "true"))

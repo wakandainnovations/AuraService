@@ -3,11 +3,13 @@ package com.aura.service.controller;
 import com.aura.service.dto.EntitledResponse;
 import com.aura.service.dto.GenerateCrisisPlanRequest;
 import com.aura.service.dto.GenerateCrisisPlanResponse;
+import com.aura.service.dto.SituationRecommendationResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.licensing.Feature;
 import com.aura.service.service.EntitlementService;
 import com.aura.service.service.EntityAccessService;
 import com.aura.service.service.LLMService;
+import com.aura.service.service.SituationRecommendationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +28,7 @@ public class CrisisController {
     private final LLMService llmService;
     private final EntityAccessService entityAccessService;
     private final EntitlementService entitlementService;
+    private final SituationRecommendationService situationRecommendationService;
 
     @Value("${llm.prompt.generate.crisis.plan}")
     private String crisisPlanPromptTemplate;
@@ -43,6 +46,24 @@ public class CrisisController {
 
             String generatedPlan = llmService.generateCrisisPlan(prompt);
             return new GenerateCrisisPlanResponse(generatedPlan);
+        });
+    }
+
+    /**
+     * The automatic counterpart to {@code /generate-plan}: instead of a marketing-team-authored crisis
+     * description, this builds the situation itself from the movie's own last-7-days/last-24h post
+     * activity (including the "no posts at all" case) and asks the LLM for one recommended action
+     * grounded in real precedent - see {@link SituationRecommendationService}. Cached per entity on a
+     * short TTL; {@code refresh=true} forces regeneration.
+     */
+    @GetMapping("/situation-recommendation/{entityId}")
+    public EntitledResponse<SituationRecommendationResponse> getSituationRecommendation(
+            @PathVariable("entityId") Long entityId,
+            @RequestParam(name = "refresh", defaultValue = "false") boolean refresh
+    ) {
+        return entitlementService.evaluate(Feature.CRISIS, () -> {
+            entityAccessService.assertOwnedByCurrentUser(entityId);
+            return situationRecommendationService.getSituationRecommendation(entityId, refresh);
         });
     }
 }

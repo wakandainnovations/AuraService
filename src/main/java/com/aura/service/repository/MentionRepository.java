@@ -180,6 +180,21 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             @Param("entityId") Long entityId, @Param("sentiment") Sentiment sentiment,
             @Param("after") Instant after, Pageable pageable);
 
+    /**
+     * Rows of {@code [reviewAspectCategory, count]} for posts of one sentiment in a date window, used
+     * by {@code SituationRecommendationService} to ground "what the negativity is about" in real,
+     * already-classified {@link Mention#getReviewAspectCategory()} data rather than an LLM guess - see
+     * {@code ReviewAspectBreakdownService} for how that field gets populated. A post not yet classified
+     * (category still null) is excluded here, same as {@link #findReviewAspectBreakdownForEntity}.
+     */
+    @Query("SELECT m.reviewAspectCategory, COUNT(m) FROM Mention m WHERE m.sentiment = :sentiment " +
+            "AND m.postDate > :after AND m.reviewAspectCategory IS NOT NULL AND EXISTS " +
+            "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
+            "GROUP BY m.reviewAspectCategory ORDER BY COUNT(m) DESC")
+    List<Object[]> findReviewAspectCountsForEntityAndSentimentSince(
+            @Param("entityId") Long entityId, @Param("sentiment") Sentiment sentiment,
+            @Param("after") Instant after);
+
     @Query("SELECT m FROM Mention m WHERE m.author = :author AND m.sentiment = :sentiment " +
             "AND m.postDate > :after AND EXISTS " +
             "(SELECT e FROM m.managedEntities e WHERE e.id = :entityId) " +
@@ -810,6 +825,50 @@ public interface MentionRepository extends JpaRepository<Mention, Long> {
             ") v",
             nativeQuery = true)
     long findTotalViewsForEntity(@Param("entityId") Long entityId);
+
+    /**
+     * Raw post/comment count in a date window, read directly off the four platform tables and matched
+     * to {@code entityId} via {@code entity_keywords} (case-insensitive, same matching rule as {@link
+     * #linkExistingMentionsByKeyword}) rather than through {@code mentions}/{@code mention_entities} -
+     * unlike every other count query in this repository. This exists specifically for {@code
+     * SituationRecommendationService}'s reactive last-7-days/last-24h volume and "no posts at all"
+     * check: {@code mentions} is populated by an ingestion pipeline external to this codebase and can
+     * lag the raw platform tables by a meaningful margin (observed multi-day/multi-week gaps between a
+     * raw table's newest row and the newest linked {@code mentions} row for the same platform), which
+     * would silently understate or miss a same-day burst. Same {@code author_type <> 'irrelevant'}
+     * exclusion as {@link #findTotalViewsForEntity} (NULL/not-yet-classified still included).
+     *
+     * <p>Deliberately NOT extended to sentiment: the raw tables carry no reliable POSITIVE/NEGATIVE/
+     * NEUTRAL signal - {@code sentiment_category} on these tables is a topic-taxonomy label (e.g.
+     * {@code "media.movie"}), not a polarity, and {@code sentiment_score} does not cleanly bucket into
+     * {@link com.aura.service.enums.Sentiment} (its range overlaps across all three labels for matched
+     * rows, and the score itself is sometimes revised by the time a row lands in {@code mentions}).
+     * Sentiment-specific counts, negativity themes, and excerpts stay sourced from {@code mentions} and
+     * inherit its lag - see {@code SituationRecommendationService}'s own javadoc.
+     */
+    @Query(value = "SELECT COUNT(*) FROM ( " +
+            "  SELECT x.id FROM x_posts x " +
+            "    WHERE x.created_at > :after AND x.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    AND EXISTS (SELECT 1 FROM entity_keywords ek WHERE ek.entity_id = :entityId " +
+            "      AND LOWER(ek.keyword) = LOWER(x.keyword)) " +
+            "  UNION ALL " +
+            "  SELECT y.id FROM youtube_comments y " +
+            "    WHERE y.published_at > :after AND y.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    AND EXISTS (SELECT 1 FROM entity_keywords ek WHERE ek.entity_id = :entityId " +
+            "      AND LOWER(ek.keyword) = LOWER(y.keyword)) " +
+            "  UNION ALL " +
+            "  SELECT i.id FROM instagram_posts i " +
+            "    WHERE i.timestamp > :after AND i.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    AND EXISTS (SELECT 1 FROM entity_keywords ek WHERE ek.entity_id = :entityId " +
+            "      AND LOWER(ek.keyword) = LOWER(i.keyword)) " +
+            "  UNION ALL " +
+            "  SELECT r.id FROM reddit_posts r " +
+            "    WHERE r.created_at > :after AND r.author_type IS DISTINCT FROM 'irrelevant' " +
+            "    AND EXISTS (SELECT 1 FROM entity_keywords ek WHERE ek.entity_id = :entityId " +
+            "      AND LOWER(ek.keyword) = LOWER(r.keyword)) " +
+            ") v",
+            nativeQuery = true)
+    long countRawPostsForEntitySince(@Param("entityId") Long entityId, @Param("after") Instant after);
 
     /**
      * Same total as {@link #findTotalViewsForEntity}, batched per entity — used by the Awareness panel

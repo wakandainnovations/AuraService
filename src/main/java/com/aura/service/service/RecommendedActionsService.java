@@ -3,6 +3,7 @@ package com.aura.service.service;
 import com.aura.service.dto.RecommendedActionCandidate;
 import com.aura.service.dto.RecommendedActionItem;
 import com.aura.service.dto.RecommendedActionsResponse;
+import com.aura.service.dto.SituationRecommendationResponse;
 import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.RecommendedActionsCache;
 import com.aura.service.enums.RecommendedActionStatus;
@@ -96,6 +97,7 @@ public class RecommendedActionsService {
     private final LLMService llmService;
     private final Clock clock;
     private final TaskScheduler taskScheduler;
+    private final SituationRecommendationService situationRecommendationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${llm.prompt.generate.recommended.actions}")
@@ -116,13 +118,15 @@ public class RecommendedActionsService {
             RecommendedActionCandidateService candidateService,
             LLMService llmService,
             Clock clock,
-            TaskScheduler taskScheduler) {
+            TaskScheduler taskScheduler,
+            SituationRecommendationService situationRecommendationService) {
         this.managedEntityRepository = managedEntityRepository;
         this.cacheRepository = cacheRepository;
         this.candidateService = candidateService;
         this.llmService = llmService;
         this.clock = clock;
         this.taskScheduler = taskScheduler;
+        this.situationRecommendationService = situationRecommendationService;
     }
 
     /**
@@ -165,7 +169,28 @@ public class RecommendedActionsService {
         response.addAll(doneOrIrrelevantActions);
 
         Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
-        return new RecommendedActionsResponse(entityId, content.entityName(), daysToRelease, response, content.generatedAt());
+        RecommendedActionsResponse result = new RecommendedActionsResponse();
+        result.setEntityId(entityId);
+        result.setEntityName(content.entityName());
+        result.setDaysToRelease(daysToRelease);
+        result.setActions(response);
+        result.setGeneratedAt(content.generatedAt());
+        result.setSituationRecommendation(situationRecommendation(entityId, refresh));
+        return result;
+    }
+
+    // Computed best-effort: a failure here (e.g. the situation LLM call) must not take down the
+    // tactical action list this endpoint has always returned - same fail-soft principle as
+    // refreshOneEntity's own try/catch. Not called from getAllRecommendedActions, which stays the
+    // plain action-history audit view.
+    private SituationRecommendationResponse situationRecommendation(Long entityId, boolean refresh) {
+        try {
+            return situationRecommendationService.getSituationRecommendation(entityId, refresh);
+        } catch (Exception e) {
+            log.warn("Failed to compute situation recommendation for entity {} — omitting it from the " +
+                    "recommended-actions response", entityId, e);
+            return null;
+        }
     }
 
     // Caps an ACTIVE action list at MAX_ACTIVE_ACTIONS_IN_RESPONSE, chosen randomly but deterministically
@@ -203,7 +228,13 @@ public class RecommendedActionsService {
         }
 
         Integer daysToRelease = todayOffsetFromRelease(entity.getReleaseDate());
-        return new RecommendedActionsResponse(entityId, row.getEntityName(), daysToRelease, actions, row.getGeneratedAt());
+        RecommendedActionsResponse result = new RecommendedActionsResponse();
+        result.setEntityId(entityId);
+        result.setEntityName(row.getEntityName());
+        result.setDaysToRelease(daysToRelease);
+        result.setActions(actions);
+        result.setGeneratedAt(row.getGeneratedAt());
+        return result;
     }
 
     /**

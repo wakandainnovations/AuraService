@@ -76,7 +76,7 @@ public class ReviewAspectBreakdownService {
     private final LLMService llmService;
     private final ObjectMapper objectMapper;
 
-    // entityIds with a backfill already running in the background — prevents a repeated admin trigger
+    // entityIds with a backfill already running in the background — prevents a repeated trigger
     // (double-click, retried request) from kicking off a second overlapping drain of the same backlog.
     private final Set<Long> inFlightBackfills = ConcurrentHashMap.newKeySet();
 
@@ -120,8 +120,9 @@ public class ReviewAspectBreakdownService {
      * with {@code refresh=true} (capped at {@link #MAX_PENDING_PER_ENTITY_REFRESH} per call, and run
      * synchronously on the caller's request thread), this starts {@link #backfillEntityAsync} on a
      * background thread and returns immediately, so a movie with a backlog large enough to need
-     * hundreds of LLM calls doesn't hold an admin's HTTP request open for the whole run. Admin-only at
-     * the controller layer, since it can still issue a large number of LLM requests, just not on the
+     * hundreds of LLM calls doesn't hold the caller's HTTP request open for the whole run. Open to any
+     * owner of the entity (see {@code DashboardController}'s {@code assertOwned}), same as every other
+     * entity-scoped endpoint — it can still issue a large number of LLM requests, just not on the
      * request thread. A repeated trigger for an entity already backfilling is a no-op (see
      * {@link #inFlightBackfills}) rather than starting a second overlapping drain of the same backlog.
      */
