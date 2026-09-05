@@ -65,8 +65,8 @@ public class MovieQueryServiceImpl implements MovieQueryService {
         if (cached != null) {
             return cached;
         }
-        EntityMarketingReportResponse report = entityMarketingReportService.generateReport(
-                entity.getType(), entity.getId(), REPORT_PERIOD, REPORT_WINDOW_DAYS);
+        EntityMarketingReportResponse report = entityMarketingReportService.getReport(
+                entity.getType(), entity.getId(), REPORT_PERIOD, REPORT_WINDOW_DAYS, false);
         reportCache.put(cacheKey, report, Duration.ofSeconds(reportCacheTtlSeconds).toNanos());
         return report;
     }
