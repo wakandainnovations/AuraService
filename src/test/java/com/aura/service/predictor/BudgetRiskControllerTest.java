@@ -2,6 +2,7 @@ package com.aura.service.predictor;
 
 import com.aura.service.currency.ExchangeRateUnavailableException;
 import com.aura.service.currency.UsdInrRate;
+import com.aura.service.predictor.RecentRatingRangeLookup.Role;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.mockwebserver.MockResponse;
@@ -17,10 +18,13 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -48,8 +52,8 @@ class BudgetRiskControllerTest {
 
     private MockWebServer upstream;
     private final ObjectMapper mapper = new ObjectMapper();
-    // Actor -> highest rating range among their last 3 films; null when the test sets none.
-    private Integer leadRatingRange;
+    // Highest rating range among each role's last 3 films; absent when the test sets none.
+    private final Map<Role, Integer> ratingRanges = new EnumMap<>(Role.class);
     private final List<String> lookups = new ArrayList<>();
     private boolean rateUnavailable;
 
@@ -71,9 +75,9 @@ class BudgetRiskControllerTest {
         props.setReadTimeoutMs(2_000);
         AuraPredictorClient client = new AuraPredictorClient(
                 new AuraPredictorClientConfig().auraPredictorWebClient(props), props, mapper);
-        LeadActorRatingRangeLookup lookup = (actor, beforeDate) -> {
-            lookups.add(actor + "|" + beforeDate);
-            return leadRatingRange;
+        RecentRatingRangeLookup lookup = (role, name, beforeDate) -> {
+            lookups.add(role + "|" + name + "|" + beforeDate);
+            return ratingRanges.get(role);
         };
         return MockMvcBuilders.standaloneSetup(
                 new BudgetRiskController(new BudgetRiskService(client, lookup, () -> {
@@ -166,12 +170,13 @@ class BudgetRiskControllerTest {
         assertThat(sent.has("currency")).isFalse();
         assertThat(sent.has("estimatedBudget")).isFalse();
         assertThat(sent.has("marketingBudget")).isFalse();
-        assertThat(sent.path("hitRatio").asDouble()).isEqualTo(2.0);
+        // 30M USD with no proven talent: 2 - 0.65 * 29/34.
+        assertThat(sent.path("hitRatio").asDouble()).isEqualTo(1.45);
         assertThat(sent.path("ratingRange").asInt()).isEqualTo(1_000);
         assertThat(mapper.convertValue(sent.path("ratings"), double[].class)).containsExactly(4, 6, 8);
         assertThat(sent.path("supportingActors").size()).isEqualTo(2);
         assertThat(sent.has("director")).isFalse();
-        assertThat(lookups).containsExactly("Some Actor|2026-12-25");
+        assertThat(lookups).containsExactly("LEAD_ACTOR|Some Actor|2026-12-25");
     }
 
     @Test
@@ -186,12 +191,12 @@ class BudgetRiskControllerTest {
 
     @Test
     void leadActorsHigherRecentRatingRange_wins_andShiftsRatings() throws Exception {
-        leadRatingRange = 100_000;
+        ratingRanges.put(Role.LEAD_ACTOR, 100_000);
         JsonNode sent = send("telugu", "medium");
         assertThat(sent.path("ratingRange").asInt()).isEqualTo(100_000);
         assertThat(mapper.convertValue(sent.path("ratings"), double[].class)).containsExactly(5, 7, 9);
 
-        leadRatingRange = 10_000;
+        ratingRanges.put(Role.LEAD_ACTOR, 10_000);
         sent = send("telugu", "low");
         assertThat(sent.path("ratingRange").asInt()).isEqualTo(10_000);
         assertThat(mapper.convertValue(sent.path("ratings"), double[].class)).containsExactly(5, 7, 9);
@@ -199,16 +204,59 @@ class BudgetRiskControllerTest {
 
     @Test
     void leadActorsLowerRecentRatingRange_keepsMarketingBand() throws Exception {
-        leadRatingRange = 100;
+        ratingRanges.put(Role.LEAD_ACTOR, 100);
         JsonNode sent = send("telugu", "high");
         assertThat(sent.path("ratingRange").asInt()).isEqualTo(10_000);
         assertThat(mapper.convertValue(sent.path("ratings"), double[].class)).containsExactly(4, 6, 8);
 
         // 10000+ shifts the ratings even when the marketing band is already as high.
-        leadRatingRange = 10_000;
+        ratingRanges.put(Role.LEAD_ACTOR, 10_000);
         sent = send("hindi", "high");
         assertThat(sent.path("ratingRange").asInt()).isEqualTo(100_000);
         assertThat(mapper.convertValue(sent.path("ratings"), double[].class)).containsExactly(5, 7, 9);
+    }
+
+    @Test
+    void hitRatio_fallsInAStraightLineWithBudget() {
+        assertThat(BudgetRiskService.budgetHitRatio(null)).isEqualTo(2.0);
+        assertThat(BudgetRiskService.budgetHitRatio(500_000d)).isEqualTo(2.0);
+        assertThat(BudgetRiskService.budgetHitRatio(1_000_000d)).isEqualTo(2.0);
+        assertThat(BudgetRiskService.budgetHitRatio(18_000_000d)).isCloseTo(1.675, within(1e-9));
+        assertThat(BudgetRiskService.budgetHitRatio(35_000_000d)).isEqualTo(1.35);
+        assertThat(BudgetRiskService.budgetHitRatio(100_000_000d)).isEqualTo(1.35);
+    }
+
+    @Test
+    void hitRatio_isInrBudgetConvertedFirst() throws Exception {
+        // 30M INR is 375k USD, under $1M.
+        assertThat(send("telugu", null).path("hitRatio").asDouble()).isEqualTo(2.0);
+    }
+
+    @Test
+    void provenTalent_lowersHitRatio_leadWeighingMost() throws Exception {
+        String usdWithCrew = ", \"currency\": \"USD\", \"director\": \" Dir \", \"musicDirector\": \"Composer\"";
+        // Base at 30M USD is 1.4456; the cut is 35% x (0.5 lead + 0.3 director + 0.2 music director).
+        assertThat(send("telugu", null, usdWithCrew).path("hitRatio").asDouble()).isEqualTo(1.45);
+        assertThat(lookups).containsExactly(
+                "LEAD_ACTOR|Some Actor|2026-12-25", "DIRECTOR|Dir|2026-12-25", "MUSIC_DIRECTOR|Composer|2026-12-25");
+
+        ratingRanges.put(Role.LEAD_ACTOR, 10_000);
+        assertThat(send("telugu", null, usdWithCrew).path("hitRatio").asDouble()).isEqualTo(1.19);
+
+        // 1000+ counts half; below 1000 not at all.
+        ratingRanges.put(Role.LEAD_ACTOR, 1_000);
+        assertThat(send("telugu", null, usdWithCrew).path("hitRatio").asDouble()).isEqualTo(1.32);
+        ratingRanges.put(Role.LEAD_ACTOR, 100);
+        ratingRanges.put(Role.DIRECTOR, 100_000);
+        ratingRanges.put(Role.MUSIC_DIRECTOR, 1_000);
+        assertThat(send("telugu", null, usdWithCrew).path("hitRatio").asDouble()).isEqualTo(1.24);
+
+        ratingRanges.put(Role.LEAD_ACTOR, 10_000);
+        ratingRanges.put(Role.MUSIC_DIRECTOR, 10_000);
+        // A full 35% cut would give 0.94; AuraPredictor's floor is 1.
+        JsonNode sent = send("telugu", null, usdWithCrew);
+        assertThat(sent.path("hitRatio").asDouble()).isEqualTo(1.0);
+        assertThat(sent.path("director").asText()).isEqualTo("Dir");
     }
 
     @Test

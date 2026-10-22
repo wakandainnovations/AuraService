@@ -11,7 +11,8 @@ import java.util.List;
  * What the UI sends for a budget-risk check on a planned movie. {@link BudgetRiskService} turns it
  * into AuraPredictor's {@code POST /v1/budget-risk/upcoming} request: {@code estimatedBudget}, in
  * {@code currency} (default INR), becomes {@code budget} in USD, and {@code marketingBudget} (default medium) plus the lead actor's recent
- * films decide {@code ratingRange} and {@code ratings}.
+ * films decide {@code ratingRange} and {@code ratings}. The budget and the recent films of the lead
+ * actor, director and music director decide {@code hitRatio}.
  */
 public record BudgetRiskRequest(
         @NotBlank String movieName,
