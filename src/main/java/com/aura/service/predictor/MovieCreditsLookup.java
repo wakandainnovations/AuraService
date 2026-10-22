@@ -8,12 +8,18 @@ import java.util.List;
  */
 public interface MovieCreditsLookup {
 
+    /**
+     * A credited person and the highest {@code rating_range} among their last 3 films in that role
+     * released by today, or null when none of them has one.
+     */
+    record RatedName(String name, Integer highestRecentRatingRange) {}
+
     /** Names from any of the five {@code lead_actor_*} slots. */
-    List<String> actors();
+    List<RatedName> actors();
 
-    List<String> directors();
+    List<RatedName> directors();
 
-    List<String> musicDirectors();
+    List<RatedName> musicDirectors();
 
     List<String> productionCompanies();
 }

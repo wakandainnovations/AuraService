@@ -1,5 +1,6 @@
 package com.aura.service.predictor;
 
+import com.aura.service.predictor.MovieCreditsLookup.RatedName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -14,18 +15,18 @@ class MovieCreditsControllerTest {
 
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new MovieCreditsController(new MovieCreditsLookup() {
         @Override
-        public List<String> actors() {
-            return List.of("Ajay Devgn", "Akshay Kumar");
+        public List<RatedName> actors() {
+            return List.of(new RatedName("Ajay Devgn", 10_000), new RatedName("Akshay Kumar", null));
         }
 
         @Override
-        public List<String> directors() {
-            return List.of("Rajkumar Hirani");
+        public List<RatedName> directors() {
+            return List.of(new RatedName("Rajkumar Hirani", 100_000));
         }
 
         @Override
-        public List<String> musicDirectors() {
-            return List.of("A. R. Rahman");
+        public List<RatedName> musicDirectors() {
+            return List.of(new RatedName("A. R. Rahman", 1_000));
         }
 
         @Override
@@ -39,13 +40,17 @@ class MovieCreditsControllerTest {
         mvc.perform(get("/api/movie-credits/actors"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0]").value("Ajay Devgn"));
+                .andExpect(jsonPath("$[0].name").value("Ajay Devgn"))
+                .andExpect(jsonPath("$[0].highestRecentRatingRange").value(10_000))
+                .andExpect(jsonPath("$[1].highestRecentRatingRange").doesNotExist());
         mvc.perform(get("/api/movie-credits/directors"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0]").value("Rajkumar Hirani"));
+                .andExpect(jsonPath("$[0].name").value("Rajkumar Hirani"))
+                .andExpect(jsonPath("$[0].highestRecentRatingRange").value(100_000));
         mvc.perform(get("/api/movie-credits/music-directors"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0]").value("A. R. Rahman"));
+                .andExpect(jsonPath("$[0].name").value("A. R. Rahman"))
+                .andExpect(jsonPath("$[0].highestRecentRatingRange").value(1_000));
         mvc.perform(get("/api/movie-credits/production-companies"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[1]").value("T-Series"));
