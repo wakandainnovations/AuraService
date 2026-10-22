@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -33,15 +32,6 @@ public class UpcomingMovieRevenueController {
     // Local handler so GlobalExceptionHandler's catch-all RuntimeException -> 400 doesn't apply.
     @ExceptionHandler(AuraPredictorException.class)
     public ResponseEntity<Map<String, Object>> handleAuraPredictorException(AuraPredictorException ex) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", ex.getStatus());
-        body.put("error", switch (ex.getStatus()) {
-            case 422 -> "invalid_prediction_input";
-            case 503 -> "model_not_available";
-            case 504 -> "upstream_unavailable";
-            default -> "upstream_failure";
-        });
-        body.put("message", ex.getMessage());
-        return ResponseEntity.status(ex.getStatus()).body(body);
+        return ex.toResponse();
     }
 }

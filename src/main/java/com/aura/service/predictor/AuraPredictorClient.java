@@ -15,13 +15,15 @@ import java.time.Duration;
 /**
  * Typed client for AuraPredictor (the Python CatBoost revenue model, {@code ../AuraPredictor},
  * run with {@code scripts/serve_api.py}). Inject this anywhere in AuraService that needs a revenue
- * prediction for an upcoming movie; {@link UpcomingMovieRevenueController} exposes it over HTTP.
+ * prediction or budget-risk assessment for an upcoming movie; {@link UpcomingMovieRevenueController}
+ * and {@link BudgetRiskController} expose it over HTTP.
  */
 @Service
 public class AuraPredictorClient {
 
     private static final Logger log = LoggerFactory.getLogger(AuraPredictorClient.class);
     private static final String UPCOMING_PATH = "/v1/predict/upcoming";
+    private static final String BUDGET_RISK_PATH = "/v1/budget-risk/upcoming";
 
     private final WebClient client;
     private final AuraPredictorProperties props;
@@ -36,17 +38,29 @@ public class AuraPredictorClient {
     }
 
     public UpcomingMovieRevenueResponse predictUpcoming(UpcomingMovieRevenueRequest request) {
+        return post(UPCOMING_PATH, request, request.movieName(), UpcomingMovieRevenueResponse.class);
+    }
+
+    /**
+     * AuraPredictor's {@code POST /v1/budget-risk/upcoming}. The response is returned as raw JSON so
+     * callers get every field AuraPredictor sends, unchanged.
+     */
+    public JsonNode assessBudgetRisk(BudgetRiskUpstreamRequest request) {
+        return post(BUDGET_RISK_PATH, request, request.movieName(), JsonNode.class);
+    }
+
+    private <T> T post(String path, Object body, String movieName, Class<T> responseType) {
         long start = System.currentTimeMillis();
         try {
-            UpcomingMovieRevenueResponse response = client.post()
-                    .uri(UPCOMING_PATH)
+            T response = client.post()
+                    .uri(path)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(request)
+                    .bodyValue(body)
                     .retrieve()
-                    .bodyToMono(UpcomingMovieRevenueResponse.class)
+                    .bodyToMono(responseType)
                     .block(Duration.ofMillis((long) props.getConnectTimeoutMs() + props.getReadTimeoutMs()));
             log.info("aurapredictor upstream_path={} movie={} status=200 duration_ms={}",
-                    UPCOMING_PATH, request.movieName(), System.currentTimeMillis() - start);
+                    path, movieName, System.currentTimeMillis() - start);
             if (response == null) {
                 throw new AuraPredictorException(502, "AuraPredictor returned an empty response");
             }
@@ -54,7 +68,7 @@ public class AuraPredictorClient {
         } catch (WebClientResponseException ex) {
             int status = ex.getStatusCode().value();
             log.warn("aurapredictor upstream_path={} movie={} status={} duration_ms={}",
-                    UPCOMING_PATH, request.movieName(), status, System.currentTimeMillis() - start);
+                    path, movieName, status, System.currentTimeMillis() - start);
             // 4xx/503 carry a useful message (bad input, model not trained yet); anything else is
             // an AuraPredictor bug and is reported as a generic upstream failure.
             if (status == 422 || status == 503) {
@@ -66,7 +80,7 @@ public class AuraPredictorClient {
         } catch (RuntimeException ex) {
             // Connection refused, connect/read timeout, or block() timing out.
             log.warn("aurapredictor upstream_unavailable upstream_path={} duration_ms={} cause={}",
-                    UPCOMING_PATH, System.currentTimeMillis() - start, ex.toString());
+                    path, System.currentTimeMillis() - start, ex.toString());
             throw new AuraPredictorException(504, "AuraPredictor is unavailable at " + props.getBaseUrl(), ex);
         }
     }
