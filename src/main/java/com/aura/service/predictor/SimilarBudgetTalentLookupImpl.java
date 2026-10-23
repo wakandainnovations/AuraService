@@ -14,7 +14,8 @@ import java.util.List;
  * they're collapsed to one per (title, release date) first, as the rating-range lookup does.
  *
  * <p>A person's home language is the original language (the first one listed) of most of their
- * films in the role, so a Telugu star's one Tamil film doesn't make them a Tamil actor. A film is
+ * films in the role, so a Telugu star's one Tamil film doesn't make them a Tamil actor. Music
+ * directors instead count for every language they've worked in. A film is
  * released in every language listed for it, e.g. "kannada, hindi, telugu" for a dubbed release.
  */
 @Service
@@ -36,6 +37,7 @@ public class SimilarBudgetTalentLookupImpl implements SimilarBudgetTalentLookup 
             "  GROUP BY LOWER(TRIM(name)), LOWER(TRIM(movie_name)), release_date" +
             "), people AS (" +
             "  SELECT name_key, mode() WITHIN GROUP (ORDER BY original_language) AS home_language," +
+            "      BOOL_OR(original_language = LOWER(TRIM(:language))) AS worked_in_language," +
             "      BOOL_OR(released_in_language) AS reaches_language" +
             "  FROM credits" +
             "  GROUP BY name_key" +
@@ -55,8 +57,8 @@ public class SimilarBudgetTalentLookupImpl implements SimilarBudgetTalentLookup 
             " ORDER BY revenue / budget DESC, release_date DESC" +
             " LIMIT :limit";
 
-    private static final String FROM_LANGUAGE = "p.home_language = LOWER(TRIM(:language))";
-    private static final String FROM_OR_RELEASED_IN_LANGUAGE = "(" + FROM_LANGUAGE + " OR p.reaches_language)";
+    private static final String HOME_LANGUAGE = "p.home_language = LOWER(TRIM(:language))";
+    private static final String WORKED_IN_LANGUAGE = "p.worked_in_language";
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -71,8 +73,10 @@ public class SimilarBudgetTalentLookupImpl implements SimilarBudgetTalentLookup 
             case DIRECTOR -> "director";
             case MUSIC_DIRECTOR -> "music_director";
         };
+        String fromLanguage = role == Role.MUSIC_DIRECTOR ? WORKED_IN_LANGUAGE : HOME_LANGUAGE;
+        String languageMatch = panIndia ? "(" + fromLanguage + " OR p.reaches_language)" : fromLanguage;
         List<Object[]> rows = entityManager.createNativeQuery(BEST_SIMILAR_BUDGET_FILMS_SQL.formatted(
-                        column, panIndia ? FROM_OR_RELEASED_IN_LANGUAGE : FROM_LANGUAGE))
+                        column, languageMatch))
                 .setParameter("minBudget", minBudget)
                 .setParameter("maxBudget", maxBudget)
                 .setParameter("minRevenueRatio", minRevenueRatio)

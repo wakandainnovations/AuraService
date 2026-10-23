@@ -47,12 +47,14 @@ import java.util.stream.Stream;
  * <p>With a budget, {@code alternatives} lists other lead actors and music directors who'd make
  * the movie likelier to be a hit. Candidates are people credited in that role on a film with half
  * to twice the budget (USD) that earned at least twice its budget and is one of their last 3
- * released films or came out in the past year, best revenue / budget first. They must be from the movie's original language (the first
- * listed): most of their films in the role are originally in it. A movie in several languages is
- * taken as pan-India, and people who've had a film released in its original language qualify too,
- * so they have an audience there. The top 8 per role are scored as if the request had named them instead, with every rule above
- * re-applied, and up to 5 whose average hit probability across the assessments beats the
- * request's are returned, best first.
+ * released films or came out in the past year, best revenue / budget first. They must be from the
+ * movie's original language (the first listed): for a lead actor, most of their lead films are
+ * originally in it; a music director need only have worked in it once, since many work across
+ * industries. A movie in several languages is taken as pan-India, and people who've had a film
+ * released in its original language qualify too, so they have an audience there. The top 8 per
+ * role are scored as if the request had named them instead, with every rule above re-applied, and
+ * up to 5 whose average hit probability across the assessments beats the request's are returned,
+ * best first.
  */
 @Service
 @RequiredArgsConstructor
@@ -134,8 +136,8 @@ public class BudgetRiskService {
                 ? today.plusDays(1).toString() : request.releaseDate();
         List<SimilarBudgetFilm> candidates = similarBudgetTalentLookup.bestSimilarBudgetFilms(role,
                         budgetUsd * SIMILAR_BUDGET_MIN_FACTOR, budgetUsd * SIMILAR_BUDGET_MAX_FACTOR,
-                        SIMILAR_FILM_MIN_REVENUE_RATIO, audience.language(), audience.panIndia(), today.minusYears(RECENT_FILM_YEARS).toString(),
-                        releasedBefore, CANDIDATES_SCORED + excluded.size())
+                        SIMILAR_FILM_MIN_REVENUE_RATIO, audience.language(), audience.panIndia(),
+                        today.minusYears(RECENT_FILM_YEARS).toString(), releasedBefore, CANDIDATES_SCORED + excluded.size())
                 .stream()
                 .filter(film -> !excluded.contains(nameKey(film.name())))
                 .limit(CANDIDATES_SCORED)

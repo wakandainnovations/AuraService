@@ -19,8 +19,10 @@ public interface SimilarBudgetTalentLookup {
      * their last 3 films released before {@code beforeDate} (YYYY-MM-DD) and any released from
      * {@code recentSince} on. Best ratio first, at most {@code limit}.
      *
-     * <p>Only people who are from {@code language} - most of their films in the role are originally
-     * in it - qualify. With {@code panIndia}, so do people who've had a film released in it.
+     * <p>Only people who are from {@code language} qualify. A lead actor or director is from the
+     * language most of their films in the role are originally in; a music director, who often works
+     * across industries, is from every language they've had a film originally in. With
+     * {@code panIndia}, people who've had a film released in {@code language} qualify too.
      */
     List<SimilarBudgetFilm> bestSimilarBudgetFilms(Role role, double minBudget, double maxBudget,
                                                    double minRevenueRatio, String language, boolean panIndia,
