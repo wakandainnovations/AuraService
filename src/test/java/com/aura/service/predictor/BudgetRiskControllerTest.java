@@ -90,9 +90,10 @@ class BudgetRiskControllerTest {
                         throw new ExchangeRateUnavailableException("No USD/INR exchange rate");
                     }
                     return RATE;
-                }, (role, minBudget, maxBudget, homeLanguage, fromDate, beforeDate, limit) -> {
+                }, (role, minBudget, maxBudget, minRevenueRatio, language, panIndia, recentSince, beforeDate,
+                        limit) -> {
                     similarBudgetLookups.add(String.join("|", role.name(), String.valueOf(minBudget),
-                            String.valueOf(maxBudget), String.valueOf(homeLanguage), fromDate, beforeDate,
+                            String.valueOf(maxBudget), String.valueOf(minRevenueRatio), language, String.valueOf(panIndia), recentSince, beforeDate,
                             String.valueOf(limit)));
                     return similarBudgetFilms.getOrDefault(role, List.of());
                 }))).build();
@@ -327,13 +328,18 @@ class BudgetRiskControllerTest {
     }
 
     private org.springframework.test.web.servlet.ResultActions assessWithCrew(String language) throws Exception {
+        return assessWithCrew(language, "2099-12-25");
+    }
+
+    private org.springframework.test.web.servlet.ResultActions assessWithCrew(String language, String releaseDate)
+            throws Exception {
         return mvc().perform(post("/api/predictions/budget-risk")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"movieName": "New Film", "releaseDate": "2026-12-25", "language": "%s",
+                        {"movieName": "New Film", "releaseDate": "%s", "language": "%s",
                          "estimatedBudget": 30000000, "leadActor": "Some Actor", "supportingActors": ["Side Kick"],
                          "musicDirector": "Composer"}
-                        """.formatted(language)));
+                        """.formatted(releaseDate, language)));
     }
 
     @Test
@@ -350,6 +356,7 @@ class BudgetRiskControllerTest {
                 .andExpect(jsonPath("$.assessments[0].maxBudget").value(80_000.0))
                 .andExpect(jsonPath("$.alternatives.averageHitProbability").value(0.25))
                 .andExpect(jsonPath("$.alternatives.languageScope").value("tamil"))
+                .andExpect(jsonPath("$.alternatives.originalLanguage").value("tamil"))
                 .andExpect(jsonPath("$.alternatives.leadActors.length()").value(2))
                 .andExpect(jsonPath("$.alternatives.leadActors[0].name").value("Star B"))
                 .andExpect(jsonPath("$.alternatives.leadActors[0].averageHitProbability").value(0.75))
@@ -365,24 +372,38 @@ class BudgetRiskControllerTest {
                 .andExpect(jsonPath("$.alternatives.musicDirectors.length()").value(1))
                 .andExpect(jsonPath("$.alternatives.musicDirectors[0].name").value("Tunes E"));
 
-        // 30M INR is 375k USD: the band is half to twice that, over the 10 years before release. The
-        // limit leaves room for the request's own people, who are skipped.
+        // 30M INR is 375k USD: the band is half to twice that, for films that earned 2x. For a future
+        // release, released films are those out by today; the past year counts as recent. The limit
+        // leaves room for the request's own people, who are skipped.
+        LocalDate today = LocalDate.now();
+        String window = today.minusYears(1) + "|" + today.plusDays(1);
         assertThat(similarBudgetLookups).containsExactly(
-                "LEAD_ACTOR|187500.0|750000.0|tamil|2016-12-25|2026-12-25|10",
-                "MUSIC_DIRECTOR|187500.0|750000.0|tamil|2016-12-25|2026-12-25|9");
+                "LEAD_ACTOR|187500.0|750000.0|2.0|tamil|false|" + window + "|10",
+                "MUSIC_DIRECTOR|187500.0|750000.0|2.0|tamil|false|" + window + "|9");
         // The request, 4 lead candidates (Broken D's 422 is skipped) and 1 music director.
         assertThat(upstream.getRequestCount()).isEqualTo(6);
     }
 
     @Test
-    void alternatives_forSeveralLanguages_areNotLanguageBound() throws Exception {
+    void alternatives_forSeveralLanguages_arePanIndiaForTheOriginalLanguage() throws Exception {
         scoreBy(Map.of("Some Actor", 0.25));
-        assessWithCrew("telugu, tamil, hindi")
+        assessWithCrew(" Telugu, hindi, tamil")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.alternatives.languageScope").value("pan-india"))
+                .andExpect(jsonPath("$.alternatives.originalLanguage").value("telugu"))
                 .andExpect(jsonPath("$.alternatives.leadActors").isEmpty())
                 .andExpect(jsonPath("$.alternatives.musicDirectors").isEmpty());
-        assertThat(similarBudgetLookups).allMatch(lookup -> lookup.contains("|null|"));
+        assertThat(similarBudgetLookups).hasSize(2).allMatch(lookup -> lookup.contains("|telugu|true|"));
+    }
+
+    @Test
+    void alternatives_forAPastReleaseDate_onlyLookAtFilmsBeforeIt() throws Exception {
+        scoreBy(Map.of("Some Actor", 0.25));
+        assessWithCrew("telugu", "2020-01-01").andExpect(status().isOk());
+        String recentSince = LocalDate.now().minusYears(1).toString();
+        assertThat(similarBudgetLookups).containsExactly(
+                "LEAD_ACTOR|187500.0|750000.0|2.0|telugu|false|" + recentSince + "|2020-01-01|10",
+                "MUSIC_DIRECTOR|187500.0|750000.0|2.0|telugu|false|" + recentSince + "|2020-01-01|9");
     }
 
     @Test

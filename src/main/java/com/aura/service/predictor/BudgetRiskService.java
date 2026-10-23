@@ -46,10 +46,11 @@ import java.util.stream.Stream;
  *
  * <p>With a budget, {@code alternatives} lists other lead actors and music directors who'd make
  * the movie likelier to be a hit. Candidates are people credited in that role on a film with half
- * to twice the budget (USD) in the 10 years before the release date, best revenue / budget first.
- * For a single-language movie they must be from that language: most of their films in the role
- * are originally in it. A movie in several languages is taken as pan-India and anyone qualifies.
- * The top 8 per role are scored as if the request had named them instead, with every rule above
+ * to twice the budget (USD) that earned at least twice its budget and is one of their last 3
+ * released films or came out in the past year, best revenue / budget first. They must be from the movie's original language (the first
+ * listed): most of their films in the role are originally in it. A movie in several languages is
+ * taken as pan-India, and people who've had a film released in its original language qualify too,
+ * so they have an audience there. The top 8 per role are scored as if the request had named them instead, with every rule above
  * re-applied, and up to 5 whose average hit probability across the assessments beats the
  * request's are returned, best first.
  */
@@ -72,7 +73,8 @@ public class BudgetRiskService {
     static final int STAR_LEAD_RATING_RANGE = 10_000;
     static final double SIMILAR_BUDGET_MIN_FACTOR = 0.5;
     static final double SIMILAR_BUDGET_MAX_FACTOR = 2.0;
-    static final int SIMILAR_BUDGET_YEARS = 10;
+    static final double SIMILAR_FILM_MIN_REVENUE_RATIO = 2.0;
+    static final int RECENT_FILM_YEARS = 1;
     static final int CANDIDATES_SCORED = 8;
     static final int MAX_ALTERNATIVES = 5;
     static final String PAN_INDIA = "pan-india";
@@ -97,7 +99,8 @@ public class BudgetRiskService {
 
     private ObjectNode alternatives(BudgetRiskRequest request, double budgetUsd, double hitProbability,
                                     UsdInrRate rate) {
-        String homeLanguage = singleLanguage(request.language());
+        List<String> languages = languages(request.language());
+        Audience audience = new Audience(languages.isEmpty() ? "" : languages.get(0), languages.size() > 1);
         Set<String> cast = Stream.concat(Stream.ofNullable(request.leadActor()),
                         request.supportingActors() == null ? Stream.empty() : request.supportingActors().stream())
                 .map(BudgetRiskService::nameKey)
@@ -108,22 +111,31 @@ public class BudgetRiskService {
 
         ObjectNode alternatives = JsonNodeFactory.instance.objectNode();
         alternatives.put("averageHitProbability", hitProbability);
-        alternatives.put("languageScope", homeLanguage == null ? PAN_INDIA : homeLanguage);
-        alternatives.set("leadActors", betterTalent(Role.LEAD_ACTOR, request, budgetUsd, homeLanguage, cast,
+        alternatives.put("languageScope", audience.panIndia() ? PAN_INDIA : audience.language());
+        alternatives.put("originalLanguage", audience.language());
+        alternatives.set("leadActors", betterTalent(Role.LEAD_ACTOR, request, budgetUsd, audience, cast,
                 hitProbability, request::withLeadActor, rate));
-        alternatives.set("musicDirectors", betterTalent(Role.MUSIC_DIRECTOR, request, budgetUsd, homeLanguage,
+        alternatives.set("musicDirectors", betterTalent(Role.MUSIC_DIRECTOR, request, budgetUsd, audience,
                 musicDirector, hitProbability, request::withMusicDirector, rate));
         return alternatives;
     }
 
+    /** The movie's original language, and whether it's pan-India (in several languages). */
+    private record Audience(String language, boolean panIndia) {
+    }
+
     /** Candidates in {@code role} that beat {@code hitProbability} when swapped into the request. */
-    private ArrayNode betterTalent(Role role, BudgetRiskRequest request, double budgetUsd, String homeLanguage,
+    private ArrayNode betterTalent(Role role, BudgetRiskRequest request, double budgetUsd, Audience audience,
                                    Set<String> excluded, double hitProbability,
                                    Function<String, BudgetRiskRequest> swap, UsdInrRate rate) {
-        String fromDate = LocalDate.parse(request.releaseDate()).minusYears(SIMILAR_BUDGET_YEARS).toString();
+        // Released means out by today, and before the planned release.
+        LocalDate today = LocalDate.now();
+        String releasedBefore = LocalDate.parse(request.releaseDate()).isAfter(today)
+                ? today.plusDays(1).toString() : request.releaseDate();
         List<SimilarBudgetFilm> candidates = similarBudgetTalentLookup.bestSimilarBudgetFilms(role,
-                        budgetUsd * SIMILAR_BUDGET_MIN_FACTOR, budgetUsd * SIMILAR_BUDGET_MAX_FACTOR, homeLanguage,
-                        fromDate, request.releaseDate(), CANDIDATES_SCORED + excluded.size())
+                        budgetUsd * SIMILAR_BUDGET_MIN_FACTOR, budgetUsd * SIMILAR_BUDGET_MAX_FACTOR,
+                        SIMILAR_FILM_MIN_REVENUE_RATIO, audience.language(), audience.panIndia(), today.minusYears(RECENT_FILM_YEARS).toString(),
+                        releasedBefore, CANDIDATES_SCORED + excluded.size())
                 .stream()
                 .filter(film -> !excluded.contains(nameKey(film.name())))
                 .limit(CANDIDATES_SCORED)
@@ -283,14 +295,13 @@ public class BudgetRiskService {
         }
     }
 
-    /** The language of a single-language movie, lower-cased; null for several (pan-India). */
-    private static String singleLanguage(String language) {
-        List<String> languages = Stream.of(language.split(","))
+    /** The movie's languages, lower-cased, original first. */
+    private static List<String> languages(String language) {
+        return Stream.of(language.split(","))
                 .map(part -> part.trim().toLowerCase(Locale.ROOT))
                 .filter(part -> !part.isEmpty())
                 .distinct()
                 .toList();
-        return languages.size() == 1 ? languages.get(0) : null;
     }
 
     private static String nameKey(String name) {
