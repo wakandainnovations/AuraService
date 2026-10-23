@@ -28,15 +28,22 @@ public class MovieMarketingTacticsQueryServiceImpl implements MovieMarketingTact
     // release_date is free-text and not always a full ISO date (see MoviesDataCollectionQueryServiceImpl's
     // RELEASE_DAY_OF_WEEK_SQL comment) - LEFT(...,4) tolerates a bare year like "2025" too, unlike a
     // CAST(... AS date) which would reject it.
+    //
+    // movie_marketing_tactics stores one full lowercase language name per row ("latvian", "tamil"),
+    // while movies_data_collection mixes ISO codes ("lv"), capitalised names and comma lists
+    // ("telugu, tamil"). language_full_name() - a SQL function AuraDataFiller (re)creates from its
+    // LanguageNames mapping - normalises the movie side and the :language argument; a tactic row
+    // matches a movie when its language is any one of the movie's languages. The name comparison
+    // is LOWER(TRIM(...)) so it can use idx_movies_data_collection_lower_trim_name_year.
     private static final String PEER_TACTICS_SQL =
             "SELECT t.movie_name, t.release_year, t.main_classification_name, t.sub_classification_name, " +
             "       array_to_string(t.tactic_details, ' '), m.genre " +
             "FROM movie_marketing_tactics t " +
             "JOIN movies_data_collection m " +
-            "  ON LOWER(m.movie_name) = LOWER(t.movie_name) " +
-            "  AND LOWER(m.language) = LOWER(t.language) " +
+            "  ON LOWER(TRIM(m.movie_name)) = LOWER(TRIM(t.movie_name)) " +
             "  AND LEFT(m.release_date, 4) = t.release_year " +
-            "WHERE LOWER(t.language) = LOWER(:language)";
+            "  AND t.language = ANY(string_to_array(language_full_name(m.language), ', ')) " +
+            "WHERE t.language = language_full_name(:language)";
 
     @PersistenceContext
     private EntityManager entityManager;
