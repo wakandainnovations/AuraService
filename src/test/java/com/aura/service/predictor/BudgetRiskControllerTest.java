@@ -5,6 +5,8 @@ import com.aura.service.currency.UsdInrRate;
 import com.aura.service.predictor.RecentRatingRangeLookup.Role;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.aura.service.predictor.SimilarBudgetTalentLookup.SimilarBudgetFilm;
+import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -55,6 +57,9 @@ class BudgetRiskControllerTest {
     // Highest rating range among each role's last 3 films; absent when the test sets none.
     private final Map<Role, Integer> ratingRanges = new EnumMap<>(Role.class);
     private final List<String> lookups = new ArrayList<>();
+    // Similar-budget films per role, best first, as the lookup returns them.
+    private final Map<Role, List<SimilarBudgetFilm>> similarBudgetFilms = new EnumMap<>(Role.class);
+    private final List<String> similarBudgetLookups = new ArrayList<>();
     private boolean rateUnavailable;
 
     @BeforeEach
@@ -85,6 +90,11 @@ class BudgetRiskControllerTest {
                         throw new ExchangeRateUnavailableException("No USD/INR exchange rate");
                     }
                     return RATE;
+                }, (role, minBudget, maxBudget, homeLanguage, fromDate, beforeDate, limit) -> {
+                    similarBudgetLookups.add(String.join("|", role.name(), String.valueOf(minBudget),
+                            String.valueOf(maxBudget), String.valueOf(homeLanguage), fromDate, beforeDate,
+                            String.valueOf(limit)));
+                    return similarBudgetFilms.getOrDefault(role, List.of());
                 }))).build();
     }
 
@@ -283,5 +293,107 @@ class BudgetRiskControllerTest {
                 .andExpect(status().is(503))
                 .andExpect(jsonPath("$.error").value("model_not_available"))
                 .andExpect(jsonPath("$.message").value("No trained budget-risk model"));
+    }
+
+    private static SimilarBudgetFilm film(String name) {
+        return new SimilarBudgetFilm(name, name + " Film", "2024-05-01", "tamil", 1_000_000, 3_000_000);
+    }
+
+    /** Answers each call with a hit probability picked by the music director, else lead actor, it names. */
+    private void scoreBy(Map<String, Double> hitProbabilities) {
+        upstream.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                try {
+                    JsonNode body = mapper.readTree(request.getBody().readUtf8());
+                    Double p = hitProbabilities.get(body.path("musicDirector").asText());
+                    if (p == null) {
+                        p = hitProbabilities.get(body.path("leadActor").asText());
+                    }
+                    if (p == null) {
+                        return new MockResponse().setResponseCode(422).setHeader("Content-Type", "application/json")
+                                .setBody("{\"detail\": \"bad\"}");
+                    }
+                    return new MockResponse().setHeader("Content-Type", "application/json").setBody("""
+                            {"ratingRange":1000,"assessments":[
+                              {"rating":4.0,"maxBudget":1000.0,"plannedBudget":375000.0,"hitProbability":%s},
+                              {"rating":6.0,"maxBudget":2000.0,"plannedBudget":375000.0,"hitProbability":%s}]}"""
+                            .formatted(p, p));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+    }
+
+    private org.springframework.test.web.servlet.ResultActions assessWithCrew(String language) throws Exception {
+        return mvc().perform(post("/api/predictions/budget-risk")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"movieName": "New Film", "releaseDate": "2026-12-25", "language": "%s",
+                         "estimatedBudget": 30000000, "leadActor": "Some Actor", "supportingActors": ["Side Kick"],
+                         "musicDirector": "Composer"}
+                        """.formatted(language)));
+    }
+
+    @Test
+    void alternatives_listSimilarBudgetTalentThatBeatsTheRequest_bestFirst() throws Exception {
+        similarBudgetFilms.put(Role.LEAD_ACTOR, List.of(
+                film("Star A"), film("side kick"), film("Star B"), film("Weak C"), film("Broken D")));
+        similarBudgetFilms.put(Role.MUSIC_DIRECTOR, List.of(film("composer"), film("Tunes E")));
+        Map<String, Double> scores = Map.of(
+                "Some Actor", 0.25, "Star A", 0.5, "Star B", 0.75, "Weak C", 0.125, "Tunes E", 0.375);
+        scoreBy(scores);
+
+        assessWithCrew("Tamil")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assessments[0].maxBudget").value(80_000.0))
+                .andExpect(jsonPath("$.alternatives.averageHitProbability").value(0.25))
+                .andExpect(jsonPath("$.alternatives.languageScope").value("tamil"))
+                .andExpect(jsonPath("$.alternatives.leadActors.length()").value(2))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].name").value("Star B"))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].averageHitProbability").value(0.75))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].hitProbabilityGain").value(0.5))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].ratingRange").value(1_000))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].hitRatio").value(2.0))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].similarBudgetFilm.movieName").value("Star B Film"))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].similarBudgetFilm.budget").value(80_000_000.0))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].similarBudgetFilm.revenue").value(240_000_000.0))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].assessments[1].maxBudget").value(160_000.0))
+                .andExpect(jsonPath("$.alternatives.leadActors[0].assessments[1].plannedBudget").value(30_000_000.0))
+                .andExpect(jsonPath("$.alternatives.leadActors[1].name").value("Star A"))
+                .andExpect(jsonPath("$.alternatives.musicDirectors.length()").value(1))
+                .andExpect(jsonPath("$.alternatives.musicDirectors[0].name").value("Tunes E"));
+
+        // 30M INR is 375k USD: the band is half to twice that, over the 10 years before release. The
+        // limit leaves room for the request's own people, who are skipped.
+        assertThat(similarBudgetLookups).containsExactly(
+                "LEAD_ACTOR|187500.0|750000.0|tamil|2016-12-25|2026-12-25|10",
+                "MUSIC_DIRECTOR|187500.0|750000.0|tamil|2016-12-25|2026-12-25|9");
+        // The request, 4 lead candidates (Broken D's 422 is skipped) and 1 music director.
+        assertThat(upstream.getRequestCount()).isEqualTo(6);
+    }
+
+    @Test
+    void alternatives_forSeveralLanguages_areNotLanguageBound() throws Exception {
+        scoreBy(Map.of("Some Actor", 0.25));
+        assessWithCrew("telugu, tamil, hindi")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alternatives.languageScope").value("pan-india"))
+                .andExpect(jsonPath("$.alternatives.leadActors").isEmpty())
+                .andExpect(jsonPath("$.alternatives.musicDirectors").isEmpty());
+        assertThat(similarBudgetLookups).allMatch(lookup -> lookup.contains("|null|"));
+    }
+
+    @Test
+    void alternatives_needABudget() throws Exception {
+        upstream.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
+                .setBody(UPSTREAM_RESPONSE_WITH_BREAKOUT));
+        mvc().perform(post("/api/predictions/budget-risk")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"movieName\": \"F\", \"releaseDate\": \"2026-12-25\", \"language\": \"tamil\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alternatives").doesNotExist());
+        assertThat(similarBudgetLookups).isEmpty();
     }
 }

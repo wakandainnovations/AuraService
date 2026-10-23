@@ -3,13 +3,26 @@ package com.aura.service.predictor;
 import com.aura.service.currency.UsdInrRate;
 import com.aura.service.currency.UsdInrRateProvider;
 import com.aura.service.predictor.RecentRatingRangeLookup.Role;
+import com.aura.service.predictor.SimilarBudgetTalentLookup.SimilarBudgetFilm;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalDouble;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Budget-risk check for a planned movie via AuraPredictor. Inject this from other services; {@link
@@ -30,6 +43,15 @@ import java.util.Locale;
  * and the response comes back as AuraPredictor sent it except that every budget is converted to INR
  * at the current rate, with {@code currency}, {@code usdToInrRate} and {@code exchangeRateDate}
  * added at the top level.
+ *
+ * <p>With a budget, {@code alternatives} lists other lead actors and music directors who'd make
+ * the movie likelier to be a hit. Candidates are people credited in that role on a film with half
+ * to twice the budget (USD) in the 10 years before the release date, best revenue / budget first.
+ * For a single-language movie they must be from that language: most of their films in the role
+ * are originally in it. A movie in several languages is taken as pan-India and anyone qualifies.
+ * The top 8 per role are scored as if the request had named them instead, with every rule above
+ * re-applied, and up to 5 whose average hit probability across the assessments beats the
+ * request's are returned, best first.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,16 +70,124 @@ public class BudgetRiskService {
     static final List<Double> DEFAULT_RATINGS = List.of(4.0, 6.0, 8.0);
     static final List<Double> STAR_LEAD_RATINGS = List.of(5.0, 7.0, 9.0);
     static final int STAR_LEAD_RATING_RANGE = 10_000;
+    static final double SIMILAR_BUDGET_MIN_FACTOR = 0.5;
+    static final double SIMILAR_BUDGET_MAX_FACTOR = 2.0;
+    static final int SIMILAR_BUDGET_YEARS = 10;
+    static final int CANDIDATES_SCORED = 8;
+    static final int MAX_ALTERNATIVES = 5;
+    static final String PAN_INDIA = "pan-india";
     private static final List<String> BUDGET_FIELDS = List.of("maxBudget", "safeBudget", "plannedBudget");
+    private static final Logger log = LoggerFactory.getLogger(BudgetRiskService.class);
 
     private final AuraPredictorClient auraPredictorClient;
     private final RecentRatingRangeLookup recentRatingRangeLookup;
     private final UsdInrRateProvider usdInrRateProvider;
+    private final SimilarBudgetTalentLookup similarBudgetTalentLookup;
 
     public JsonNode assess(BudgetRiskRequest request) {
         UsdInrRate rate = usdInrRateProvider.currentRate();
-        JsonNode response = auraPredictorClient.assessBudgetRisk(toUpstream(request, rate));
+        BudgetRiskUpstreamRequest upstream = toUpstream(request, rate);
+        JsonNode response = auraPredictorClient.assessBudgetRisk(upstream);
+        OptionalDouble hitProbability = averageHitProbability(response);
+        if (upstream.budget() != null && hitProbability.isPresent() && response instanceof ObjectNode root) {
+            root.set("alternatives", alternatives(request, upstream.budget(), hitProbability.getAsDouble(), rate));
+        }
         return toInr(response, rate);
+    }
+
+    private ObjectNode alternatives(BudgetRiskRequest request, double budgetUsd, double hitProbability,
+                                    UsdInrRate rate) {
+        String homeLanguage = singleLanguage(request.language());
+        Set<String> cast = Stream.concat(Stream.ofNullable(request.leadActor()),
+                        request.supportingActors() == null ? Stream.empty() : request.supportingActors().stream())
+                .map(BudgetRiskService::nameKey)
+                .collect(Collectors.toSet());
+        Set<String> musicDirector = Stream.ofNullable(request.musicDirector())
+                .map(BudgetRiskService::nameKey)
+                .collect(Collectors.toSet());
+
+        ObjectNode alternatives = JsonNodeFactory.instance.objectNode();
+        alternatives.put("averageHitProbability", hitProbability);
+        alternatives.put("languageScope", homeLanguage == null ? PAN_INDIA : homeLanguage);
+        alternatives.set("leadActors", betterTalent(Role.LEAD_ACTOR, request, budgetUsd, homeLanguage, cast,
+                hitProbability, request::withLeadActor, rate));
+        alternatives.set("musicDirectors", betterTalent(Role.MUSIC_DIRECTOR, request, budgetUsd, homeLanguage,
+                musicDirector, hitProbability, request::withMusicDirector, rate));
+        return alternatives;
+    }
+
+    /** Candidates in {@code role} that beat {@code hitProbability} when swapped into the request. */
+    private ArrayNode betterTalent(Role role, BudgetRiskRequest request, double budgetUsd, String homeLanguage,
+                                   Set<String> excluded, double hitProbability,
+                                   Function<String, BudgetRiskRequest> swap, UsdInrRate rate) {
+        String fromDate = LocalDate.parse(request.releaseDate()).minusYears(SIMILAR_BUDGET_YEARS).toString();
+        List<SimilarBudgetFilm> candidates = similarBudgetTalentLookup.bestSimilarBudgetFilms(role,
+                        budgetUsd * SIMILAR_BUDGET_MIN_FACTOR, budgetUsd * SIMILAR_BUDGET_MAX_FACTOR, homeLanguage,
+                        fromDate, request.releaseDate(), CANDIDATES_SCORED + excluded.size())
+                .stream()
+                .filter(film -> !excluded.contains(nameKey(film.name())))
+                .limit(CANDIDATES_SCORED)
+                .toList();
+
+        List<ObjectNode> better = new ArrayList<>();
+        for (SimilarBudgetFilm film : candidates) {
+            BudgetRiskUpstreamRequest upstream = toUpstream(swap.apply(film.name()), rate);
+            JsonNode response;
+            try {
+                response = auraPredictorClient.assessBudgetRisk(upstream);
+            } catch (AuraPredictorException ex) {
+                log.warn("budget-risk alternative skipped role={} name={} cause={}", role, film.name(), ex.getMessage());
+                continue;
+            }
+            OptionalDouble candidateHitProbability = averageHitProbability(response);
+            if (candidateHitProbability.isPresent() && candidateHitProbability.getAsDouble() > hitProbability) {
+                better.add(alternative(film, upstream, response, candidateHitProbability.getAsDouble(),
+                        hitProbability, rate));
+            }
+        }
+
+        ArrayNode result = JsonNodeFactory.instance.arrayNode();
+        better.stream()
+                .sorted(Comparator.comparingDouble((ObjectNode node) -> node.path("averageHitProbability").asDouble())
+                        .reversed())
+                .limit(MAX_ALTERNATIVES)
+                .forEach(result::add);
+        return result;
+    }
+
+    private static ObjectNode alternative(SimilarBudgetFilm film, BudgetRiskUpstreamRequest upstream, JsonNode response,
+                                          double hitProbability, double currentHitProbability, UsdInrRate rate) {
+        ObjectNode similarBudgetFilm = JsonNodeFactory.instance.objectNode();
+        similarBudgetFilm.put("movieName", film.movieName());
+        similarBudgetFilm.put("releaseDate", film.releaseDate());
+        similarBudgetFilm.put("language", film.language());
+        similarBudgetFilm.put("budget", (double) Math.round(rate.usdToInr(film.budget())));
+        similarBudgetFilm.put("revenue", (double) Math.round(rate.usdToInr(film.revenue())));
+
+        JsonNode assessments = response.path("assessments");
+        convertAssessments(assessments, rate);
+
+        ObjectNode alternative = JsonNodeFactory.instance.objectNode();
+        alternative.put("name", film.name());
+        alternative.put("averageHitProbability", hitProbability);
+        alternative.put("hitProbabilityGain", hitProbability - currentHitProbability);
+        alternative.put("ratingRange", upstream.ratingRange());
+        alternative.put("hitRatio", upstream.hitRatio());
+        alternative.set("similarBudgetFilm", similarBudgetFilm);
+        alternative.set("assessments", assessments);
+        return alternative;
+    }
+
+    /** Mean {@code hitProbability} over the main assessments; empty when there's none (no budget sent). */
+    private static OptionalDouble averageHitProbability(JsonNode response) {
+        List<Double> probabilities = new ArrayList<>();
+        for (JsonNode assessment : response.path("assessments")) {
+            JsonNode value = assessment.get("hitProbability");
+            if (value != null && value.isNumber()) {
+                probabilities.add(value.asDouble());
+            }
+        }
+        return probabilities.stream().mapToDouble(Double::doubleValue).average();
     }
 
     BudgetRiskUpstreamRequest toUpstream(BudgetRiskRequest request, UsdInrRate rate) {
@@ -151,6 +281,20 @@ public class BudgetRiskService {
                 }
             }
         }
+    }
+
+    /** The language of a single-language movie, lower-cased; null for several (pan-India). */
+    private static String singleLanguage(String language) {
+        List<String> languages = Stream.of(language.split(","))
+                .map(part -> part.trim().toLowerCase(Locale.ROOT))
+                .filter(part -> !part.isEmpty())
+                .distinct()
+                .toList();
+        return languages.size() == 1 ? languages.get(0) : null;
+    }
+
+    private static String nameKey(String name) {
+        return name.trim().toLowerCase(Locale.ROOT);
     }
 
     /** AuraPredictor takes the original language first, e.g. "hindi" or "hindi, tamil". */

@@ -12,7 +12,8 @@ import java.util.List;
  * into AuraPredictor's {@code POST /v1/budget-risk/upcoming} request: {@code estimatedBudget}, in
  * {@code currency} (default INR), becomes {@code budget} in USD, and {@code marketingBudget} (default medium) plus the lead actor's recent
  * films decide {@code ratingRange} and {@code ratings}. The budget and the recent films of the lead
- * actor, director and music director decide {@code hitRatio}.
+ * actor, director and music director decide {@code hitRatio}. With an {@code estimatedBudget}, other
+ * lead actors and music directors who did films of a similar budget are scored in their place too.
  */
 public record BudgetRiskRequest(
         @NotBlank String movieName,
@@ -31,4 +32,18 @@ public record BudgetRiskRequest(
         String director,
         String musicDirector
 ) {
+
+    /** This movie with {@code name} as the lead actor instead. */
+    public BudgetRiskRequest withLeadActor(String name) {
+        return new BudgetRiskRequest(movieName, releaseDate, language, estimatedBudget, currency, genre,
+                productionCompany, cbfcRating, isRemake, marketingBudget, name, supportingActors, director,
+                musicDirector);
+    }
+
+    /** This movie with {@code name} as the music director instead. */
+    public BudgetRiskRequest withMusicDirector(String name) {
+        return new BudgetRiskRequest(movieName, releaseDate, language, estimatedBudget, currency, genre,
+                productionCompany, cbfcRating, isRemake, marketingBudget, leadActor, supportingActors, director,
+                name);
+    }
 }
