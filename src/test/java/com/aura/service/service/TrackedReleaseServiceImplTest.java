@@ -101,6 +101,8 @@ class TrackedReleaseServiceImplTest {
         assertThat(r.getCollected()).containsEntry("x", 42L).containsEntry("instagram", 0L);
         assertThat(r.getCollectedTotal()).isEqualTo(42L);
         assertThat(r.getKeywords()).containsExactly("Live");
+        assertThat(r.getRelevancePct()).isNull();
+        assertThat(r.isRelevanceChecked()).isFalse();
     }
 
     @Test
@@ -114,8 +116,12 @@ class TrackedReleaseServiceImplTest {
         assertThat(excluded.getExcludedAt()).isNotNull();
         assertThat(excluded.getStatus()).isEqualTo("EXCLUDED");
 
+        assertThat(excluded.isRelevanceOverride()).isFalse();
+
         TrackedReleaseResponse restored = service.update(5L, new UpdateTrackedReleaseRequest(null, false, null, null));
         assertThat(restored.isExcluded()).isFalse();
+        // Restoring exempts the movie from the collector's relevance auto-exclusion.
+        assertThat(restored.isRelevanceOverride()).isTrue();
         assertThat(restored.getExcludedReason()).isNull();
         assertThat(restored.getStatus()).isEqualTo("TRACKING");
     }

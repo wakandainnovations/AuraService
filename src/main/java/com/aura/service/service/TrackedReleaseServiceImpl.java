@@ -111,6 +111,11 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
             r.setExcluded(request.getExcluded());
             r.setExcludedAt(request.getExcluded() ? Instant.now(clock) : null);
             r.setExcludedReason(request.getExcluded() ? blankToNull(request.getExcludedReason()) : null);
+            if (!request.getExcluded()) {
+                // An admin decided this movie is worth tracking: the collector's relevance check
+                // must not auto-exclude it again (and it may scan on Apify right away).
+                r.setRelevanceOverride(true);
+            }
         } else if (r.isExcluded() && request.getExcludedReason() != null) {
             r.setExcludedReason(blankToNull(request.getExcludedReason()));
         }
@@ -187,6 +192,10 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
                 .excluded(r.isExcluded())
                 .excludedReason(r.getExcludedReason())
                 .excludedAt(r.getExcludedAt())
+                .relevancePct(r.getRelevancePct())
+                .relevanceSample(r.getRelevanceSample())
+                .relevanceChecked(r.getRelevanceCheckedAt() != null)
+                .relevanceOverride(r.isRelevanceOverride())
                 .status(status(r, today))
                 .collected(collected)
                 .collectedTotal(collected.values().stream().mapToLong(Long::longValue).sum())

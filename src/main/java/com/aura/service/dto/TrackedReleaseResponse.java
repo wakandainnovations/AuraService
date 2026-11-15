@@ -38,6 +38,13 @@ public class TrackedReleaseResponse {
     private String excludedReason;
     private Instant excludedAt;
     private String status;
+    /** 0-100 share of collected posts that look movie-related (null = not scored yet). */
+    private Double relevancePct;
+    private Integer relevanceSample;
+    /** True once cleared for paid Instagram/Reddit scanning. */
+    private boolean relevanceChecked;
+    /** True when an admin restored the movie, exempting it from relevance auto-exclusion. */
+    private boolean relevanceOverride;
     private Map<String, Long> collected;
     private long collectedTotal;
 }

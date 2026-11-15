@@ -77,6 +77,25 @@ public class TrackedRelease {
     @Column(name = "excluded_at")
     private Instant excludedAt;
 
+    /** Share (0-100) of collected posts that look movie-related; null until first scored. */
+    @Column(name = "relevance_pct")
+    private Double relevancePct;
+
+    @Column(name = "relevance_sample")
+    private Integer relevanceSample;
+
+    /** Set once the collector's relevance check has cleared the movie for paid (Apify) scanning. */
+    @Column(name = "relevance_checked_at")
+    private Instant relevanceCheckedAt;
+
+    /** TMDB cast/director names used as movie context by the relevance check (comma-separated). */
+    @Column(name = "context_terms", columnDefinition = "TEXT")
+    private String contextTerms;
+
+    /** Set when an admin restores the movie: the relevance check never auto-excludes it again. */
+    @Column(name = "relevance_override", nullable = false)
+    private boolean relevanceOverride;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
