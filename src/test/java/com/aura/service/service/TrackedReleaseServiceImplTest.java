@@ -4,7 +4,14 @@ import com.aura.service.dto.CreateTrackedReleaseRequest;
 import com.aura.service.dto.TrackedReleaseResponse;
 import com.aura.service.dto.UpdateTrackedReleaseRequest;
 import com.aura.service.entity.TrackedRelease;
+import com.aura.service.dto.CreateEntityRequest;
+import com.aura.service.dto.KeywordDto;
+import com.aura.service.entity.ManagedEntity;
+import com.aura.service.entity.User;
+import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.TrackedReleaseRepository;
+import com.aura.service.repository.UserRepository;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -31,6 +38,9 @@ class TrackedReleaseServiceImplTest {
     private EntityAccessService access;
     private NamedParameterJdbcTemplate jdbc;
     private TrackedReleaseServiceImpl service;
+    private ManagedEntityRepository entities;
+    private UserRepository users;
+    private EntityService entityService;
 
     @BeforeEach
     void setUp() {
@@ -39,7 +49,10 @@ class TrackedReleaseServiceImplTest {
         jdbc = mock(NamedParameterJdbcTemplate.class);
         when(access.currentUserIsAdmin()).thenReturn(true);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        service = new TrackedReleaseServiceImpl(repository, access, jdbc);
+        entities = mock(ManagedEntityRepository.class);
+        users = mock(UserRepository.class);
+        entityService = mock(EntityService.class);
+        service = new TrackedReleaseServiceImpl(repository, access, jdbc, entities, users, entityService);
         service.setClock(Clock.fixed(TODAY.atStartOfDay(ZoneId.of("Asia/Kolkata")).plusHours(12).toInstant(),
                 ZoneId.of("Asia/Kolkata")));
     }
@@ -189,5 +202,68 @@ class TrackedReleaseServiceImplTest {
         assertThatThrownBy(() -> service.list("current")).isInstanceOf(AccessDeniedException.class);
         verifyNoInteractions(jdbc);
         assertThat(Map.of()).isEmpty();
+    }
+
+    private static User user(long id, String name) {
+        User u = new User();
+        u.setId(id);
+        u.setUsername(name);
+        return u;
+    }
+
+    @Test
+    void addToPlatform_createsMovieForChosenOwnerWithSameNameAndKeywords() {
+        TrackedRelease r = release(7, "Itllu Arjuna", TODAY, false, "TMDB");
+        r.setLanguage("telugu");
+        r.setKeywords("ItlluArjuna,Itllu Arjuna");
+        when(repository.findById(7L)).thenReturn(Optional.of(r));
+        User owner = user(42, "producer1");
+        when(users.findById(42L)).thenReturn(Optional.of(owner));
+        ManagedEntity created = new ManagedEntity();
+        created.setId(900L);
+        created.setName("Itllu Arjuna");
+        created.setOwner(owner);
+        when(entities.findByType("MOVIE")).thenReturn(List.of(created));
+
+        TrackedReleaseResponse resp = service.addToPlatform(7L, 42L);
+
+        ArgumentCaptor<CreateEntityRequest> req = ArgumentCaptor.forClass(CreateEntityRequest.class);
+        verify(entityService).createEntityForOwner(eq(owner), eq("MOVIE"), req.capture());
+        assertThat(req.getValue().getName()).isEqualTo("Itllu Arjuna");
+        assertThat(req.getValue().getReleaseDate()).isEqualTo(TODAY);
+        assertThat(req.getValue().getLanguage()).isEqualTo("Telugu");
+        assertThat(req.getValue().getIndustry()).isEqualTo("Tollywood");
+        assertThat(req.getValue().getKeywords()).extracting(KeywordDto::getKeyword).containsExactly("ItlluArjuna", "Itllu Arjuna");
+        assertThat(resp.getPlatformEntities()).singleElement()
+                .satisfies(p -> {
+                    assertThat(p.entityId()).isEqualTo(900L);
+                    assertThat(p.ownerUsername()).isEqualTo("producer1");
+                });
+    }
+
+    @Test
+    void addToPlatform_defaultsToCallingAdminAndRejectsDuplicates() {
+        TrackedRelease r = release(7, "Itllu Arjuna", TODAY, false, "TMDB");
+        when(repository.findById(7L)).thenReturn(Optional.of(r));
+        User admin = user(1, "admin");
+        when(access.currentUser()).thenReturn(admin);
+        when(entities.findByTypeAndNameIgnoreCaseAndOwnerId("MOVIE", "Itllu Arjuna", 1L)).thenReturn(List.of(new ManagedEntity()));
+
+        assertThatThrownBy(() -> service.addToPlatform(7L, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already on the platform for admin");
+        verifyNoInteractions(entityService);
+    }
+
+    @Test
+    void list_showsWhichUsersAlreadyHaveTheMovie() {
+        when(repository.findAllByOrderByReleaseDateAscEntityNameAsc()).thenReturn(List.of(release(2, "Live", TODAY, false, "TMDB")));
+        ManagedEntity e = new ManagedEntity();
+        e.setId(5L);
+        e.setName("live");
+        e.setOwner(user(3, "bob"));
+        when(entities.findByType("MOVIE")).thenReturn(List.of(e));
+
+        assertThat(service.list("current").get(0).getPlatformEntities()).extracting(p -> p.ownerUsername()).containsExactly("bob");
     }
 }

@@ -41,6 +41,14 @@ public class LicenseServiceImpl implements LicenseService {
     }
 
     @Override
+    public LicenseTier effectiveTierFor(User user) {
+        License license = licenseRepository.findByUserAndActiveTrue(user)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No active license for user: " + user.getUsername()));
+        return effectiveTierOf(license, Instant.now());
+    }
+
+    @Override
     public LicenseTier effectiveTier() {
         return effectiveTierOf(resolveCurrentLicense(), Instant.now());
     }

@@ -1,11 +1,18 @@
 package com.aura.service.service;
 
+import com.aura.service.dto.CreateEntityRequest;
 import com.aura.service.dto.CreateTrackedReleaseRequest;
+import com.aura.service.dto.KeywordDto;
+import com.aura.service.dto.PlatformEntityRef;
 import com.aura.service.dto.TrackedReleaseResponse;
 import com.aura.service.dto.UpdateTrackedReleaseRequest;
+import com.aura.service.entity.ManagedEntity;
 import com.aura.service.entity.TrackedRelease;
+import com.aura.service.entity.User;
 import com.aura.service.exception.ResourceNotFoundException;
+import com.aura.service.repository.ManagedEntityRepository;
 import com.aura.service.repository.TrackedReleaseRepository;
+import com.aura.service.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +49,14 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
     private final TrackedReleaseRepository repository;
     private final EntityAccessService entityAccessService;
     private final NamedParameterJdbcTemplate jdbc;
+    private final ManagedEntityRepository managedEntityRepository;
+    private final UserRepository userRepository;
+    private final EntityService entityService;
+
+    /** Collector language (lower-case) -> this platform's film industry label. */
+    static final Map<String, String> INDUSTRY_BY_LANGUAGE = Map.of(
+            "tamil", "Kollywood", "telugu", "Tollywood", "kannada", "Sandalwood",
+            "malayalam", "Mollywood", "hindi", "Bollywood");
 
     // Must match AuraSocialMediaService's tracking.days.before/after (it computes the window for TMDB rows).
     @Value("${tracked-releases.window-days-before:7}")
@@ -71,7 +86,8 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
                 })
                 .toList();
         Map<String, Map<String, Long>> usage = usageByEntity(rows.stream().map(TrackedRelease::getEntityName).toList());
-        return rows.stream().map(r -> toResponse(r, today, usage.get(r.getEntityName()))).toList();
+        Map<String, List<PlatformEntityRef>> platform = platformEntitiesByName();
+        return rows.stream().map(r -> withPlatform(toResponse(r, today, usage.get(r.getEntityName())), platform)).toList();
     }
 
     @Override
@@ -128,6 +144,63 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
         TrackedRelease saved = repository.save(r);
         Map<String, Long> usage = usageByEntity(List.of(saved.getEntityName())).get(saved.getEntityName());
         return toResponse(saved, LocalDate.now(clock.withZone(IST)), usage);
+    }
+
+    @Override
+    @Transactional
+    public TrackedReleaseResponse addToPlatform(Long id, Long ownerId) {
+        requireAdmin();
+        TrackedRelease r = repository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Tracked release not found: " + id));
+        User owner = ownerId == null ? entityAccessService.currentUser()
+                : userRepository.findById(ownerId)
+                        .orElseThrow(() -> new ResourceNotFoundException("User not found: " + ownerId));
+        if (!managedEntityRepository.findByTypeAndNameIgnoreCaseAndOwnerId("MOVIE", r.getEntityName(), owner.getId()).isEmpty()) {
+            throw new IllegalArgumentException("'" + r.getEntityName() + "' is already on the platform for " + owner.getUsername());
+        }
+        entityService.createEntityForOwner(owner, "MOVIE", toCreateEntityRequest(r));
+        Map<String, List<PlatformEntityRef>> platform = platformEntitiesByName();
+        Map<String, Long> usage = usageByEntity(List.of(r.getEntityName())).get(r.getEntityName());
+        return withPlatform(toResponse(r, LocalDate.now(clock.withZone(IST)), usage), platform);
+    }
+
+    /**
+     * Entity fields from the tracked release. The name is kept exactly (collected posts are stored
+     * under it); language/industry use this platform's labels ("Telugu" / "Tollywood").
+     */
+    static CreateEntityRequest toCreateEntityRequest(TrackedRelease r) {
+        CreateEntityRequest req = new CreateEntityRequest();
+        req.setName(r.getEntityName());
+        req.setReleaseDate(r.getReleaseDate());
+        String lang = r.getLanguage() == null ? null : r.getLanguage().toLowerCase(Locale.ROOT);
+        if (lang != null) {
+            req.setLanguage(Character.toUpperCase(lang.charAt(0)) + lang.substring(1));
+            req.setIndustry(INDUSTRY_BY_LANGUAGE.get(lang));
+        }
+        List<KeywordDto> keywords = new ArrayList<>();
+        for (String k : splitKeywords(r.getKeywords())) {
+            KeywordDto dto = new KeywordDto();
+            dto.setKeyword(k);
+            keywords.add(dto);
+        }
+        req.setKeywords(keywords);
+        return req;
+    }
+
+    private Map<String, List<PlatformEntityRef>> platformEntitiesByName() {
+        Map<String, List<PlatformEntityRef>> byName = new HashMap<>();
+        for (ManagedEntity e : managedEntityRepository.findByType("MOVIE")) {
+            if (e.getName() == null) continue;
+            User o = e.getOwner();
+            byName.computeIfAbsent(e.getName().toLowerCase(Locale.ROOT), k -> new ArrayList<>())
+                    .add(new PlatformEntityRef(e.getId(), o == null ? null : o.getId(), o == null ? null : o.getUsername()));
+        }
+        return byName;
+    }
+
+    private static TrackedReleaseResponse withPlatform(TrackedReleaseResponse resp, Map<String, List<PlatformEntityRef>> platform) {
+        resp.setPlatformEntities(platform.getOrDefault(resp.getEntityName().toLowerCase(Locale.ROOT), List.of()));
+        return resp;
     }
 
     @Override

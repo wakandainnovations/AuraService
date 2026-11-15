@@ -38,6 +38,13 @@ public interface LicenseService {
 
     int currentMaxEntities();
 
+    /**
+     * The effective tier (override-aware, like {@link #effectiveTier()}) of {@code user}'s active
+     * license rather than the caller's - used when an admin creates an entity on another user's
+     * behalf, so that user's own entity/keyword caps apply.
+     */
+    com.aura.service.enums.LicenseTier effectiveTierFor(com.aura.service.entity.User user);
+
     int currentMaxMentionsPerMonth();
 
     Duration currentCollectionFrequency();

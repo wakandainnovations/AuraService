@@ -45,6 +45,8 @@ public class TrackedReleaseResponse {
     private boolean relevanceChecked;
     /** True when an admin restored the movie, exempting it from relevance auto-exclusion. */
     private boolean relevanceOverride;
+    /** User-facing movie entities with this release's name (one per owner); empty = not on the platform. */
+    private List<PlatformEntityRef> platformEntities;
     private Map<String, Long> collected;
     private long collectedTotal;
 }

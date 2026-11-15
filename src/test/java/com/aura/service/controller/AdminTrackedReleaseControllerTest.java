@@ -71,4 +71,16 @@ class AdminTrackedReleaseControllerTest {
     private static <T> T any() {
         return org.mockito.ArgumentMatchers.any();
     }
+
+    @Test
+    void addToPlatform_passesOwnerOrNull() throws Exception {
+        when(service.addToPlatform(eq(3L), eq(42L))).thenReturn(TrackedReleaseResponse.builder().id(3L).build());
+        mvc.perform(post("/api/admin/tracked-releases/3/add-to-platform").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ownerId\":42}"))
+                .andExpect(status().isCreated());
+        verify(service).addToPlatform(3L, 42L);
+
+        mvc.perform(post("/api/admin/tracked-releases/3/add-to-platform")).andExpect(status().isCreated());
+        verify(service).addToPlatform(3L, null);
+    }
 }

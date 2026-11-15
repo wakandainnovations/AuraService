@@ -1,5 +1,6 @@
 package com.aura.service.controller;
 
+import com.aura.service.dto.AddTrackedReleaseToPlatformRequest;
 import com.aura.service.dto.CreateTrackedReleaseRequest;
 import com.aura.service.dto.TrackedReleaseResponse;
 import com.aura.service.dto.UpdateTrackedReleaseRequest;
@@ -43,6 +44,15 @@ public class AdminTrackedReleaseController {
     public ResponseEntity<TrackedReleaseResponse> update(@PathVariable Long id,
                                                          @RequestBody UpdateTrackedReleaseRequest request) {
         return ResponseEntity.ok(trackedReleaseService.update(id, request));
+    }
+
+    /** Creates the user-facing movie for this release; body {@code {ownerId}} (omit = me). */
+    @PostMapping("/{id}/add-to-platform")
+    @PreAuthorize("hasAuthority('ROLE_ADMIN')")
+    public ResponseEntity<TrackedReleaseResponse> addToPlatform(
+            @PathVariable Long id, @RequestBody(required = false) AddTrackedReleaseToPlatformRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(trackedReleaseService.addToPlatform(id, request == null ? null : request.getOwnerId()));
     }
 
     @DeleteMapping("/{id}")

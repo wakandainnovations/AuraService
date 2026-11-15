@@ -55,9 +55,25 @@ public class EntityService {
     public EntityDetailResponse createEntity(String entityType, CreateEntityRequest request) {
         // The creator owns the entity; everything below is scoped to this owner.
         User owner = entityAccessService.currentUser();
+        return createEntityInternal(owner, entityType, request,
+                licenseService::currentMaxEntities, licenseService::currentMaxKeywords);
+    }
 
+    /**
+     * Admin path: creates the entity owned by {@code owner} (e.g. from a tracked release), enforcing
+     * <em>that owner's</em> license caps rather than the calling admin's.
+     */
+    @Transactional
+    public EntityDetailResponse createEntityForOwner(User owner, String entityType, CreateEntityRequest request) {
+        com.aura.service.enums.LicenseTier tier = licenseService.effectiveTierFor(owner);
+        return createEntityInternal(owner, entityType, request, tier::getMaxEntities, tier::getMaxKeywords);
+    }
+
+    private EntityDetailResponse createEntityInternal(User owner, String entityType, CreateEntityRequest request,
+                                                      java.util.function.IntSupplier maxEntities,
+                                                      java.util.function.IntSupplier maxKeywords) {
         // Reject before creating anything if the owner is already at their tier's entity cap.
-        enforceEntityCap(owner.getId());
+        enforceEntityCap(owner.getId(), maxEntities.getAsInt());
 
         ManagedEntity entity = new ManagedEntity();
         entity.setName(request.getName());
@@ -83,8 +99,11 @@ public class EntityService {
         List<EntityKeyword> keywords = buildKeywordEntities(entity, request.getKeywords());
         // A new entity has no existing keywords of its own, so the resulting total is every other
         // owned entity's keywords plus the incoming ones (exclude nothing — this entity isn't saved yet).
-        enforceKeywordCap(owner.getId(), null, keywords.size());
+        enforceKeywordCap(owner.getId(), null, keywords.size(), maxKeywords.getAsInt());
         entity.setKeywords(keywords);
+        // Pick up a poster already in the images folder (hand-saved, or downloaded from TMDB for a
+        // tracked release) right away, instead of only at the next startup backfill.
+        entity.setImagePath(imageMatcher.matchFile(request.getName()));
 
         entity = entityRepository.save(entity);
         // Attribute any mentions already collected for these keywords, so a brand-new entity sees its
@@ -283,8 +302,7 @@ public class EntityService {
     }
 
     /** Rejects (409 ENTITIES) when the owner already holds the maximum entities their tier allows. */
-    private void enforceEntityCap(Long ownerId) {
-        int limit = licenseService.currentMaxEntities();
+    private void enforceEntityCap(Long ownerId, int limit) {
         long current = entityRepository.countByOwnerId(ownerId);
         if (current >= limit) {
             throw new LimitException(LimitException.LimitType.ENTITIES, limit, (int) current);
@@ -298,7 +316,10 @@ public class EntityService {
      * create. {@code incomingKeywordCount} is the number of keywords the operation will add for it.
      */
     private void enforceKeywordCap(Long ownerId, Long excludeEntityId, int incomingKeywordCount) {
-        int limit = licenseService.currentMaxKeywords();
+        enforceKeywordCap(ownerId, excludeEntityId, incomingKeywordCount, licenseService.currentMaxKeywords());
+    }
+
+    private void enforceKeywordCap(Long ownerId, Long excludeEntityId, int incomingKeywordCount, int limit) {
         long others = excludeEntityId == null
                 ? entityRepository.countKeywordsByOwnerId(ownerId)
                 : entityRepository.countKeywordsByOwnerIdExcludingEntity(ownerId, excludeEntityId);

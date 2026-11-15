@@ -19,6 +19,13 @@ public interface TrackedReleaseService {
 
     TrackedReleaseResponse update(Long id, UpdateTrackedReleaseRequest request);
 
+    /**
+     * Makes the release a user-facing movie (managed entity) owned by {@code ownerId} (null = the
+     * calling admin): same name - so it shows the posts already collected for it - plus release
+     * date, language/industry and keywords. Fails if that user already has a movie of that name.
+     */
+    TrackedReleaseResponse addToPlatform(Long id, Long ownerId);
+
     /** MANUAL rows only - a deleted TMDB row would just be re-discovered, so those are excluded instead. */
     void delete(Long id);
 }
