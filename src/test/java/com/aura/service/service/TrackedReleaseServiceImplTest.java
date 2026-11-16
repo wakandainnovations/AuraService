@@ -266,4 +266,25 @@ class TrackedReleaseServiceImplTest {
 
         assertThat(service.list("current").get(0).getPlatformEntities()).extracting(p -> p.ownerUsername()).containsExactly("bob");
     }
+
+    @Test
+    void addToPlatformCarriesTmdbDetails() {
+        TrackedRelease r = new TrackedRelease();
+        r.setEntityName("Itllu Arjuna");
+        r.setReleaseDate(LocalDate.of(2026, 11, 13));
+        r.setLanguage("telugu");
+        r.setKeywords("ItlluArjuna");
+        r.setGenres("Action, Drama");
+        r.setRuntime(142);
+        r.setDirector("A Director");
+        r.setProductionCompany("A Studio");
+
+        CreateEntityRequest req = TrackedReleaseServiceImpl.toCreateEntityRequest(r);
+
+        assertThat(req.getGenre()).containsExactly("Action", "Drama");
+        assertThat(req.getRuntime()).isEqualTo(142);
+        assertThat(req.getDirector()).isEqualTo("A Director");
+        assertThat(req.getProductionCompany()).isEqualTo("A Studio");
+        assertThat(req.getIndustry()).isEqualTo("Tollywood");
+    }
 }

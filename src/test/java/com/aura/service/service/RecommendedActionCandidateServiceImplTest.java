@@ -324,6 +324,18 @@ class RecommendedActionCandidateServiceImplTest {
     }
 
     @Test
+    void releasedMovieGetsNoLowOnlinePresenceCandidate() {
+        ManagedEntity entity = movie(null, null, null, null);
+        entity.setReleaseDate(LocalDate.of(2019, 12, 29)); // 3 days before the fixed clock
+        when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));
+        stubTotalMentions(3L);
+
+        List<RecommendedActionCandidate> candidates = service.buildCandidateActions(ENTITY_ID);
+
+        assertThat(candidates).noneMatch(c -> c.candidateId().contains("low-online-presence"));
+    }
+
+    @Test
     void mentionCountAtThresholdOmitsLowOnlinePresenceCandidate() {
         ManagedEntity entity = movie(null, null, null, null);
         when(entityRepository.findById(ENTITY_ID)).thenReturn(Optional.of(entity));

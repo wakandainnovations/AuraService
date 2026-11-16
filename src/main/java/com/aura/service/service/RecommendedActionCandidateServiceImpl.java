@@ -767,6 +767,12 @@ public class RecommendedActionCandidateServiceImpl implements RecommendedActionC
     // not "nothing to report" but "go build some visibility." This is the one generator where the
     // absence of engagement data is itself the grounding fact, not a reason to produce nothing.
     private RecommendedActionCandidate lowOnlinePresenceCandidate(ManagedEntity entity) {
+        // Its window is entirely pre-release (LOW_PRESENCE_WINDOW_*), so once the movie is out it
+        // would only be generated to be marked IRRELEVANT straight away, with "before release"
+        // wording for a released movie - gate it like the other pre-release generators.
+        if (!isNotYetReleased(entity)) {
+            return null;
+        }
         long totalMentions = mentionRepository.countByManagedEntityId(entity.getId());
         if (totalMentions >= LOW_PRESENCE_MENTION_THRESHOLD) {
             return null;

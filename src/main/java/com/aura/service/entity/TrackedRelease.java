@@ -92,6 +92,19 @@ public class TrackedRelease {
     @Column(name = "context_terms", columnDefinition = "TEXT")
     private String contextTerms;
 
+    // TMDB details (V9), refreshed by discovery; copied onto the movie by "Add to platform".
+    @Column(name = "genres", columnDefinition = "TEXT")
+    private String genres;
+
+    @Column(name = "runtime")
+    private Integer runtime;
+
+    @Column(name = "director", columnDefinition = "TEXT")
+    private String director;
+
+    @Column(name = "production_company", columnDefinition = "TEXT")
+    private String productionCompany;
+
     /** Set when an admin restores the movie: the relevance check never auto-excludes it again. */
     @Column(name = "relevance_override", nullable = false)
     private boolean relevanceOverride;

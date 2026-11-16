@@ -184,6 +184,13 @@ public class TrackedReleaseServiceImpl implements TrackedReleaseService {
             keywords.add(dto);
         }
         req.setKeywords(keywords);
+        // TMDB details, so the movie's snapshot isn't blank (null when TMDB has none / MANUAL rows).
+        req.setDirector(r.getDirector());
+        req.setRuntime(r.getRuntime());
+        req.setProductionCompany(r.getProductionCompany());
+        if (r.getGenres() != null) {
+            req.setGenre(new ArrayList<>(splitKeywords(r.getGenres())));
+        }
         return req;
     }
 
