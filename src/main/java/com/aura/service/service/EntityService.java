@@ -69,6 +69,16 @@ public class EntityService {
         return createEntityInternal(owner, entityType, request, tier::getMaxEntities, tier::getMaxKeywords);
     }
 
+    /**
+     * System path for {@link TrackedReleaseAutoAddService}: creates the entity owned by {@code owner}
+     * <em>without</em> the owner's license caps on entities and keywords, so every tracked release can
+     * reach the platform. Not exposed through any controller.
+     */
+    @Transactional
+    public EntityDetailResponse createEntityForOwnerIgnoringLimits(User owner, String entityType, CreateEntityRequest request) {
+        return createEntityInternal(owner, entityType, request, () -> Integer.MAX_VALUE, () -> Integer.MAX_VALUE);
+    }
+
     private EntityDetailResponse createEntityInternal(User owner, String entityType, CreateEntityRequest request,
                                                       java.util.function.IntSupplier maxEntities,
                                                       java.util.function.IntSupplier maxKeywords) {
